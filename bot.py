@@ -85,7 +85,7 @@ def publish_to_wp(draft):
 def webhook():
     data = request.json
     
-print(f"קיבלתי: {json.dumps(data)[:200]}", flush=True)
+    print(f"קיבלתי: {json.dumps(data)[:200]}", flush=True)
     if "message" in data:
         msg = data["message"]
         chat_id = msg["chat"]["id"]
