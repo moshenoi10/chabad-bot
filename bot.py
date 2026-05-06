@@ -84,7 +84,8 @@ def publish_to_wp(draft):
 @app.route(f"/webhook", methods=["POST"])
 def webhook():
     data = request.json
-
+    
+print(f"קיבלתי: {json.dumps(data)[:200]}", flush=True)
     if "message" in data:
         msg = data["message"]
         chat_id = msg["chat"]["id"]
