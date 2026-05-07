@@ -36,7 +36,7 @@ def log_action(user_id, username, action):
         "action": action
     }
     activity_log.append(entry)
-    if len(activity_log) > 100:  # שמור רק 100 פעולות אחרונות
+    if len(activity_log) > 100:
         activity_log.pop(0)
     print(f"📋 לוג: {entry['time']} | {username} | {action}", flush=True)
 
@@ -44,7 +44,7 @@ def get_permission(user_id):
     uid = str(user_id)
     if uid == SUPER_ADMIN_ID:
         return "admin"
-    return users_permissions.get(uid, None)  # None = לא מורשה
+    return users_permissions.get(uid, None)
 
 def is_admin(user_id):
     return get_permission(user_id) == "admin"
@@ -54,7 +54,6 @@ def is_editor(user_id):
     return perm in ("admin", "editor")
 
 def notify_admin_error(error_msg):
-    """שולח שגיאה קריטית לאדמין"""
     try:
         requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
@@ -62,7 +61,7 @@ def notify_admin_error(error_msg):
             timeout=10
         )
     except:
-        pass  # שמירת tokens זמנית
+        pass
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -102,7 +101,6 @@ DRAFTS_FILE = "/tmp/drafts.pkl"
 def save_drafts():
     try:
         with open(DRAFTS_FILE, "wb") as f:
-            # שמור רק נתונים שאפשר לסריאליז (לא bytes של תמונות)
             safe_drafts = {}
             for uid, d in drafts.items():
                 safe = {k: v for k, v in d.items() 
@@ -194,14 +192,12 @@ def upload_to_youtube(video_bytes, title, description="", tags=[]):
         return None, "לא מחובר ל-YouTube"
     try:
         access_token = youtube_tokens["access_token"]
-        # בדיקה אם הtoken פג תוקף
         if youtube_tokens.get("refresh_token"):
             new_token = refresh_youtube_token(youtube_tokens["refresh_token"])
             if new_token:
                 youtube_tokens["access_token"] = new_token
                 access_token = new_token
 
-        # העלאת הסרטון
         headers = {"Authorization": f"Bearer {access_token}"}
         metadata = {
             "snippet": {
@@ -216,7 +212,6 @@ def upload_to_youtube(video_bytes, title, description="", tags=[]):
         import json as json_lib
         from requests_toolbelt import MultipartEncoder
         
-        # שימוש ב-resumable upload
         init_resp = requests.post(
             "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
             headers={**headers, "Content-Type": "application/json", "X-Upload-Content-Type": "video/*"},
@@ -236,7 +231,6 @@ def upload_to_youtube(video_bytes, title, description="", tags=[]):
         return None, str(e)
 
 def wait_for_vimeo(video_id, max_wait=300):
-    """ממתין עד שהסרטון מוכן ב-Vimeo"""
     headers = {
         "Authorization": f"bearer {VIMEO_TOKEN}",
         "Accept": "application/vnd.vimeo.*+json;version=3.4"
@@ -280,7 +274,6 @@ def upload_to_vimeo(video_bytes, title="סרטון חדש"):
         video_uri = create_resp.json()["uri"]
         video_id = video_uri.split("/")[-1]
 
-        # העלאת הקובץ
         upload_resp = requests.patch(
             upload_link,
             headers={
@@ -350,7 +343,6 @@ def upload_image_to_wp(image_bytes, filename):
     return None, None
 
 def publish_to_wp(draft, status="publish", schedule_date=None):
-    # המתן לעיבוד Vimeo לפני פרסום
     vimeo_ids = draft.get("vimeo_ids", [])
     if vimeo_ids:
         print(f"ממתין לעיבוד {len(vimeo_ids)} סרטוני Vimeo...", flush=True)
@@ -361,16 +353,13 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
     if draft.get("main_image"):
         featured_id, _ = upload_image_to_wp(draft["main_image"], "main.jpg")
 
-    # גלריה – תמונות אחת מתחת לשנייה
     gallery_content = ""
     for i, img in enumerate(draft.get("gallery", [])):
         img_id, img_url = upload_image_to_wp(img, f"gallery_{i}.jpg")
         if img_url:
             gallery_content += f'\n<figure class="wp-block-image size-full"><img src="{img_url}" /></figure>\n'
 
-    # עיבוד גוף הכתבה – המרת פורמט וואטסאפ ושמירת פיסקאות
     body_text = convert_whatsapp_format(draft.get("body", ""))
-    # פיצול לפסקאות – גם שורה אחת וגם שתי שורות
     import re
     paragraphs = [p.strip() for p in re.split(r'\n{1,}', body_text) if p.strip()]
     if paragraphs:
@@ -429,9 +418,7 @@ def get_file(file_id):
     return None
 
 def add_images_to_post(post_id, image_urls):
-    """מוסיף תמונות לכתבה בלי לשבור את האלמנטור"""
     try:
-        # קבל את התוכן הנוכחי עם context=edit
         r = requests.get(
             f"{WP_URL}/posts/{post_id}?context=edit",
             auth=(WP_USER, WP_PASSWORD), timeout=10
@@ -442,14 +429,12 @@ def add_images_to_post(post_id, image_urls):
         post_data = r.json()
         existing_content = post_data.get("content", {}).get("raw", "") or post_data.get("content", {}).get("rendered", "")
         
-        # הוסף תמונות בסוף התוכן
         new_images = ""
         for img_url in image_urls:
             new_images += f'\n<figure class="wp-block-image size-full"><img src="{img_url}" /></figure>\n'
         
         new_content = existing_content + new_images
         
-        # עדכן רק את ה-content
         update = requests.post(
             f"{WP_URL}/posts/{post_id}",
             json={"content": new_content},
@@ -459,17 +444,8 @@ def add_images_to_post(post_id, image_urls):
     except Exception as e:
         print(f"שגיאה הוספת תמונות: {e}", flush=True)
         return False
-    try:
-        r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile?file_id={file_id}", timeout=10)
-        file_path = r.json()["result"]["file_path"]
-        img = requests.get(f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}", timeout=30)
-        return img.content
-    except Exception as e:
-        print(f"שגיאה קבלת קובץ: {e}")
-    return None
 
 def convert_whatsapp_format(text):
-    """המרת פורמט וואטסאפ ל-HTML"""
     import re
     text = re.sub(r'\*([^*]+)\*', r'<strong>\1</strong>', text)
     text = re.sub(r'_([^_]+)_', r'<em>\1</em>', text)
@@ -487,7 +463,13 @@ def process_with_gemini(text):
 
 3. **כותרת אדומה** - 2-4 מילים בלבד, הדגשה קצרה וחזקה.
 
-4. **גוף הכתבה** - העתק את הטקסט המקורי בדיוק, ללא שינוי כלשהו.
+4. **גוף הכתבה** - סדר את הטקסט בפסקאות הגיוניות לפי תוכן ועניין:
+   - כל מחשבה או נושא נפרד = פסקה נפרדת
+   - אם יש שורות חדשות בטקסט המקורי, השתמש בהן כרמז לחלוקה
+   - אם הטקסט הוא גוש רצוף ללא שורות, חלק אותו לפסקאות של 2-4 משפטים כל אחת
+   - אסור להוסיף מילה אחת שלא קיימת בטקסט המקורי
+   - אסור לשנות, לנסח מחדש, או לתרגם – רק לסדר בפסקאות
+   - הפסק בין פסקאות עם שורה ריקה (\\n\\n)
 
 5. **תגיות** - בין 5-8 מילות מפתח רלוונטיות מהטקסט.
 
@@ -550,7 +532,6 @@ def handle_message(msg):
     username = msg["from"].get("username", msg["from"].get("first_name", "לא ידוע"))
     text = msg.get("text", "")
 
-    # בדיקת הרשאות
     perm = get_permission(user_id)
 
     if perm == "blocked":
@@ -558,9 +539,7 @@ def handle_message(msg):
         return
 
     if perm is None:
-        # משתמש לא מורשה
         send_message(chat_id, "⛔ אין לך הרשאה להשתמש בבוט.\n\nפנה למנהל לקבלת גישה.")
-        # הודעה לאדמין
         notify_admin_error(f"משתמש חדש ביקש גישה:\nשם: {username}\nID: {user_id}\n\nלאשר: /approve_{user_id}\nלחסום: /block_{user_id}")
         return
 
@@ -570,7 +549,6 @@ def handle_message(msg):
     draft = drafts[user_id]
     step = draft.get("step", "idle")
 
-    # פקודות ניהול – רק אדמין
     if text.startswith("/approve_") and is_admin(user_id):
         target_id = text.replace("/approve_", "")
         users_permissions[target_id] = "editor"
@@ -605,7 +583,6 @@ def handle_message(msg):
             send_message(chat_id, "אין פעולות בלוג עדיין.")
         return
 
-    # לוג פעולה
     if text and not text.startswith("/"):
         log_action(user_id, username, f"הודעה: {text[:50]}")
 
@@ -841,7 +818,6 @@ def handle_message(msg):
         send_message(chat_id, "⏳ Gemini מעבד את הטקסט...")
         result = process_with_gemini(text)
         if result:
-            # המרת פורמט וואטסאפ בגוף הכתבה
             body_clean = convert_whatsapp_format(result.get("body", text))
             draft.update({
                 "title": result.get("title", ""),
@@ -851,7 +827,6 @@ def handle_message(msg):
                 "tags": result.get("tags", []),
                 "step": "smart_preview"
             })
-            # הצגת גוף בתצוגה מקדימה ללא תגי HTML
             import re
             body_preview = re.sub(r'<[^>]+>', '', body_clean)[:300]
             preview = f"""🤖 <b>תצוגה מקדימה:</b>
@@ -924,7 +899,6 @@ def handle_message(msg):
 
     elif step == "edit_url":
         try:
-            # נסה לחלץ ID מהURL
             part = text.rstrip("/").split("/")[-1]
             if part.isdigit():
                 r = requests.get(f"{WP_URL}/posts/{part}", auth=(WP_USER, WP_PASSWORD), timeout=10)
@@ -1096,7 +1070,6 @@ def handle_message(msg):
             content = get_file(msg["photo"][-1]["file_id"])
             if content:
                 draft.setdefault("mazaltov_images", []).append(content)
-                # שלח הודעה רק בתמונה הראשונה
                 if len(draft["mazaltov_images"]) == 1:
                     send_message(chat_id, "📸 מקבל תמונות... שלח /done כשסיימת")
         elif text == "/done":
@@ -1190,7 +1163,6 @@ def handle_message(msg):
                     draft["pending_group_files"] = []
                 if file_id not in draft["pending_group_files"]:
                     draft["pending_group_files"].append(file_id)
-                # שלח הודעה רק בסרטון הראשון
                 if len(draft["pending_group_files"]) == 1:
                     send_message(chat_id, f"📥 מקבל סרטונים... שלח /upload_all כשסיימת לשלוח הכל")
             else:
@@ -1225,7 +1197,6 @@ def handle_message(msg):
                 post_data_resp = resp.json()
                 post_url = post_data_resp.get("link", "")
                 send_message(chat_id, f"✅ <b>הכתבה פורסמה!</b>\n🔗 {post_url}", get_menu(user_id))
-                # שליחה לערוץ
                 notify_channel(
                     draft.get("title", ""),
                     draft.get("subtitle", ""),
@@ -1356,7 +1327,6 @@ def handle_callback(cb):
                         send_message(chat_id, f"❌ שגיאה: {error}")
 
     elif cb_data == "smart_approve":
-        # עובר לבחירת קטגוריות כמו כתבה רגילה
         draft["step"] = "categories"
         cats = get_wp_categories()
         keyboard = {"inline_keyboard": []}
@@ -1462,12 +1432,23 @@ def handle_callback(cb):
         drafts[user_id] = {"step": "idle", "gallery": []}
         send_message(chat_id, "❌ המחיקה בוטלה.", get_menu(user_id))
 
+def get_recent_posts(status="publish"):
+    try:
+        resp = requests.get(
+            f"{WP_URL}/posts?per_page=5&status={status}&orderby=date&order=desc",
+            auth=(WP_USER, WP_PASSWORD), timeout=10
+        )
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        print(f"שגיאה כתבות אחרונות: {e}")
+    return []
+
 def main():
     global offset
     print("🚀 בוט חבד מתחיל!", flush=True)
     load_drafts()
 
-    # הגדרת תפריט פקודות
     try:
         requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setMyCommands",
@@ -1481,7 +1462,6 @@ def main():
     except:
         pass
     
-    # הפעל שרת HTTP ברקע
     t = threading.Thread(target=run_server, daemon=True)
     t.start()
     print("🌐 שרת HTTP פועל", flush=True)
