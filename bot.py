@@ -14,7 +14,7 @@ VIMEO_TOKEN = os.environ.get("VIMEO_TOKEN", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 YOUTUBE_CLIENT_ID = os.environ.get("YOUTUBE_CLIENT_ID", "")
 YOUTUBE_CLIENT_SECRET = os.environ.get("YOUTUBE_CLIENT_SECRET", "")
-YOUTUBE_CHANNEL = "@chabadupdates"
+YOUTUBE_CHANNEL_ID = os.environ.get("YOUTUBE_CHANNEL_ID", "UCXhNK4F73hySVUj66u5GFjg")
 youtube_tokens = {}  # שמירת tokens זמנית
 
 class Handler(BaseHTTPRequestHandler):
@@ -125,7 +125,8 @@ def upload_to_youtube(video_bytes, title, description="", tags=[]):
                 "title": title,
                 "description": description,
                 "tags": tags,
-                "categoryId": "22"
+                "categoryId": "22",
+                "channelId": YOUTUBE_CHANNEL_ID
             },
             "status": {"privacyStatus": "public"}
         }
