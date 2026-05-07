@@ -478,33 +478,30 @@ def process_with_groq(text, prompt=None):
     return None
 
 def clean_json_string(result):
-    """ניקוי ותיקון JSON עם תווים עבריים מיוחדים"""
     import re
     result = result.strip().replace("```json", "").replace("```", "").strip()
-    # ניקוי תווי בקרה (חוץ מ-\n ו-\t שצריך ל-JSON)
     result = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', result)
-    # חיתוך עד הסוגר האחרון
     last_brace = result.rfind("}")
     if last_brace != -1:
         result = result[:last_brace+1]
-    # תיקון גרשיים כפולים עבריים (ל"ג, אדמו"ר וכו') – escape רק בתוך values
-    def fix_geresh(s):
-        # מחלץ ומתקן כל value של JSON
-        def replacer(m):
-            key = m.group(1)
-            val = m.group(2)
-            # escape גרשיים שלא escaped
-            val = re.sub(r'(?<!\\)"', '\\"', val)
-            return f'"{key}": "{val}"'
-        return re.sub(r'"([^"]+)":\s*"((?:[^"\\]|\\.)*)"', replacer, s)
+    # ניסיון ראשון – פרסור ישיר
     try:
         return json.loads(result)
     except json.JSONDecodeError:
-        try:
-            return json.loads(fix_geresh(result))
-        except json.JSONDecodeError as e:
-            print(f"שגיאה JSON סופית: {e}\nתשובה: {result[:500]}", flush=True)
-            return None
+        pass
+    # ניסיון שני – החלף גרשיים עבריים בתוך values
+    # מוצא כל value של JSON ומחליף " שלא escaped בתוכו
+    def fix_value(m):
+        val = m.group(2)
+        # escape גרשיים שלא escaped (לא אחרי backslash)
+        val = re.sub(r'(?<!\\)"', '\\"', val)
+        return f'"{m.group(1)}":{m.group(3)}"{val}"'
+    fixed = re.sub(r'"([^"]+)"(\s*:\s*)"((?:[^"\\]|\\.)*)"', fix_value, result)
+    try:
+        return json.loads(fixed)
+    except json.JSONDecodeError as e:
+        print(f"שגיאה JSON סופית: {e}\nתשובה: {result[:500]}", flush=True)
+        return None
 
 def build_prompt(text):
     return f"""אתה עורך ראשי של אתר חדשות חרדי. כתוב בסגנון עיתונאי מקצועי ומושך.
@@ -513,9 +510,12 @@ def build_prompt(text):
 - כותרת ראשית: רגש + עובדה + שם מרכזי, עם נקודתיים (:). לפחות 8 מילים. לדוגמה: "ביקור של זיכרונות ותנופה: ר' לוי לבייב בחצרות קודשנו"
 - כותרת משנה: פרטים עשירים מופרדים ב-•. לפחות 15 מילים.
 - כותרת אדומה: 2-4 מילים עוצמתיות.
-- גוף: חלק לפסקאות של 2-4 משפטים. אל תוסיף מילים. הסר * _ ~ אבל שמור גרשיים.
-- בתוך JSON: גרשיים כפולים (ל"ג, אדמו"ר) כתוב עם backslash: ל\\"ג
+- גוף: חלק לפסקאות של 2-4 משפטים. אל תוסיף מילים. הסר * _ ~
 - תגיות: 5-8 מילות מפתח.
+
+חשוב מאוד לפורמט JSON:
+- במקום גרשיים כפולים " (כמו ל"ג, אדמו"ר) כתוב גרש עברי ״ (U+05F4) כך: ל״ג, אדמו״ר
+- אל תשתמש בגרשיים רגילים " בתוך הטקסט בכלל
 
 החזר JSON בלבד:
 {{"title":"...","subtitle":"...","red_title":"...","body":"...","tags":["...","...","...","...","..."]}}
