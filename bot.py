@@ -489,33 +489,34 @@ def process_with_groq(text, prompt):
 def process_with_gemini(text):
     if not GEMINI_API_KEY:
         return None
-    prompt = f"""אתה עורך כתבות מנוסה לאתר חדשות חרדי. קיבלת טקסט גולמי. עליך לייצר:
+    prompt = f"""אתה עורך ראשי של אתר חדשות חרדי מוביל. אתה כותב כותרות מושכות, עשירות ומלאות תוכן בסגנון עיתונאי מקצועי.
 
-1. **כותרת ראשית** - משפט מושך ומלא שמסכם את הכתבה, בין 8-15 מילים. חייב להכיל את שם האירוע/אדם המרכזי.
+דוגמה לאיכות הנדרשת:
+טקסט גולמי: "ר' לוי לבייב ביקר את מזכירו של הרבי הרב יהודה קרינסקי, הביקור היה חם ומתרפק..."
+כותרת ראשית מצוינת: "ביקור של זיכרונות ותנופה: ר' לוי לבייב בחצרות קודשנו"
+כותרת משנה מצוינת: "מחדרו של הרבי ועד להרחבת הישיבה: הנגיד ר' לוי לבייב בסיור מרגש ב-770 • פגישה חמה עם המזכיר הרב יהודה קרינסקי ותרומה להקמת שתי קומות נוספות"
+כותרת אדומה מצוינת: "ביקור מרגש ב-770"
 
-2. **כותרת משנה** - תיאור מפורט יותר, בין 15-25 מילים. צריך לכלול פרטים מרכזיים נוספים מהכתבה כמו שמות, מקומות, אירועים.
+כללי זהב לכותרות:
+- כותרת ראשית: שילוב של רגש + עובדה + שם מרכזי. השתמש בנקודתיים (:) ליצירת מתח. לפחות 8 מילים.
+- כותרת משנה: כל הפרטים החשובים מופרדים ב-• . לפחות 20 מילים. תן תחושה של סיקור מלא.
+- כותרת אדומה: 2-4 מילים, עוצמתיות ומושכות תשומת לב.
 
-3. **כותרת אדומה** - 2-4 מילים בלבד, הדגשה קצרה וחזקה.
+עכשיו עבד על הטקסט הבא:
 
-4. **גוף הכתבה** - סדר את הטקסט בפסקאות הגיוניות לפי תוכן ועניין:
+1. **כותרת ראשית** - בסגנון הדוגמה למעלה, לפחות 8 מילים עם שם מרכזי.
+2. **כותרת משנה** - פירוט עשיר עם • בין הנקודות, לפחות 20 מילים.
+3. **כותרת אדומה** - 2-4 מילים עוצמתיות.
+4. **גוף הכתבה** - סדר את הטקסט בפסקאות הגיוניות:
    - כל מחשבה או נושא נפרד = פסקה נפרדת
-   - אם יש שורות חדשות בטקסט המקורי, השתמש בהן כרמז לחלוקה
-   - אם הטקסט הוא גוש רצוף ללא שורות, חלק אותו לפסקאות של 2-4 משפטים כל אחת
-   - אסור להוסיף מילה אחת שלא קיימת בטקסט המקורי
-   - אסור לשנות, לנסח מחדש, או לתרגם – רק לסדר בפסקאות
+   - אם הטקסט גוש רצוף, חלק ל-2-4 משפטים לפסקה
+   - אסור להוסיף מילה שלא קיימת בטקסט
+   - הסר תווי עיצוב וואטסאפ (* _ ~)
+   - גרשיים כפולים " החלף ב-' כדי לא לשבור JSON
    - הפסק בין פסקאות עם \\n\\n
-   - תווי עיצוב וואטסאפ: הסר * ו-_ ו-~ מהטקסט (אל תכליל אותם ב-JSON)
-   - גרשיים כפולים " בתוך הטקסט – החלף ב-' (גרש בודד) כדי לא לשבור את ה-JSON
+5. **תגיות** - 5-8 מילות מפתח.
 
-5. **תגיות** - בין 5-8 מילות מפתח רלוונטיות מהטקסט.
-
-חוקים מחייבים:
-- אסור להוסיף מידע שלא קיים בטקסט המקורי
-- אסור לשנות אפילו מילה אחת בגוף הכתבה
-- הכותרת הראשית חייבת להיות לפחות 8 מילים
-- התגיות חייבות להיות לפחות 5
-
-החזר תשובה בפורמט JSON בלבד ללא backticks:
+החזר JSON בלבד ללא backticks:
 {{"title": "...", "subtitle": "...", "red_title": "...", "body": "...", "tags": ["...", "...", "...", "...", "..."]}}
 
 הטקסט:
@@ -553,7 +554,70 @@ def process_with_gemini(text):
     print("עובר ל-Groq כגיבוי...", flush=True)
     return process_with_groq(text, prompt)
 
-def _show_summary(chat_id, draft):
+def improve_titles_with_ai(draft):
+    text = draft.get("body", "")
+    prompt = f"""אתה עורך ראשי של אתר חדשות חרדי. הכותרות הבאות חיוורות מדי – שפר אותן לרמה עיתונאית גבוהה.
+
+כותרת נוכחית: {draft.get('title','')}
+כותרת משנה נוכחית: {draft.get('subtitle','')}
+כותרת אדומה נוכחית: {draft.get('red_title','')}
+
+גוף הכתבה לעיון:
+{text[:500]}
+
+כללים:
+- כותרת ראשית: שילוב רגש + עובדה + שם מרכזי, עם נקודתיים (:) ליצירת מתח. לפחות 8 מילים.
+- כותרת משנה: פרטים עשירים מופרדים ב-•. לפחות 20 מילים.
+- כותרת אדומה: 2-4 מילים עוצמתיות.
+- גרשיים כפולים " החלף ב-'
+
+החזר JSON בלבד:
+{{"title": "...", "subtitle": "...", "red_title": "..."}}"""
+
+    # נסה Gemini קודם
+    try:
+        if GEMINI_API_KEY:
+            resp = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}",
+                json={"contents": [{"parts": [{"text": prompt}]}]},
+                timeout=30
+            )
+            if resp.status_code == 200:
+                result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+                result = result.strip().replace("```json", "").replace("```", "").strip()
+                import re
+                result = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', result)
+                last_brace = result.rfind("}")
+                if last_brace != -1:
+                    result = result[:last_brace+1]
+                return json.loads(result)
+    except Exception as e:
+        print(f"שגיאה שיפור כותרות Gemini: {e}", flush=True)
+
+    # גיבוי Groq
+    try:
+        groq_key = os.environ.get("GROQ_API_KEY", "")
+        if groq_key:
+            resp = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                json={"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}], "temperature": 0.5},
+                timeout=30
+            )
+            if resp.status_code == 200:
+                result = resp.json()["choices"][0]["message"]["content"]
+                result = result.strip().replace("```json", "").replace("```", "").strip()
+                import re
+                result = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', result)
+                last_brace = result.rfind("}")
+                if last_brace != -1:
+                    result = result[:last_brace+1]
+                return json.loads(result)
+    except Exception as e:
+        print(f"שגיאה שיפור כותרות Groq: {e}", flush=True)
+    return None
+
+
     summary = f"""📋 <b>סיכום:</b>
 
 <b>כותרת:</b> {draft.get('title','')}
@@ -890,6 +954,7 @@ def handle_message(msg):
             send_message(chat_id, preview, {
                 "inline_keyboard": [
                     [{"text": "✅ מאשר, המשך", "callback_data": "smart_approve"}],
+                    [{"text": "✨ שפר כותרות", "callback_data": "smart_improve_titles"}],
                     [{"text": "✏️ ערוך כותרת", "callback_data": "smart_edit_title"},
                      {"text": "✏️ ערוך כותרת משנה", "callback_data": "smart_edit_subtitle"}],
                     [{"text": "✏️ ערוך גוף", "callback_data": "smart_edit_body"},
@@ -1407,6 +1472,38 @@ def handle_callback(cb):
         draft["categories"] = []
         draft["cat_names"] = []
         send_message(chat_id, "✅ מעולה! בחר <b>קטגוריות</b>:", keyboard)
+
+    elif cb_data == "smart_improve_titles":
+        send_message(chat_id, "✨ משפר כותרות...")
+        improved = improve_titles_with_ai(draft)
+        if improved:
+            draft["title"] = improved.get("title", draft["title"])
+            draft["subtitle"] = improved.get("subtitle", draft["subtitle"])
+            draft["red_title"] = improved.get("red_title", draft["red_title"])
+            import re
+            body_preview = re.sub(r'<[^>]+>', '', draft.get("body",""))[:300]
+            preview = f"""✨ <b>כותרות משופרות:</b>
+
+<b>כותרת:</b> {draft['title']}
+<b>כותרת משנה:</b> {draft['subtitle']}
+<b>כותרת אדומה:</b> {draft['red_title']}
+<b>תגיות:</b> {', '.join(draft.get('tags',[]))}
+
+<b>גוף:</b>
+{body_preview}{'...' if len(draft.get('body','')) > 300 else ''}"""
+            send_message(chat_id, preview, {
+                "inline_keyboard": [
+                    [{"text": "✅ מאשר, המשך", "callback_data": "smart_approve"}],
+                    [{"text": "✨ שפר שוב", "callback_data": "smart_improve_titles"}],
+                    [{"text": "✏️ ערוך כותרת", "callback_data": "smart_edit_title"},
+                     {"text": "✏️ ערוך כותרת משנה", "callback_data": "smart_edit_subtitle"}],
+                    [{"text": "✏️ ערוך גוף", "callback_data": "smart_edit_body"},
+                     {"text": "✏️ ערוך תגיות", "callback_data": "smart_edit_tags"}],
+                    [{"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+                ]
+            })
+        else:
+            send_message(chat_id, "❌ שגיאה בשיפור כותרות. נסה שוב.")
 
     elif cb_data == "smart_edit_subtitle":
         draft["step"] = "smart_edit_subtitle_input"
