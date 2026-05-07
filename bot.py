@@ -10,6 +10,7 @@ WP_URL = "https://chabadupdates.com/wp-json/wp/v2"
 WP_USER = os.environ["WP_USER"]
 WP_PASSWORD = os.environ["WP_PASSWORD"]
 CHANNEL_ID = "-1003967710127"
+VIMEO_TOKEN = os.environ.get("VIMEO_TOKEN", "")
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -46,6 +47,55 @@ def send_message(chat_id, text, reply_markup=None):
         requests.post(url, json=data, timeout=10)
     except Exception as e:
         print(f"שגיאה שליחה: {e}")
+
+def upload_to_vimeo(video_bytes, title="סרטון חדש"):
+    if not VIMEO_TOKEN:
+        return None
+    try:
+        # שלב 1: יצירת העלאה
+        headers = {
+            "Authorization": f"bearer {VIMEO_TOKEN}",
+            "Content-Type": "application/json",
+            "Accept": "application/vnd.vimeo.*+json;version=3.4"
+        }
+        create_resp = requests.post(
+            "https://api.vimeo.com/me/videos",
+            headers=headers,
+            json={
+                "upload": {"approach": "tus", "size": len(video_bytes)},
+                "name": title,
+                "privacy": {"view": "anybody"}
+            },
+            timeout=30
+        )
+        if create_resp.status_code != 200:
+            print(f"שגיאה יצירת Vimeo: {create_resp.text[:200]}", flush=True)
+            return None
+
+        upload_link = create_resp.json()["upload"]["upload_link"]
+        video_uri = create_resp.json()["uri"]
+
+        # שלב 2: העלאת הקובץ
+        upload_resp = requests.patch(
+            upload_link,
+            headers={
+                "Tus-Resumable": "1.0.0",
+                "Upload-Offset": "0",
+                "Content-Type": "application/offset+octet-stream",
+                "Content-Length": str(len(video_bytes))
+            },
+            data=video_bytes,
+            timeout=120
+        )
+        if upload_resp.status_code in (204, 200):
+            video_id = video_uri.split("/")[-1]
+            return f"https://vimeo.com/{video_id}"
+        else:
+            print(f"שגיאה העלאת Vimeo: {upload_resp.status_code}", flush=True)
+            return None
+    except Exception as e:
+        print(f"שגיאה Vimeo: {e}", flush=True)
+        return None
 
 def notify_channel(title, subtitle, url):
     text = f"*עדכוני חב\"ד - {title}*\n{subtitle}\n{url}"
@@ -151,6 +201,26 @@ def get_file(file_id):
     except Exception as e:
         print(f"שגיאה קבלת קובץ: {e}")
     return None
+
+def _show_summary(chat_id, draft):
+    summary = f"""📋 <b>סיכום:</b>
+
+<b>כותרת:</b> {draft.get('title','')}
+<b>כותרת משנה:</b> {draft.get('subtitle','')}
+<b>כותרת אדומה:</b> {draft.get('red_title','')}
+<b>תגיות:</b> {', '.join(draft.get('tags',[]))}
+<b>קטגוריות:</b> {', '.join(draft.get('cat_names',[]))}
+<b>תמונה ראשית:</b> {'✅' if draft.get('main_image') else '❌'}
+<b>גלריה:</b> {len(draft.get('gallery',[]))} תמונות
+<b>וידאו:</b> {draft.get('video_url') or 'אין'}"""
+    send_message(chat_id, summary, {
+        "inline_keyboard": [
+            [{"text": "🚀 פרסם עכשיו", "callback_data": "publish_now"},
+             {"text": "⏰ תזמן פרסום", "callback_data": "publish_schedule"}],
+            [{"text": "💾 שמור כטיוטה", "callback_data": "publish_draft"},
+             {"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+        ]
+    })
 
 def handle_message(msg):
     chat_id = msg["chat"]["id"]
@@ -447,31 +517,38 @@ def handle_message(msg):
                 send_message(chat_id, f"✅ תמונה {len(draft['gallery'])} נוספה. שלח עוד או /done")
         elif text == "/done":
             draft["step"] = "video"
-            send_message(chat_id, f"✅ {len(draft['gallery'])} תמונות בגלריה!\n\nשלח <b>לינק וידאו מ-Vimeo</b> או /skip:")
+            send_message(chat_id, f"✅ {len(draft['gallery'])} תמונות בגלריה!\n\nשלח <b>קובץ סרטון</b> להעלאה ל-Vimeo, <b>לינק</b> ידני, או /skip:")
         else:
             send_message(chat_id, "שלח תמונה או /done:")
 
     elif step == "video":
-        draft["video_url"] = None if text == "/skip" else text
-        draft["step"] = "confirm"
-        summary = f"""📋 <b>סיכום:</b>
-
-<b>כותרת:</b> {draft.get('title','')}
-<b>כותרת משנה:</b> {draft.get('subtitle','')}
-<b>כותרת אדומה:</b> {draft.get('red_title','')}
-<b>תגיות:</b> {', '.join(draft.get('tags',[]))}
-<b>קטגוריות:</b> {', '.join(draft.get('cat_names',[]))}
-<b>תמונה ראשית:</b> {'✅' if draft.get('main_image') else '❌'}
-<b>גלריה:</b> {len(draft.get('gallery',[]))} תמונות
-<b>וידאו:</b> {draft.get('video_url') or 'אין'}"""
-        send_message(chat_id, summary, {
-            "inline_keyboard": [
-                [{"text": "🚀 פרסם עכשיו", "callback_data": "publish_now"},
-                 {"text": "⏰ תזמן פרסום", "callback_data": "publish_schedule"}],
-                [{"text": "💾 שמור כטיוטה", "callback_data": "publish_draft"},
-                 {"text": "❌ ביטול", "callback_data": "publish_cancel"}]
-            ]
-        })
+        if text == "/skip":
+            draft["video_url"] = None
+            draft["step"] = "confirm"
+            _show_summary(chat_id, draft)
+        elif "video" in msg or "document" in msg:
+            # קובץ סרטון – העלאה ל-Vimeo
+            send_message(chat_id, "⏳ מעלה סרטון ל-Vimeo, זה יכול לקחת כמה דקות...")
+            file_id = msg.get("video", msg.get("document", {})).get("file_id")
+            if file_id:
+                video_bytes = get_file(file_id)
+                if video_bytes:
+                    vimeo_url = upload_to_vimeo(video_bytes, draft.get("title", "סרטון"))
+                    if vimeo_url:
+                        draft["video_url"] = vimeo_url
+                        send_message(chat_id, f"✅ הסרטון עלה ל-Vimeo!\n🔗 {vimeo_url}")
+                    else:
+                        send_message(chat_id, "❌ שגיאה בהעלאה ל-Vimeo. שלח לינק ידנית או /skip:")
+                        return
+            draft["step"] = "confirm"
+            _show_summary(chat_id, draft)
+        elif text.startswith("http"):
+            # לינק ידני
+            draft["video_url"] = text
+            draft["step"] = "confirm"
+            _show_summary(chat_id, draft)
+        else:
+            send_message(chat_id, "שלח קובץ סרטון, לינק Vimeo, או /skip:")
 
     elif step == "confirm":
         if text == "/publish":
