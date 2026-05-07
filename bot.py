@@ -473,6 +473,19 @@ def process_with_groq(text, prompt=None):
         if resp.status_code == 200:
             result = resp.json()["choices"][0]["message"]["content"]
             return clean_json_string(result)
+        if resp.status_code == 429:
+            print(f"Groq 429, ממתין 30 שניות...", flush=True)
+            time.sleep(30)
+            # נסיון שני
+            resp = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3, "max_tokens": 2000},
+                timeout=60
+            )
+            if resp.status_code == 200:
+                result = resp.json()["choices"][0]["message"]["content"]
+                return clean_json_string(result)
         print(f"שגיאה Groq: {resp.status_code} | {resp.text[:300]}", flush=True)
     except Exception as e:
         print(f"שגיאה Groq: {e}", flush=True)
@@ -540,7 +553,7 @@ def process_with_gemini(text):
         for attempt in range(2):
             print(f"Gemini ניסיון {attempt+1}...", flush=True)
             resp = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}",
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
                 json={"contents": [{"parts": [{"text": prompt}]}]},
                 timeout=60
             )
@@ -590,7 +603,7 @@ def improve_titles_with_ai(draft):
     try:
         if GEMINI_API_KEY:
             resp = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}",
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
                 json={"contents": [{"parts": [{"text": prompt}]}]},
                 timeout=30
             )
