@@ -9,6 +9,7 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 WP_URL = "https://chabadupdates.com/wp-json/wp/v2"
 WP_USER = os.environ["WP_USER"]
 WP_PASSWORD = os.environ["WP_PASSWORD"]
+CHANNEL_ID = "-1003967710127"
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -44,6 +45,17 @@ def send_message(chat_id, text, reply_markup=None):
         requests.post(url, json=data, timeout=10)
     except Exception as e:
         print(f"שגיאה שליחה: {e}")
+
+def notify_channel(title, subtitle, url):
+    text = f"*עדכוני חב\"ד - {title}*\n{subtitle}\n{url}"
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": CHANNEL_ID, "text": text, "parse_mode": "Markdown"},
+            timeout=10
+        )
+    except Exception as e:
+        print(f"שגיאה שליחה לערוץ: {e}")
 
 def get_wp_categories():
     try:
@@ -230,8 +242,10 @@ def handle_message(msg):
 מה תרצה לערוך?""", {
                 "inline_keyboard": [
                     [{"text": "כותרת", "callback_data": "edit_title"},
-                     {"text": "תוכן", "callback_data": "edit_content"}],
-                    [{"text": "תמונה ראשית", "callback_data": "edit_image"}]
+                     {"text": "כותרת אדומה", "callback_data": "edit_red_title"}],
+                    [{"text": "תמונה ראשית", "callback_data": "edit_image"},
+                     {"text": "הוספת תמונות", "callback_data": "edit_gallery"}],
+                    [{"text": "הוספת סרטון", "callback_data": "edit_video"}]
                 ]
             })
         except Exception as e:
@@ -372,8 +386,15 @@ def handle_message(msg):
             send_message(chat_id, "⏳ מפרסם לוורדפרס...")
             resp = publish_to_wp(draft)
             if resp.status_code == 201:
-                post_url = resp.json().get("link", "")
+                post_data_resp = resp.json()
+                post_url = post_data_resp.get("link", "")
                 send_message(chat_id, f"✅ <b>הכתבה פורסמה!</b>\n🔗 {post_url}", MAIN_MENU)
+                # שליחה לערוץ
+                notify_channel(
+                    draft.get("title", ""),
+                    draft.get("subtitle", ""),
+                    post_url
+                )
                 drafts[user_id] = {"step": "idle", "gallery": []}
             else:
                 send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
