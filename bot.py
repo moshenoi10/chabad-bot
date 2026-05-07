@@ -339,13 +339,52 @@ def get_file(file_id):
 def convert_whatsapp_format(text):
     """המרת פורמט וואטסאפ ל-HTML"""
     import re
-    # *טקסט* → <strong>טקסט</strong>
     text = re.sub(r'\*([^*]+)\*', r'<strong>\1</strong>', text)
-    # _טקסט_ → <em>טקסט</em>
     text = re.sub(r'_([^_]+)_', r'<em>\1</em>', text)
-    # ~טקסט~ → <s>טקסט</s>
     text = re.sub(r'~([^~]+)~', r'<s>\1</s>', text)
     return text
+
+def process_with_gemini(text):
+    if not GEMINI_API_KEY:
+        return None
+    prompt = f"""אתה עורך כתבות מנוסה לאתר חדשות חרדי. קיבלת טקסט גולמי. עליך לייצר:
+
+1. **כותרת ראשית** - משפט מושך ומלא שמסכם את הכתבה, בין 8-15 מילים. חייב להכיל את שם האירוע/אדם המרכזי.
+
+2. **כותרת משנה** - תיאור מפורט יותר, בין 15-25 מילים. צריך לכלול פרטים מרכזיים נוספים מהכתבה כמו שמות, מקומות, אירועים.
+
+3. **כותרת אדומה** - 2-4 מילים בלבד, הדגשה קצרה וחזקה.
+
+4. **גוף הכתבה** - העתק את הטקסט המקורי בדיוק, ללא שינוי כלשהו.
+
+5. **תגיות** - בין 5-8 מילות מפתח רלוונטיות מהטקסט.
+
+חוקים מחייבים:
+- אסור להוסיף מידע שלא קיים בטקסט המקורי
+- אסור לשנות אפילו מילה אחת בגוף הכתבה
+- הכותרת הראשית חייבת להיות לפחות 8 מילים
+- התגיות חייבות להיות לפחות 5
+
+החזר תשובה בפורמט JSON בלבד ללא backticks:
+{{"title": "...", "subtitle": "...", "red_title": "...", "body": "...", "tags": ["...", "...", "...", "...", "..."]}}
+
+הטקסט:
+{text}"""
+
+    try:
+        resp = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}",
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+            timeout=30
+        )
+        if resp.status_code == 200:
+            result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+            result = result.strip().replace("```json", "").replace("```", "").strip()
+            return json.loads(result)
+        print(f"שגיאה Gemini: {resp.status_code}", flush=True)
+    except Exception as e:
+        print(f"שגיאה Gemini: {e}", flush=True)
+    return None
     if not GEMINI_API_KEY:
         return None
     prompt = f"""אתה עורך כתבות מנוסה לאתר חדשות חרדי. קיבלת טקסט גולמי. עליך לייצר:
