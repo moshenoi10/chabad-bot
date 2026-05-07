@@ -12,12 +12,33 @@ WP_PASSWORD = os.environ["WP_PASSWORD"]
 CHANNEL_ID = "-1003967710127"
 VIMEO_TOKEN = os.environ.get("VIMEO_TOKEN", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+YOUTUBE_CLIENT_ID = os.environ.get("YOUTUBE_CLIENT_ID", "")
+YOUTUBE_CLIENT_SECRET = os.environ.get("YOUTUBE_CLIENT_SECRET", "")
+YOUTUBE_CHANNEL = "@chabadupdates"
+youtube_tokens = {}  # שמירת tokens זמנית
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
+        if self.path.startswith("/youtube/callback"):
+            from urllib.parse import urlparse, parse_qs
+            query = parse_qs(urlparse(self.path).query)
+            code = query.get("code", [None])[0]
+            if code:
+                tokens = get_youtube_token(code)
+                if tokens:
+                    youtube_tokens["access_token"] = tokens.get("access_token")
+                    youtube_tokens["refresh_token"] = tokens.get("refresh_token")
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write("✅ YouTube מחובר! חזור לטלגרם.".encode())
+                    return
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(b"Error")
+        else:
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
     def log_message(self, format, *args):
         pass
 
@@ -32,9 +53,9 @@ offset = 0
 MAIN_MENU = {
     "keyboard": [
         [{"text": "✍️ כתבה חדשה"}, {"text": "🤖 העלאה חכמה"}],
-        [{"text": "🎉 מזל טוב"}, {"text": "✏️ עריכת כתבה"}],
-        [{"text": "🗑️ מחיקת כתבה"}, {"text": "📋 כתבות אחרונות"}],
-        [{"text": "📝 טיוטות"}]
+        [{"text": "🎉 מזל טוב"}, {"text": "🎬 העלאה ליוטיוב"}],
+        [{"text": "✏️ עריכת כתבה"}, {"text": "🗑️ מחיקת כתבה"}],
+        [{"text": "📋 כתבות אחרונות"}, {"text": "📝 טיוטות"}]
     ],
     "resize_keyboard": True,
     "persistent": True
@@ -49,6 +70,86 @@ def send_message(chat_id, text, reply_markup=None):
         requests.post(url, json=data, timeout=10)
     except Exception as e:
         print(f"שגיאה שליחה: {e}")
+
+def get_youtube_auth_url():
+    params = {
+        "client_id": YOUTUBE_CLIENT_ID,
+        "redirect_uri": "https://chabad-bot.onrender.com/youtube/callback",
+        "response_type": "code",
+        "scope": "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube",
+        "access_type": "offline",
+        "prompt": "consent"
+    }
+    from urllib.parse import urlencode
+    return "https://accounts.google.com/o/oauth2/auth?" + urlencode(params)
+
+def get_youtube_token(code):
+    resp = requests.post("https://oauth2.googleapis.com/token", data={
+        "code": code,
+        "client_id": YOUTUBE_CLIENT_ID,
+        "client_secret": YOUTUBE_CLIENT_SECRET,
+        "redirect_uri": "https://chabad-bot.onrender.com/youtube/callback",
+        "grant_type": "authorization_code"
+    })
+    if resp.status_code == 200:
+        return resp.json()
+    return None
+
+def refresh_youtube_token(refresh_token):
+    resp = requests.post("https://oauth2.googleapis.com/token", data={
+        "refresh_token": refresh_token,
+        "client_id": YOUTUBE_CLIENT_ID,
+        "client_secret": YOUTUBE_CLIENT_SECRET,
+        "grant_type": "refresh_token"
+    })
+    if resp.status_code == 200:
+        return resp.json().get("access_token")
+    return None
+
+def upload_to_youtube(video_bytes, title, description="", tags=[]):
+    if not youtube_tokens.get("access_token"):
+        return None, "לא מחובר ל-YouTube"
+    try:
+        access_token = youtube_tokens["access_token"]
+        # בדיקה אם הtoken פג תוקף
+        if youtube_tokens.get("refresh_token"):
+            new_token = refresh_youtube_token(youtube_tokens["refresh_token"])
+            if new_token:
+                youtube_tokens["access_token"] = new_token
+                access_token = new_token
+
+        # העלאת הסרטון
+        headers = {"Authorization": f"Bearer {access_token}"}
+        metadata = {
+            "snippet": {
+                "title": title,
+                "description": description,
+                "tags": tags,
+                "categoryId": "22"
+            },
+            "status": {"privacyStatus": "public"}
+        }
+        import json as json_lib
+        from requests_toolbelt import MultipartEncoder
+        
+        # שימוש ב-resumable upload
+        init_resp = requests.post(
+            "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
+            headers={**headers, "Content-Type": "application/json", "X-Upload-Content-Type": "video/*"},
+            json=metadata
+        )
+        if init_resp.status_code != 200:
+            return None, f"שגיאה: {init_resp.text[:200]}"
+        
+        upload_url = init_resp.headers.get("Location")
+        upload_resp = requests.put(upload_url, headers={**headers, "Content-Type": "video/*"}, data=video_bytes, timeout=300)
+        
+        if upload_resp.status_code in (200, 201):
+            video_id = upload_resp.json()["id"]
+            return f"https://www.youtube.com/watch?v={video_id}", None
+        return None, f"שגיאה: {upload_resp.status_code}"
+    except Exception as e:
+        return None, str(e)
 
 def wait_for_vimeo(video_id, max_wait=300):
     """ממתין עד שהסרטון מוכן ב-Vimeo"""
@@ -317,6 +418,20 @@ def handle_message(msg):
         send_message(chat_id, "🤖 <b>העלאה חכמה</b>\n\nשלח את הטקסט הגולמי של הכתבה:")
         return
 
+    if text == "🎬 העלאה ליוטיוב":
+        if not youtube_tokens.get("access_token"):
+            auth_url = get_youtube_auth_url()
+            send_message(chat_id, f"🔑 צריך להתחבר ל-YouTube פעם אחת:\n\n<a href='{auth_url}'>לחץ כאן להתחברות</a>\n\nאחרי ההתחברות חזור לכאן ושלח /youtube שוב")
+        else:
+            drafts[user_id] = {"step": "youtube_title", "gallery": []}
+            send_message(chat_id, "🎬 <b>העלאה ליוטיוב</b>\n\nשלח את <b>כותרת הסרטון</b>:")
+        return
+
+    if text == "/youtube_auth":
+        auth_url = get_youtube_auth_url()
+        send_message(chat_id, f"🔑 <a href='{auth_url}'>לחץ כאן להתחברות ל-YouTube</a>")
+        return
+
     if text == "📋 כתבות אחרונות":
         posts = get_recent_posts("publish")
         if posts:
@@ -396,6 +511,42 @@ def handle_message(msg):
         draft["categories"] = []
         draft["cat_names"] = []
         send_message(chat_id, "✅ תגיות נשמרו!\n\nבחר <b>קטגוריות</b>:", keyboard)
+
+    elif step == "youtube_title":
+        draft["yt_title"] = text
+        draft["step"] = "youtube_desc"
+        send_message(chat_id, "שלח <b>תיאור הסרטון</b> (או /skip):")
+
+    elif step == "youtube_desc":
+        draft["yt_desc"] = "" if text == "/skip" else text
+        draft["step"] = "youtube_tags"
+        send_message(chat_id, "שלח <b>תגיות</b> מופרדות בפסיק (או /skip):")
+
+    elif step == "youtube_tags":
+        draft["yt_tags"] = [] if text == "/skip" else [t.strip() for t in text.split(",")]
+        draft["step"] = "youtube_video"
+        send_message(chat_id, "שלח את <b>קובץ הסרטון</b>:")
+
+    elif step == "youtube_video":
+        if "video" in msg or "document" in msg:
+            send_message(chat_id, "⏳ מעלה סרטון ל-YouTube...")
+            file_id = msg.get("video", msg.get("document", {})).get("file_id")
+            if file_id:
+                video_bytes = get_file(file_id)
+                if video_bytes:
+                    url, error = upload_to_youtube(
+                        video_bytes,
+                        draft.get("yt_title", "סרטון"),
+                        draft.get("yt_desc", ""),
+                        draft.get("yt_tags", [])
+                    )
+                    if url:
+                        send_message(chat_id, f"✅ <b>הסרטון עלה ל-YouTube!</b>\n🔗 {url}", MAIN_MENU)
+                    else:
+                        send_message(chat_id, f"❌ שגיאה: {error}", MAIN_MENU)
+            drafts[user_id] = {"step": "idle", "gallery": []}
+        else:
+            send_message(chat_id, "⚠️ שלח קובץ סרטון:")
 
     elif step == "smart_text":
         send_message(chat_id, "⏳ Gemini מעבד את הטקסט...")
@@ -669,22 +820,19 @@ def handle_message(msg):
             draft["step"] = "confirm"
             _show_summary(chat_id, draft)
         elif "video" in msg or "document" in msg:
-            send_message(chat_id, "⏳ מעלה סרטון ל-Vimeo, זה יכול לקחת כמה דקות...")
+            send_message(chat_id, "לאן להעלות את הסרטון?", {
+                "inline_keyboard": [[
+                    {"text": "🎬 YouTube", "callback_data": "upload_youtube"},
+                    {"text": "🎥 Vimeo", "callback_data": "upload_vimeo"}
+                ]]
+            })
             file_id = msg.get("video", msg.get("document", {})).get("file_id")
-            if file_id:
-                video_bytes = get_file(file_id)
-                if video_bytes:
-                    vimeo_url = upload_to_vimeo(video_bytes, draft.get("title", "סרטון"))
-                    if vimeo_url:
-                        draft.setdefault("videos", []).append(vimeo_url)
-                        send_message(chat_id, f"✅ סרטון {len(draft['videos'])} עלה!\n🔗 {vimeo_url}\n\nשלח סרטון נוסף או /done לסיום:")
-                    else:
-                        send_message(chat_id, "❌ שגיאה. שלח לינק ידנית או /skip:")
+            draft["pending_video_file_id"] = file_id
         elif text.startswith("http"):
             draft.setdefault("videos", []).append(text)
             send_message(chat_id, f"✅ לינק {len(draft['videos'])} נוסף!\n\nשלח סרטון נוסף או /done לסיום:")
         else:
-            send_message(chat_id, "שלח קובץ סרטון, לינק Vimeo, או /skip:")
+            send_message(chat_id, "שלח קובץ סרטון, לינק, או /skip:")
 
     elif step == "confirm":
         if text == "/publish":
@@ -726,6 +874,36 @@ def handle_callback(cb):
             send_message(chat_id, f"✅ <b>{cat_name}</b> נוספה!\nנבחרו: {', '.join(draft['cat_names'])}\n\nבחר עוד או לחץ סיימתי")
         else:
             send_message(chat_id, f"⚠️ {cat_name} כבר נבחרה.")
+
+    elif cb_data == "upload_vimeo":
+        file_id = draft.get("pending_video_file_id")
+        if file_id:
+            send_message(chat_id, "⏳ מעלה ל-Vimeo...")
+            video_bytes = get_file(file_id)
+            if video_bytes:
+                vimeo_url = upload_to_vimeo(video_bytes, draft.get("title", "סרטון"))
+                if vimeo_url:
+                    draft.setdefault("videos", []).append(vimeo_url)
+                    send_message(chat_id, f"✅ עלה ל-Vimeo!\n🔗 {vimeo_url}\n\nשלח סרטון נוסף או /done:")
+                else:
+                    send_message(chat_id, "❌ שגיאה בהעלאה ל-Vimeo")
+
+    elif cb_data == "upload_youtube":
+        file_id = draft.get("pending_video_file_id")
+        if file_id:
+            if not youtube_tokens.get("access_token"):
+                auth_url = get_youtube_auth_url()
+                send_message(chat_id, f"🔑 צריך להתחבר ל-YouTube קודם:\n<a href='{auth_url}'>לחץ כאן</a>")
+            else:
+                send_message(chat_id, "⏳ מעלה ל-YouTube...")
+                video_bytes = get_file(file_id)
+                if video_bytes:
+                    url, error = upload_to_youtube(video_bytes, draft.get("title", "סרטון"))
+                    if url:
+                        draft.setdefault("videos", []).append(url)
+                        send_message(chat_id, f"✅ עלה ל-YouTube!\n🔗 {url}\n\nשלח סרטון נוסף או /done:")
+                    else:
+                        send_message(chat_id, f"❌ שגיאה: {error}")
 
     elif cb_data == "smart_approve":
         # עובר לבחירת קטגוריות כמו כתבה רגילה
