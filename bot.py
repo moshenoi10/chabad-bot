@@ -469,7 +469,9 @@ def process_with_gemini(text):
    - אם הטקסט הוא גוש רצוף ללא שורות, חלק אותו לפסקאות של 2-4 משפטים כל אחת
    - אסור להוסיף מילה אחת שלא קיימת בטקסט המקורי
    - אסור לשנות, לנסח מחדש, או לתרגם – רק לסדר בפסקאות
-   - הפסק בין פסקאות עם שורה ריקה (\\n\\n)
+   - הפסק בין פסקאות עם \\n\\n
+   - תווי עיצוב וואטסאפ: הסר * ו-_ ו-~ מהטקסט (אל תכליל אותם ב-JSON)
+   - גרשיים כפולים " בתוך הטקסט – החלף ב-' (גרש בודד) כדי לא לשבור את ה-JSON
 
 5. **תגיות** - בין 5-8 מילות מפתח רלוונטיות מהטקסט.
 
@@ -499,7 +501,15 @@ def process_with_gemini(text):
             if resp.status_code == 200:
                 result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
                 result = result.strip().replace("```json", "").replace("```", "").strip()
-                return json.loads(result)
+                # חיתוך עד הסוגר האחרון למקרה שיש תוכן אחרי ה-JSON
+                last_brace = result.rfind("}")
+                if last_brace != -1:
+                    result = result[:last_brace+1]
+                try:
+                    return json.loads(result)
+                except json.JSONDecodeError as e:
+                    print(f"שגיאה JSON: {e}\nתשובה גולמית: {result[:500]}", flush=True)
+                    return None
             print(f"שגיאה Gemini: {resp.status_code}", flush=True)
             break
     except Exception as e:
