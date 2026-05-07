@@ -339,23 +339,26 @@ def get_file(file_id):
 def process_with_gemini(text):
     if not GEMINI_API_KEY:
         return None
-    prompt = f"""אתה עורך כתבות לאתר חדשות חרדי. קיבלת טקסט גולמי.
+    prompt = f"""אתה עורך כתבות מנוסה לאתר חדשות חרדי. קיבלת טקסט גולמי. עליך לייצר:
 
-המשימה שלך:
-1. כותרת ראשית - קצרה, מושכת, עד 10 מילים
-2. כותרת משנה - משפט אחד המסכם את הכתבה
-3. כותרת אדומה - 2-3 מילים בלבד
-4. גוף הכתבה - העתק בדיוק את הטקסט המקורי ללא שינוי כלשהו
-5. תגיות - 3-5 מילות מפתח מהטקסט בלבד
+1. **כותרת ראשית** - משפט מושך ומלא שמסכם את הכתבה, בין 8-15 מילים. חייב להכיל את שם האירוע/אדם המרכזי.
+
+2. **כותרת משנה** - תיאור מפורט יותר, בין 15-25 מילים. צריך לכלול פרטים מרכזיים נוספים מהכתבה כמו שמות, מקומות, אירועים.
+
+3. **כותרת אדומה** - 2-4 מילים בלבד, הדגשה קצרה וחזקה.
+
+4. **גוף הכתבה** - העתק את הטקסט המקורי בדיוק, ללא שינוי כלשהו, אפילו לא תיקון שגיאות כתיב.
+
+5. **תגיות** - בין 5-8 מילות מפתח רלוונטיות מהטקסט (שמות אנשים, מקומות, אירועים).
 
 חוקים מחייבים:
 - אסור להוסיף מידע שלא קיים בטקסט המקורי
 - אסור לשנות אפילו מילה אחת בגוף הכתבה
-- אסור להמציא שמות, תאריכים, או פרטים
-- השתמש רק במה שכתוב בטקסט
+- הכותרת הראשית חייבת להיות לפחות 8 מילים
+- התגיות חייבות להיות לפחות 5
 
 החזר תשובה בפורמט JSON בלבד ללא backticks:
-{{"title": "...", "subtitle": "...", "red_title": "...", "body": "...", "tags": ["...", "..."]}}
+{{"title": "...", "subtitle": "...", "red_title": "...", "body": "...", "tags": ["...", "...", "...", "...", "..."]}}
 
 הטקסט:
 {text}"""
@@ -422,10 +425,14 @@ def handle_message(msg):
     if text == "🎬 העלאה ליוטיוב":
         if not youtube_tokens.get("access_token"):
             auth_url = get_youtube_auth_url()
-            send_message(chat_id, f"🔑 צריך להתחבר ל-YouTube פעם אחת:\n\n<a href='{auth_url}'>לחץ כאן להתחברות</a>\n\nאחרי ההתחברות חזור לכאן ושלח /youtube שוב")
+            send_message(chat_id, f"🔑 צריך להתחבר ל-YouTube פעם אחת:\n\n<a href='{auth_url}'>לחץ כאן להתחברות</a>")
         else:
-            drafts[user_id] = {"step": "youtube_title", "gallery": []}
-            send_message(chat_id, "🎬 <b>העלאה ליוטיוב</b>\n\nשלח את <b>כותרת הסרטון</b>:")
+            send_message(chat_id, "🎬 <b>העלאה ליוטיוב</b>\n\nבחר סוג העלאה:", {
+                "inline_keyboard": [[
+                    {"text": "✍️ העלאה רגילה", "callback_data": "yt_manual"},
+                    {"text": "🤖 העלאה חכמה", "callback_data": "yt_smart"}
+                ]]
+            })
         return
 
     if text == "/youtube_auth":
@@ -512,6 +519,51 @@ def handle_message(msg):
         draft["categories"] = []
         draft["cat_names"] = []
         send_message(chat_id, "✅ תגיות נשמרו!\n\nבחר <b>קטגוריות</b>:", keyboard)
+
+    elif step == "yt_edit_title_input":
+        draft["yt_title"] = text
+        draft["step"] = "youtube_smart_confirm"
+        send_message(chat_id, f"✅ כותרת עודכנה!\n\nשלח סרטון או ערוך עוד:", {
+            "inline_keyboard": [
+                [{"text": "✅ שלח סרטון", "callback_data": "yt_smart_approve"}],
+                [{"text": "✏️ ערוך תיאור", "callback_data": "yt_edit_desc"}]
+            ]
+        })
+
+    elif step == "yt_edit_desc_input":
+        draft["yt_desc"] = text
+        draft["step"] = "youtube_smart_confirm"
+        send_message(chat_id, f"✅ תיאור עודכן!\n\nשלח סרטון או ערוך עוד:", {
+            "inline_keyboard": [
+                [{"text": "✅ שלח סרטון", "callback_data": "yt_smart_approve"}],
+                [{"text": "✏️ ערוך כותרת", "callback_data": "yt_edit_title"}]
+            ]
+        })
+
+    elif step == "youtube_smart_text":
+        send_message(chat_id, "⏳ Gemini מעבד...")
+        result = process_with_gemini(text)
+        if result:
+            draft["yt_title"] = result.get("title", "")
+            draft["yt_desc"] = result.get("subtitle", "")
+            draft["yt_tags"] = result.get("tags", [])
+            draft["step"] = "youtube_smart_confirm"
+            preview = f"""🤖 <b>תצוגה מקדימה:</b>
+
+<b>כותרת:</b> {draft['yt_title']}
+<b>תיאור:</b> {draft['yt_desc']}
+<b>תגיות:</b> {', '.join(draft['yt_tags'])}"""
+            send_message(chat_id, preview, {
+                "inline_keyboard": [
+                    [{"text": "✅ מאשר, שלח סרטון", "callback_data": "yt_smart_approve"}],
+                    [{"text": "✏️ ערוך כותרת", "callback_data": "yt_edit_title"},
+                     {"text": "✏️ ערוך תיאור", "callback_data": "yt_edit_desc"}],
+                    [{"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+                ]
+            })
+        else:
+            send_message(chat_id, "❌ שגיאה בעיבוד. נסה שוב.", MAIN_MENU)
+            drafts[user_id] = {"step": "idle", "gallery": []}
 
     elif step == "youtube_title":
         draft["yt_title"] = text
@@ -875,6 +927,26 @@ def handle_callback(cb):
             send_message(chat_id, f"✅ <b>{cat_name}</b> נוספה!\nנבחרו: {', '.join(draft['cat_names'])}\n\nבחר עוד או לחץ סיימתי")
         else:
             send_message(chat_id, f"⚠️ {cat_name} כבר נבחרה.")
+
+    elif cb_data == "yt_smart_approve":
+        draft["step"] = "youtube_video"
+        send_message(chat_id, "✅ מעולה! עכשיו שלח את <b>קובץ הסרטון</b>:")
+
+    elif cb_data == "yt_edit_title":
+        draft["step"] = "yt_edit_title_input"
+        send_message(chat_id, f"כותרת נוכחית:\n<b>{draft.get('yt_title','')}</b>\n\nשלח כותרת חדשה:")
+
+    elif cb_data == "yt_edit_desc":
+        draft["step"] = "yt_edit_desc_input"
+        send_message(chat_id, f"תיאור נוכחי:\n{draft.get('yt_desc','')}\n\nשלח תיאור חדש:")
+
+    elif cb_data == "yt_manual":
+        draft["step"] = "youtube_title"
+        send_message(chat_id, "🎬 שלח את <b>כותרת הסרטון</b>:")
+
+    elif cb_data == "yt_smart":
+        draft["step"] = "youtube_smart_text"
+        send_message(chat_id, "🤖 שלח טקסט גולמי ו-Gemini יכין כותרת, תיאור ותגיות:")
 
     elif cb_data == "upload_vimeo":
         file_id = draft.get("pending_video_file_id")
