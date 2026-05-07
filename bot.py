@@ -1,12 +1,27 @@
 import os
 import json
 import time
+import threading
 import requests
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 WP_URL = "https://chabadupdates.com/wp-json/wp/v2"
 WP_USER = os.environ["WP_USER"]
 WP_PASSWORD = os.environ["WP_PASSWORD"]
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, format, *args):
+        pass
+
+def run_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    server.serve_forever()
 
 drafts = {}
 offset = 0
@@ -236,14 +251,23 @@ def main():
     global offset
     print("🚀 בוט חבד מתחיל!", flush=True)
     
+    # הפעל שרת HTTP ברקע
+    t = threading.Thread(target=run_server, daemon=True)
+    t.start()
+    print("🌐 שרת HTTP פועל", flush=True)
+    
     while True:
         try:
             resp = requests.get(
                 f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates",
-                params={"offset": offset, "timeout": 30},
-                timeout=35
+                params={"offset": offset, "timeout": 0},
+                timeout=10
             )
             updates = resp.json().get("result", [])
+            
+            if not updates:
+                time.sleep(1)
+                continue
             
             for update in updates:
                 offset = update["update_id"] + 1
