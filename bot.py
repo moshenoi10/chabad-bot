@@ -293,13 +293,11 @@ def upload_to_vimeo(video_bytes, title="סרטון חדש"):
             timeout=120
         )
         if upload_resp.status_code in (204, 200):
-            # המתנה לעיבוד
-            print(f"ממתין לעיבוד Vimeo {video_id}...", flush=True)
-            wait_for_vimeo(video_id)
-            return f"https://vimeo.com/{video_id}"
+            print(f"Vimeo {video_id} הועלה, עיבוד ברקע...", flush=True)
+            return f"https://vimeo.com/{video_id}", video_id
         else:
             print(f"שגיאה העלאת Vimeo: {upload_resp.status_code}", flush=True)
-            return None
+            return None, None
     except Exception as e:
         print(f"שגיאה Vimeo: {e}", flush=True)
         return None
@@ -352,6 +350,13 @@ def upload_image_to_wp(image_bytes, filename):
     return None, None
 
 def publish_to_wp(draft, status="publish", schedule_date=None):
+    # המתן לעיבוד Vimeo לפני פרסום
+    vimeo_ids = draft.get("vimeo_ids", [])
+    if vimeo_ids:
+        print(f"ממתין לעיבוד {len(vimeo_ids)} סרטוני Vimeo...", flush=True)
+        for vid_id in vimeo_ids:
+            wait_for_vimeo(vid_id, max_wait=120)
+        print("כל הסרטונים מוכנים!", flush=True)
     featured_id = None
     if draft.get("main_image"):
         featured_id, _ = upload_image_to_wp(draft["main_image"], "main.jpg")
@@ -380,7 +385,8 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
         content += f'\n\n<!-- wp:embed {{"url":"{url}","type":"video","providerNameSlug":"vimeo","responsive":true}} -->\n<figure class="wp-block-embed is-type-video is-provider-vimeo"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n<!-- /wp:embed -->'
 
     for url in draft.get("videos", []):
-        content += f'\n\n[embed]{url}[/embed]'
+        video_id = url.split("/")[-1]
+        content += f'\n\n<div style="padding:56.25% 0 0 0;position:relative;"><iframe src="https://player.vimeo.com/video/{video_id}" frameborder="0" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe></div><script src="https://player.vimeo.com/api/player.js"></script>\n'
 
     tag_ids = []
     for tag in draft.get("tags", []):
@@ -1215,9 +1221,10 @@ def handle_callback(cb):
         for i, fid in enumerate(files):
             video_bytes = get_file(fid)
             if video_bytes:
-                url = upload_to_vimeo(video_bytes, f"{draft.get('title', 'סרטון')} {i+1}")
+                url, vid_id = upload_to_vimeo(video_bytes, f"{draft.get('title', 'סרטון')} {i+1}")
                 if url:
                     draft.setdefault("videos", []).append(url)
+                    draft.setdefault("vimeo_ids", []).append(vid_id)
                     success += 1
         draft["pending_group_files"] = []
         send_message(chat_id, f"✅ הועלו {success}/{len(files)} סרטונים ל-Vimeo!\n\nשלח /done לסיום או סרטון נוסף:")
@@ -1246,10 +1253,11 @@ def handle_callback(cb):
             send_message(chat_id, "⏳ מעלה ל-Vimeo...")
             video_bytes = get_file(file_id)
             if video_bytes:
-                vimeo_url = upload_to_vimeo(video_bytes, draft.get("title", "סרטון"))
+                vimeo_url, vid_id = upload_to_vimeo(video_bytes, draft.get("title", "סרטון"))
                 if vimeo_url:
                     draft.setdefault("videos", []).append(vimeo_url)
-                    send_message(chat_id, f"✅ עלה ל-Vimeo!\n🔗 {vimeo_url}\n\nשלח סרטון נוסף או /done:")
+                    draft.setdefault("vimeo_ids", []).append(vid_id)
+                    send_message(chat_id, f"✅ עלה ל-Vimeo!\n\nשלח סרטון נוסף או /done:")
                 else:
                     send_message(chat_id, "❌ שגיאה בהעלאה ל-Vimeo")
 
