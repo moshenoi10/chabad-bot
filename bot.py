@@ -934,10 +934,11 @@ def handle_message(msg):
 מה תרצה לערוך?""", {
                 "inline_keyboard": [
                     [{"text": "כותרת", "callback_data": "edit_title"},
-                     {"text": "כותרת אדומה", "callback_data": "edit_red_title"}],
-                    [{"text": "תמונה ראשית", "callback_data": "edit_image"},
-                     {"text": "הוספת תמונות", "callback_data": "edit_gallery"}],
-                    [{"text": "הוספת סרטון", "callback_data": "edit_video"}]
+                     {"text": "כותרת משנה", "callback_data": "edit_subtitle"}],
+                    [{"text": "כותרת אדומה", "callback_data": "edit_red_title"},
+                     {"text": "תמונה ראשית", "callback_data": "edit_image"}],
+                    [{"text": "הוספת תמונות", "callback_data": "edit_gallery"},
+                     {"text": "הוספת סרטון", "callback_data": "edit_video"}]
                 ]
             })
         except Exception as e:
@@ -949,6 +950,8 @@ def handle_message(msg):
         update_data = {}
         if field == "title":
             update_data["title"] = text
+        elif field == "subtitle":
+            update_data["excerpt"] = text
         elif field == "red_title":
             update_data["acf"] = {"tag_label": text}
         r = requests.post(f"{WP_URL}/posts/{post_id}", json=update_data,
@@ -1150,10 +1153,12 @@ def handle_message(msg):
             content = get_file(msg["photo"][-1]["file_id"])
             if content:
                 draft["gallery"].append(content)
-                send_message(chat_id, f"✅ תמונה {len(draft['gallery'])} נוספה. שלח עוד או /done")
+                if len(draft["gallery"]) == 1:
+                    send_message(chat_id, "📥 מקבל תמונות... שלח /done כשסיימת")
         elif text == "/done":
             draft["step"] = "video"
-            send_message(chat_id, f"✅ {len(draft['gallery'])} תמונות בגלריה!\n\nשלח <b>קובץ סרטון</b> להעלאה ל-Vimeo, <b>לינק</b> ידני, או /skip:")
+            count = len(draft['gallery'])
+            send_message(chat_id, f"✅ התקבלו {count} תמונות!\n\nשלח <b>קובץ סרטון</b> להעלאה ל-Vimeo, <b>לינק</b> ידני, או /skip:")
         else:
             send_message(chat_id, "שלח תמונה או /done:")
 
@@ -1405,6 +1410,11 @@ def handle_callback(cb):
         draft["step"] = "edit_field_value"
         draft["edit_field"] = "title"
         send_message(chat_id, "שלח את הכותרת החדשה:")
+
+    elif cb_data == "edit_subtitle":
+        draft["step"] = "edit_field_value"
+        draft["edit_field"] = "subtitle"
+        send_message(chat_id, "שלח את כותרת המשנה החדשה:")
 
     elif cb_data == "edit_red_title":
         draft["step"] = "edit_field_value"
