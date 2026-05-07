@@ -279,8 +279,8 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
         if img_url:
             gallery_content += f'\n<figure class="wp-block-image size-full"><img src="{img_url}" /></figure>\n'
 
-    # עיבוד גוף הכתבה – שמירת פיסקאות
-    body_text = draft.get("body", "")
+    # עיבוד גוף הכתבה – המרת פורמט וואטסאפ ושמירת פיסקאות
+    body_text = convert_whatsapp_format(draft.get("body", ""))
     paragraphs = [p.strip() for p in body_text.split("\n\n") if p.strip()]
     if paragraphs:
         content = "\n\n".join([f"<!-- wp:paragraph -->\n<p>{p}</p>\n<!-- /wp:paragraph -->" for p in paragraphs])
@@ -336,7 +336,16 @@ def get_file(file_id):
         print(f"שגיאה קבלת קובץ: {e}")
     return None
 
-def process_with_gemini(text):
+def convert_whatsapp_format(text):
+    """המרת פורמט וואטסאפ ל-HTML"""
+    import re
+    # *טקסט* → <strong>טקסט</strong>
+    text = re.sub(r'\*([^*]+)\*', r'<strong>\1</strong>', text)
+    # _טקסט_ → <em>טקסט</em>
+    text = re.sub(r'_([^_]+)_', r'<em>\1</em>', text)
+    # ~טקסט~ → <s>טקסט</s>
+    text = re.sub(r'~([^~]+)~', r'<s>\1</s>', text)
+    return text
     if not GEMINI_API_KEY:
         return None
     prompt = f"""אתה עורך כתבות מנוסה לאתר חדשות חרדי. קיבלת טקסט גולמי. עליך לייצר:
@@ -539,6 +548,30 @@ def handle_message(msg):
                 [{"text": "✏️ ערוך כותרת", "callback_data": "yt_edit_title"}]
             ]
         })
+
+    elif step == "article_yt_smart_text":
+        send_message(chat_id, "⏳ Gemini מעבד...")
+        result = process_with_gemini(text)
+        if result:
+            draft["yt_title"] = result.get("title", draft.get("title", "סרטון"))
+            draft["yt_tags"] = result.get("tags", [])
+            file_id = draft.get("pending_video_file_id")
+            if file_id:
+                if not youtube_tokens.get("access_token"):
+                    auth_url = get_youtube_auth_url()
+                    send_message(chat_id, f"🔑 צריך להתחבר ל-YouTube:\n<a href='{auth_url}'>לחץ כאן</a>")
+                else:
+                    send_message(chat_id, f"⏳ מעלה ל-YouTube עם כותרת:\n<b>{draft['yt_title']}</b>")
+                    video_bytes = get_file(file_id)
+                    if video_bytes:
+                        url, error = upload_to_youtube(video_bytes, draft["yt_title"], "", draft["yt_tags"])
+                        if url:
+                            draft.setdefault("videos", []).append(url)
+                            send_message(chat_id, f"✅ עלה ל-YouTube!\n🔗 {url}\n\nשלח סרטון נוסף או /done:")
+                        else:
+                            send_message(chat_id, f"❌ שגיאה: {error}")
+        else:
+            send_message(chat_id, "❌ שגיאה בעיבוד. שלח שוב.")
 
     elif step == "youtube_smart_text":
         send_message(chat_id, "⏳ Gemini מעבד...")
@@ -873,19 +906,38 @@ def handle_message(msg):
             draft["step"] = "confirm"
             _show_summary(chat_id, draft)
         elif "video" in msg or "document" in msg:
-            send_message(chat_id, "לאן להעלות את הסרטון?", {
-                "inline_keyboard": [[
-                    {"text": "🎬 YouTube", "callback_data": "upload_youtube"},
-                    {"text": "🎥 Vimeo", "callback_data": "upload_vimeo"}
-                ]]
-            })
             file_id = msg.get("video", msg.get("document", {})).get("file_id")
-            draft["pending_video_file_id"] = file_id
+            media_group_id = msg.get("media_group_id")
+            if media_group_id:
+                if draft.get("current_media_group") != media_group_id:
+                    draft["current_media_group"] = media_group_id
+                    draft["pending_group_files"] = []
+                if file_id not in draft["pending_group_files"]:
+                    draft["pending_group_files"].append(file_id)
+                send_message(chat_id, f"📥 {len(draft['pending_group_files'])} סרטונים התקבלו. שלח /upload_all להעלאה:")
+            else:
+                draft["pending_video_file_id"] = file_id
+                send_message(chat_id, "לאן להעלות את הסרטון?", {
+                    "inline_keyboard": [
+                        [{"text": "🎬 YouTube", "callback_data": "upload_youtube"},
+                         {"text": "🎥 Vimeo", "callback_data": "upload_vimeo"}],
+                        [{"text": "🤖 YouTube חכם", "callback_data": "upload_youtube_smart"}]
+                    ]
+                })
+        elif text == "/upload_all":
+            files = draft.get("pending_group_files", [])
+            if files:
+                send_message(chat_id, f"לאן להעלות {len(files)} סרטונים?", {
+                    "inline_keyboard": [
+                        [{"text": "🎬 YouTube", "callback_data": "upload_group_youtube"},
+                         {"text": "🎥 Vimeo", "callback_data": "upload_group_vimeo"}]
+                    ]
+                })
         elif text.startswith("http"):
             draft.setdefault("videos", []).append(text)
             send_message(chat_id, f"✅ לינק {len(draft['videos'])} נוסף!\n\nשלח סרטון נוסף או /done לסיום:")
         else:
-            send_message(chat_id, "שלח קובץ סרטון, לינק, או /skip:")
+            send_message(chat_id, "שלח קובץ סרטון, לינק, /upload_all לכמה סרטונים, או /skip:")
 
     elif step == "confirm":
         if text == "/publish":
@@ -948,6 +1000,38 @@ def handle_callback(cb):
         draft["step"] = "youtube_smart_text"
         send_message(chat_id, "🤖 שלח טקסט גולמי ו-Gemini יכין כותרת, תיאור ותגיות:")
 
+    elif cb_data == "upload_group_vimeo":
+        files = draft.get("pending_group_files", [])
+        send_message(chat_id, f"⏳ מעלה {len(files)} סרטונים ל-Vimeo...")
+        for i, fid in enumerate(files):
+            video_bytes = get_file(fid)
+            if video_bytes:
+                url = upload_to_vimeo(video_bytes, f"{draft.get('title', 'סרטון')} {i+1}")
+                if url:
+                    draft.setdefault("videos", []).append(url)
+                    send_message(chat_id, f"✅ סרטון {i+1}/{len(files)} עלה!\n🔗 {url}")
+        draft["pending_group_files"] = []
+        send_message(chat_id, "✅ כל הסרטונים עלו! שלח /done לסיום:")
+
+    elif cb_data == "upload_group_youtube":
+        files = draft.get("pending_group_files", [])
+        if not youtube_tokens.get("access_token"):
+            auth_url = get_youtube_auth_url()
+            send_message(chat_id, f"🔑 צריך להתחבר ל-YouTube:\n<a href='{auth_url}'>לחץ כאן</a>")
+        else:
+            send_message(chat_id, f"⏳ מעלה {len(files)} סרטונים ל-YouTube...")
+            for i, fid in enumerate(files):
+                video_bytes = get_file(fid)
+                if video_bytes:
+                    url, error = upload_to_youtube(video_bytes, f"{draft.get('title', 'סרטון')} {i+1}")
+                    if url:
+                        draft.setdefault("videos", []).append(url)
+                        send_message(chat_id, f"✅ סרטון {i+1}/{len(files)} עלה!\n🔗 {url}")
+                    else:
+                        send_message(chat_id, f"❌ סרטון {i+1} נכשל: {error}")
+            draft["pending_group_files"] = []
+            send_message(chat_id, "✅ כל הסרטונים עלו! שלח /done לסיום:")
+
     elif cb_data == "upload_vimeo":
         file_id = draft.get("pending_video_file_id")
         if file_id:
@@ -960,6 +1044,10 @@ def handle_callback(cb):
                     send_message(chat_id, f"✅ עלה ל-Vimeo!\n🔗 {vimeo_url}\n\nשלח סרטון נוסף או /done:")
                 else:
                     send_message(chat_id, "❌ שגיאה בהעלאה ל-Vimeo")
+
+    elif cb_data == "upload_youtube_smart":
+        draft["step"] = "article_yt_smart_text"
+        send_message(chat_id, "🤖 שלח טקסט גולמי ו-Gemini יכין כותרת ותגיות לסרטון:")
 
     elif cb_data == "upload_youtube":
         file_id = draft.get("pending_video_file_id")
