@@ -15,7 +15,54 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 YOUTUBE_CLIENT_ID = os.environ.get("YOUTUBE_CLIENT_ID", "")
 YOUTUBE_CLIENT_SECRET = os.environ.get("YOUTUBE_CLIENT_SECRET", "")
 YOUTUBE_CHANNEL_ID = os.environ.get("YOUTUBE_CHANNEL_ID", "UCXhNK4F73hySVUj66u5GFjg")
-youtube_tokens = {}  # שמירת tokens זמנית
+youtube_tokens = {}
+
+# ─── מערכת הרשאות ────────────────────────────────────────
+SUPER_ADMIN_ID = "1798097090"  # אתה – הרשאה מלאה תמיד
+
+# רמות הרשאה: "admin" = כל הגישה, "editor" = העלאה בלבד, "blocked" = חסום
+users_permissions = {
+    SUPER_ADMIN_ID: "admin"
+}
+
+# לוג פעולות
+activity_log = []
+
+def log_action(user_id, username, action):
+    entry = {
+        "time": time.strftime("%d/%m/%Y %H:%M"),
+        "user_id": user_id,
+        "username": username,
+        "action": action
+    }
+    activity_log.append(entry)
+    if len(activity_log) > 100:  # שמור רק 100 פעולות אחרונות
+        activity_log.pop(0)
+    print(f"📋 לוג: {entry['time']} | {username} | {action}", flush=True)
+
+def get_permission(user_id):
+    uid = str(user_id)
+    if uid == SUPER_ADMIN_ID:
+        return "admin"
+    return users_permissions.get(uid, None)  # None = לא מורשה
+
+def is_admin(user_id):
+    return get_permission(user_id) == "admin"
+
+def is_editor(user_id):
+    perm = get_permission(user_id)
+    return perm in ("admin", "editor")
+
+def notify_admin_error(error_msg):
+    """שולח שגיאה קריטית לאדמין"""
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": SUPER_ADMIN_ID, "text": f"⚠️ <b>שגיאה בבוט:</b>\n\n{error_msg}", "parse_mode": "HTML"},
+            timeout=10
+        )
+    except:
+        pass  # שמירת tokens זמנית
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -50,7 +97,17 @@ def run_server():
 drafts = {}
 offset = 0
 
-MAIN_MENU = {
+ADMIN_MENU = {
+    "keyboard": [
+        [{"text": "✍️ כתבה חדשה"}, {"text": "🤖 העלאה חכמה"}],
+        [{"text": "🎉 מזל טוב"}, {"text": "🎬 העלאה ליוטיוב"}],
+        [{"text": "✏️ עריכת כתבה"}, {"text": "🗑️ מחיקת כתבה"}],
+        [{"text": "📋 כתבות אחרונות"}, {"text": "📝 טיוטות"}],
+        [{"text": "👥 ניהול משתמשים"}, {"text": "📊 לוג פעולות"}]
+    ],
+    "resize_keyboard": True,
+    "persistent": True
+}
     "keyboard": [
         [{"text": "✍️ כתבה חדשה"}, {"text": "🤖 העלאה חכמה"}],
         [{"text": "🎉 מזל טוב"}, {"text": "🎬 העלאה ליוטיוב"}],
@@ -449,7 +506,22 @@ def _show_summary(chat_id, draft):
 def handle_message(msg):
     chat_id = msg["chat"]["id"]
     user_id = str(msg["from"]["id"])
+    username = msg["from"].get("username", msg["from"].get("first_name", "לא ידוע"))
     text = msg.get("text", "")
+
+    # בדיקת הרשאות
+    perm = get_permission(user_id)
+
+    if perm == "blocked":
+        send_message(chat_id, "❌ הגישה שלך חסומה.")
+        return
+
+    if perm is None:
+        # משתמש לא מורשה
+        send_message(chat_id, "⛔ אין לך הרשאה להשתמש בבוט.\n\nפנה למנהל לקבלת גישה.")
+        # הודעה לאדמין
+        notify_admin_error(f"משתמש חדש ביקש גישה:\nשם: {username}\nID: {user_id}\n\nלאשר: /approve_{user_id}\nלחסום: /block_{user_id}")
+        return
 
     if user_id not in drafts:
         drafts[user_id] = {"step": "idle", "gallery": []}
@@ -457,9 +529,49 @@ def handle_message(msg):
     draft = drafts[user_id]
     step = draft.get("step", "idle")
 
+    # פקודות ניהול – רק אדמין
+    if text.startswith("/approve_") and is_admin(user_id):
+        target_id = text.replace("/approve_", "")
+        users_permissions[target_id] = "editor"
+        send_message(chat_id, f"✅ משתמש {target_id} אושר כעורך!")
+        send_message(int(target_id), "✅ הגישה שלך אושרה! שלח /start להתחיל.", MAIN_MENU)
+        log_action(user_id, username, f"אישור משתמש {target_id}")
+        return
+
+    if text.startswith("/block_") and is_admin(user_id):
+        target_id = text.replace("/block_", "")
+        users_permissions[target_id] = "blocked"
+        send_message(chat_id, f"🚫 משתמש {target_id} נחסם!")
+        log_action(user_id, username, f"חסימת משתמש {target_id}")
+        return
+
+    if text.startswith("/makeadmin_") and user_id == SUPER_ADMIN_ID:
+        target_id = text.replace("/makeadmin_", "")
+        users_permissions[target_id] = "admin"
+        send_message(chat_id, f"✅ משתמש {target_id} הוגדר כאדמין!")
+        return
+
+    if text == "👥 ניהול משתמשים" and is_admin(user_id):
+        users_list = "\n".join([f"• {uid}: {perm}" for uid, perm in users_permissions.items()])
+        send_message(chat_id, f"👥 <b>משתמשים מורשים:</b>\n\n{users_list}\n\nלהוסיף עורך: /approve_[ID]\nלחסום: /block_[ID]\nלהפוך לאדמין: /makeadmin_[ID]")
+        return
+
+    if text == "📊 לוג פעולות" and is_admin(user_id):
+        if activity_log:
+            log_text = "\n".join([f"• {e['time']} | {e['username']} | {e['action']}" for e in activity_log[-20:]])
+            send_message(chat_id, f"📊 <b>20 פעולות אחרונות:</b>\n\n{log_text}")
+        else:
+            send_message(chat_id, "אין פעולות בלוג עדיין.")
+        return
+
+    # לוג פעולה
+    if text and not text.startswith("/"):
+        log_action(user_id, username, f"הודעה: {text[:50]}")
+
     if text in ("/start", "/new", "✍️ כתבה חדשה"):
         if text == "/start":
-            send_message(chat_id, "שלום! 👋 בחר פעולה:", MAIN_MENU)
+            menu = ADMIN_MENU if is_admin(user_id) else MAIN_MENU
+            send_message(chat_id, "שלום! 👋 בחר פעולה:", menu)
             return
         drafts[user_id] = {"step": "title", "gallery": []}
         send_message(chat_id, "📝 <b>כתבה חדשה</b>\n\nשלח את <b>כותרת</b> הכתבה:")
@@ -516,11 +628,17 @@ def handle_message(msg):
         return
 
     if text in ("/edit", "✏️ עריכת כתבה"):
+        if not is_admin(user_id):
+            send_message(chat_id, "❌ אין לך הרשאה לערוך כתבות.")
+            return
         drafts[user_id] = {"step": "edit_url", "gallery": []}
         send_message(chat_id, "✏️ <b>עריכת כתבה</b>\n\nשלח את ה-URL של הכתבה:")
         return
 
     if text in ("/delete", "🗑️ מחיקת כתבה"):
+        if not is_admin(user_id):
+            send_message(chat_id, "❌ אין לך הרשאה למחוק כתבות.")
+            return
         drafts[user_id] = {"step": "delete_url", "gallery": []}
         send_message(chat_id, "🗑️ <b>מחיקת כתבה</b>\n\nשלח את ה-URL של הכתבה למחיקה:")
         return
@@ -677,14 +795,19 @@ def handle_message(msg):
         send_message(chat_id, "⏳ Gemini מעבד את הטקסט...")
         result = process_with_gemini(text)
         if result:
+            # המרת פורמט וואטסאפ בגוף הכתבה
+            body_clean = convert_whatsapp_format(result.get("body", text))
             draft.update({
                 "title": result.get("title", ""),
                 "subtitle": result.get("subtitle", ""),
                 "red_title": result.get("red_title", ""),
-                "body": result.get("body", text),
+                "body": body_clean,
                 "tags": result.get("tags", []),
                 "step": "smart_preview"
             })
+            # הצגת גוף בתצוגה מקדימה ללא תגי HTML
+            import re
+            body_preview = re.sub(r'<[^>]+>', '', body_clean)[:300]
             preview = f"""🤖 <b>תצוגה מקדימה:</b>
 
 <b>כותרת:</b> {draft['title']}
@@ -693,7 +816,7 @@ def handle_message(msg):
 <b>תגיות:</b> {', '.join(draft['tags'])}
 
 <b>גוף:</b>
-{draft['body'][:300]}{'...' if len(draft['body']) > 300 else ''}"""
+{body_preview}{'...' if len(body_clean) > 300 else ''}"""
             send_message(chat_id, preview, {
                 "inline_keyboard": [
                     [{"text": "✅ מאשר, המשך", "callback_data": "smart_approve"}],
@@ -953,7 +1076,9 @@ def handle_message(msg):
                     draft["pending_group_files"] = []
                 if file_id not in draft["pending_group_files"]:
                     draft["pending_group_files"].append(file_id)
-                send_message(chat_id, f"📥 {len(draft['pending_group_files'])} סרטונים התקבלו. שלח /upload_all להעלאה:")
+                # שלח הודעה רק בסרטון הראשון
+                if len(draft["pending_group_files"]) == 1:
+                    send_message(chat_id, f"📥 מקבל סרטונים... שלח /upload_all כשסיימת לשלוח הכל")
             else:
                 draft["pending_video_file_id"] = file_id
                 send_message(chat_id, "לאן להעלות את הסרטון?", {
@@ -966,7 +1091,7 @@ def handle_message(msg):
         elif text == "/upload_all":
             files = draft.get("pending_group_files", [])
             if files:
-                send_message(chat_id, f"לאן להעלות {len(files)} סרטונים?", {
+                send_message(chat_id, f"📥 התקבלו {len(files)} סרטונים. לאן להעלות?", {
                     "inline_keyboard": [
                         [{"text": "🎬 YouTube", "callback_data": "upload_group_youtube"},
                          {"text": "🎥 Vimeo", "callback_data": "upload_group_vimeo"}]
@@ -1042,15 +1167,16 @@ def handle_callback(cb):
     elif cb_data == "upload_group_vimeo":
         files = draft.get("pending_group_files", [])
         send_message(chat_id, f"⏳ מעלה {len(files)} סרטונים ל-Vimeo...")
+        success = 0
         for i, fid in enumerate(files):
             video_bytes = get_file(fid)
             if video_bytes:
                 url = upload_to_vimeo(video_bytes, f"{draft.get('title', 'סרטון')} {i+1}")
                 if url:
                     draft.setdefault("videos", []).append(url)
-                    send_message(chat_id, f"✅ סרטון {i+1}/{len(files)} עלה!\n🔗 {url}")
+                    success += 1
         draft["pending_group_files"] = []
-        send_message(chat_id, "✅ כל הסרטונים עלו! שלח /done לסיום:")
+        send_message(chat_id, f"✅ הועלו {success}/{len(files)} סרטונים ל-Vimeo!\n\nשלח /done לסיום או סרטון נוסף:")
 
     elif cb_data == "upload_group_youtube":
         files = draft.get("pending_group_files", [])
@@ -1059,17 +1185,16 @@ def handle_callback(cb):
             send_message(chat_id, f"🔑 צריך להתחבר ל-YouTube:\n<a href='{auth_url}'>לחץ כאן</a>")
         else:
             send_message(chat_id, f"⏳ מעלה {len(files)} סרטונים ל-YouTube...")
+            success = 0
             for i, fid in enumerate(files):
                 video_bytes = get_file(fid)
                 if video_bytes:
                     url, error = upload_to_youtube(video_bytes, f"{draft.get('title', 'סרטון')} {i+1}")
                     if url:
                         draft.setdefault("videos", []).append(url)
-                        send_message(chat_id, f"✅ סרטון {i+1}/{len(files)} עלה!\n🔗 {url}")
-                    else:
-                        send_message(chat_id, f"❌ סרטון {i+1} נכשל: {error}")
+                        success += 1
             draft["pending_group_files"] = []
-            send_message(chat_id, "✅ כל הסרטונים עלו! שלח /done לסיום:")
+            send_message(chat_id, f"✅ הועלו {success}/{len(files)} סרטונים ל-YouTube!\n\nשלח /done לסיום או סרטון נוסף:")
 
     elif cb_data == "upload_vimeo":
         file_id = draft.get("pending_video_file_id")
@@ -1256,7 +1381,9 @@ def main():
                     handle_callback(update["callback_query"])
                     
         except Exception as e:
-            print(f"שגיאה: {e}", flush=True)
+            error_msg = f"שגיאה בלולאה הראשית: {str(e)}"
+            print(error_msg, flush=True)
+            notify_admin_error(error_msg)
             time.sleep(5)
 
 if __name__ == "__main__":
