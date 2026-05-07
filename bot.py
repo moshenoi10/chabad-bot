@@ -291,7 +291,8 @@ def notify_channel(title, subtitle, url):
     except Exception as e:
         print(f"שגיאה שליחה לערוץ: {e}")
 
-def get_recent_posts(status="publish"):
+def get_menu(user_id):
+    return ADMIN_MENU if is_admin(str(user_id)) else MAIN_MENU
     try:
         resp = requests.get(
             f"{WP_URL}/posts?per_page=5&status={status}&orderby=date&order=desc",
@@ -340,7 +341,9 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
 
     # עיבוד גוף הכתבה – המרת פורמט וואטסאפ ושמירת פיסקאות
     body_text = convert_whatsapp_format(draft.get("body", ""))
-    paragraphs = [p.strip() for p in body_text.split("\n\n") if p.strip()]
+    # פיצול לפסקאות – גם שורה אחת וגם שתי שורות
+    import re
+    paragraphs = [p.strip() for p in re.split(r'\n{1,}', body_text) if p.strip()]
     if paragraphs:
         content = "\n\n".join([f"<!-- wp:paragraph -->\n<p>{p}</p>\n<!-- /wp:paragraph -->" for p in paragraphs])
     else:
@@ -353,7 +356,7 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
         content += f'\n\n<!-- wp:embed {{"url":"{url}","type":"video","providerNameSlug":"vimeo","responsive":true}} -->\n<figure class="wp-block-embed is-type-video is-provider-vimeo"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n<!-- /wp:embed -->'
 
     for url in draft.get("videos", []):
-        content += f'\n<!-- wp:embed {{"url":"{url}","type":"video","providerNameSlug":"vimeo","responsive":true,"className":"no-margin"}} -->\n<figure class="wp-block-embed is-type-video is-provider-vimeo wp-block-embed-vimeo" style="margin:0;padding:0"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n<!-- /wp:embed -->'
+        content += f'\n<!-- wp:embed {{"url":"{url}","type":"video","providerNameSlug":"vimeo","responsive":true}} -->\n<figure class="wp-block-embed is-type-video is-provider-vimeo wp-block-embed-vimeo" style="margin:4px 0 !important;padding:0 !important"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n<!-- /wp:embed -->'
 
     tag_ids = []
     for tag in draft.get("tags", []):
@@ -608,9 +611,9 @@ def handle_message(msg):
             msg_text = "📋 <b>5 הכתבות האחרונות:</b>\n\n"
             for p in posts:
                 msg_text += f"• <a href='{p['link']}'>{p['title']['rendered']}</a>\n"
-            send_message(chat_id, msg_text, MAIN_MENU)
+            send_message(chat_id, msg_text, get_menu(user_id))
         else:
-            send_message(chat_id, "❌ לא נמצאו כתבות.", MAIN_MENU)
+            send_message(chat_id, "❌ לא נמצאו כתבות.", get_menu(user_id))
         return
 
     if text == "📝 טיוטות":
@@ -619,9 +622,9 @@ def handle_message(msg):
             msg_text = "📝 <b>הטיוטות שלך:</b>\n\n"
             for p in posts:
                 msg_text += f"• <a href='{p['link']}'>{p['title']['rendered']}</a>\n"
-            send_message(chat_id, msg_text, MAIN_MENU)
+            send_message(chat_id, msg_text, get_menu(user_id))
         else:
-            send_message(chat_id, "אין טיוטות שמורות.", MAIN_MENU)
+            send_message(chat_id, "אין טיוטות שמורות.", get_menu(user_id))
         return
 
     if text in ("/mazaltov", "🎉 מזל טוב"):
@@ -652,7 +655,7 @@ def handle_message(msg):
 
     if text in ("/cancel", "❌ ביטול"):
         drafts[user_id] = {"step": "idle", "gallery": []}
-        send_message(chat_id, "❌ הפעולה בוטלה.", MAIN_MENU)
+        send_message(chat_id, "❌ הפעולה בוטלה.", get_menu(user_id))
         return
 
     if step == "title":
@@ -759,7 +762,7 @@ def handle_message(msg):
                 ]
             })
         else:
-            send_message(chat_id, "❌ שגיאה בעיבוד. נסה שוב.", MAIN_MENU)
+            send_message(chat_id, "❌ שגיאה בעיבוד. נסה שוב.", get_menu(user_id))
             drafts[user_id] = {"step": "idle", "gallery": []}
 
     elif step == "youtube_title":
@@ -791,9 +794,9 @@ def handle_message(msg):
                         draft.get("yt_tags", [])
                     )
                     if url:
-                        send_message(chat_id, f"✅ <b>הסרטון עלה ל-YouTube!</b>\n🔗 {url}", MAIN_MENU)
+                        send_message(chat_id, f"✅ <b>הסרטון עלה ל-YouTube!</b>\n🔗 {url}", get_menu(user_id))
                     else:
-                        send_message(chat_id, f"❌ שגיאה: {error}", MAIN_MENU)
+                        send_message(chat_id, f"❌ שגיאה: {error}", get_menu(user_id))
             drafts[user_id] = {"step": "idle", "gallery": []}
         else:
             send_message(chat_id, "⚠️ שלח קובץ סרטון:")
@@ -834,7 +837,7 @@ def handle_message(msg):
                 ]
             })
         else:
-            send_message(chat_id, "❌ שגיאה בעיבוד. נסה שוב או השתמש בהעלאה ידנית.", MAIN_MENU)
+            send_message(chat_id, "❌ שגיאה בעיבוד. נסה שוב או השתמש בהעלאה ידנית.", get_menu(user_id))
             drafts[user_id] = {"step": "idle", "gallery": []}
 
     elif step == "smart_edit_title_input":
@@ -876,7 +879,7 @@ def handle_message(msg):
             send_message(chat_id, "⏳ מתזמן פרסום...")
             resp = publish_to_wp(draft, "future", iso_date)
             if resp.status_code == 201:
-                send_message(chat_id, f"✅ <b>הכתבה מתוזמנת לפרסום ב-{text}!</b>", MAIN_MENU)
+                send_message(chat_id, f"✅ <b>הכתבה מתוזמנת לפרסום ב-{text}!</b>", get_menu(user_id))
             else:
                 send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
             drafts[user_id] = {"step": "idle", "gallery": []}
@@ -931,7 +934,7 @@ def handle_message(msg):
         r = requests.post(f"{WP_URL}/posts/{post_id}", json=update_data,
                          auth=(WP_USER, WP_PASSWORD), timeout=10)
         if r.status_code == 200:
-            send_message(chat_id, "✅ הכתבה עודכנה!", MAIN_MENU)
+            send_message(chat_id, "✅ הכתבה עודכנה!", get_menu(user_id))
         else:
             send_message(chat_id, f"❌ שגיאה: {r.text[:200]}")
         drafts[user_id] = {"step": "idle", "gallery": []}
@@ -952,7 +955,7 @@ def handle_message(msg):
                                     auth=(WP_USER, WP_PASSWORD), timeout=10)
                 send_message(chat_id, f"✅ תמונה נוספה! שלח עוד או /done")
         elif text == "/done":
-            send_message(chat_id, "✅ הגלריה עודכנה!", MAIN_MENU)
+            send_message(chat_id, "✅ הגלריה עודכנה!", get_menu(user_id))
             drafts[user_id] = {"step": "idle", "gallery": []}
         else:
             send_message(chat_id, "שלח תמונה או /done:")
@@ -965,7 +968,7 @@ def handle_message(msg):
             new_content = existing_content + f'\n\n[embed]{text}[/embed]'
             requests.post(f"{WP_URL}/posts/{post_id}", json={"content": new_content},
                         auth=(WP_USER, WP_PASSWORD), timeout=10)
-            send_message(chat_id, "✅ סרטון נוסף לכתבה!", MAIN_MENU)
+            send_message(chat_id, "✅ סרטון נוסף לכתבה!", get_menu(user_id))
         else:
             send_message(chat_id, "❌ שגיאה בעדכון")
         drafts[user_id] = {"step": "idle", "gallery": []}
@@ -981,7 +984,7 @@ def handle_message(msg):
                                      json={"featured_media": featured_id},
                                      auth=(WP_USER, WP_PASSWORD), timeout=10)
                     if r.status_code == 200:
-                        send_message(chat_id, "✅ תמונה ראשית עודכנה!", MAIN_MENU)
+                        send_message(chat_id, "✅ תמונה ראשית עודכנה!", get_menu(user_id))
                     else:
                         send_message(chat_id, f"❌ שגיאה: {r.text[:200]}")
                 drafts[user_id] = {"step": "idle", "gallery": []}
@@ -1049,7 +1052,7 @@ def handle_message(msg):
                                     auth=(WP_USER, WP_PASSWORD), timeout=30)
                 if resp.status_code == 201:
                     success += 1
-            send_message(chat_id, f"✅ פורסמו {success}/{len(images)} כתבות מזל טוב!", MAIN_MENU)
+            send_message(chat_id, f"✅ פורסמו {success}/{len(images)} כתבות מזל טוב!", get_menu(user_id))
             drafts[user_id] = {"step": "idle", "gallery": []}
         else:
             send_message(chat_id, "שלח תמונות או /done לסיום:")
@@ -1152,7 +1155,7 @@ def handle_message(msg):
             if resp.status_code == 201:
                 post_data_resp = resp.json()
                 post_url = post_data_resp.get("link", "")
-                send_message(chat_id, f"✅ <b>הכתבה פורסמה!</b>\n🔗 {post_url}", MAIN_MENU)
+                send_message(chat_id, f"✅ <b>הכתבה פורסמה!</b>\n🔗 {post_url}", get_menu(user_id))
                 # שליחה לערוץ
                 notify_channel(
                     draft.get("title", ""),
@@ -1316,7 +1319,7 @@ def handle_callback(cb):
         resp = publish_to_wp(draft, "publish")
         if resp.status_code == 201:
             post_url = resp.json().get("link", "")
-            send_message(chat_id, f"✅ <b>הכתבה פורסמה!</b>\n🔗 {post_url}", MAIN_MENU)
+            send_message(chat_id, f"✅ <b>הכתבה פורסמה!</b>\n🔗 {post_url}", get_menu(user_id))
             notify_channel(draft.get("title", ""), draft.get("subtitle", ""), post_url)
         else:
             send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
@@ -1326,7 +1329,7 @@ def handle_callback(cb):
         send_message(chat_id, "⏳ שומר כטיוטה...")
         resp = publish_to_wp(draft, "draft")
         if resp.status_code == 201:
-            send_message(chat_id, "✅ <b>נשמר כטיוטה!</b>", MAIN_MENU)
+            send_message(chat_id, "✅ <b>נשמר כטיוטה!</b>", get_menu(user_id))
         else:
             send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
         drafts[user_id] = {"step": "idle", "gallery": []}
@@ -1337,7 +1340,7 @@ def handle_callback(cb):
 
     elif cb_data == "publish_cancel":
         drafts[user_id] = {"step": "idle", "gallery": []}
-        send_message(chat_id, "❌ הפעולה בוטלה.", MAIN_MENU)
+        send_message(chat_id, "❌ הפעולה בוטלה.", get_menu(user_id))
 
     elif cb_data == "cat_done":
         draft["step"] = "main_image"
@@ -1375,14 +1378,14 @@ def handle_callback(cb):
         r = requests.delete(f"{WP_URL}/posts/{post_id}",
                            auth=(WP_USER, WP_PASSWORD), timeout=10)
         if r.status_code in (200, 201):
-            send_message(chat_id, "✅ הכתבה נמחקה!", MAIN_MENU)
+            send_message(chat_id, "✅ הכתבה נמחקה!", get_menu(user_id))
         else:
             send_message(chat_id, f"❌ שגיאה: {r.text[:200]}")
         drafts[user_id] = {"step": "idle", "gallery": []}
 
     elif cb_data == "delete_no":
         drafts[user_id] = {"step": "idle", "gallery": []}
-        send_message(chat_id, "❌ המחיקה בוטלה.", MAIN_MENU)
+        send_message(chat_id, "❌ המחיקה בוטלה.", get_menu(user_id))
 
 def main():
     global offset
