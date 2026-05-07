@@ -522,9 +522,8 @@ def process_with_gemini(text):
                 timeout=30
             )
             if resp.status_code in (429, 503):
-                print(f"Gemini {resp.status_code}, מחכה 15 שניות... (ניסיון {attempt+1}/3)", flush=True)
-                time.sleep(15)
-                continue
+                print(f"Gemini {resp.status_code}, עובר ל-Groq מיד...", flush=True)
+                break
             if resp.status_code == 200:
                 result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
                 result = result.strip().replace("```json", "").replace("```", "").strip()
@@ -565,6 +564,8 @@ def _show_summary(chat_id, draft):
              {"text": "❌ ביטול", "callback_data": "publish_cancel"}]
         ]
     })
+
+processed_updates = set()
 
 def handle_message(msg):
     chat_id = msg["chat"]["id"]
@@ -1551,7 +1552,12 @@ def main():
                 print(f"עדכון: {update['update_id']}", flush=True)
                 
                 if "message" in update:
-                    handle_message(update["message"])
+                    uid = update["update_id"]
+                    if uid not in processed_updates:
+                        processed_updates.add(uid)
+                        if len(processed_updates) > 500:
+                            processed_updates.pop()
+                        handle_message(update["message"])
                 elif "callback_query" in update:
                     handle_callback(update["callback_query"])
                 save_drafts()
