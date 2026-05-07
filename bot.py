@@ -11,6 +11,7 @@ WP_USER = os.environ["WP_USER"]
 WP_PASSWORD = os.environ["WP_PASSWORD"]
 CHANNEL_ID = "-1003967710127"
 VIMEO_TOKEN = os.environ.get("VIMEO_TOKEN", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -30,9 +31,10 @@ offset = 0
 
 MAIN_MENU = {
     "keyboard": [
-        [{"text": "✍️ כתבה חדשה"}, {"text": "🎉 מזל טוב"}],
-        [{"text": "✏️ עריכת כתבה"}, {"text": "🗑️ מחיקת כתבה"}],
-        [{"text": "📋 כתבות אחרונות"}, {"text": "📝 טיוטות"}]
+        [{"text": "✍️ כתבה חדשה"}, {"text": "🤖 העלאה חכמה"}],
+        [{"text": "🎉 מזל טוב"}, {"text": "✏️ עריכת כתבה"}],
+        [{"text": "🗑️ מחיקת כתבה"}, {"text": "📋 כתבות אחרונות"}],
+        [{"text": "📝 טיוטות"}]
     ],
     "resize_keyboard": True,
     "persistent": True
@@ -175,7 +177,13 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
         if img_url:
             gallery_content += f'\n<figure class="wp-block-image size-full"><img src="{img_url}" /></figure>\n'
 
-    content = draft.get("body", "")
+    # עיבוד גוף הכתבה – שמירת פיסקאות
+    body_text = draft.get("body", "")
+    paragraphs = [p.strip() for p in body_text.split("\n\n") if p.strip()]
+    if paragraphs:
+        content = "\n\n".join([f"<!-- wp:paragraph -->\n<p>{p}</p>\n<!-- /wp:paragraph -->" for p in paragraphs])
+    else:
+        content = f"<!-- wp:paragraph -->\n<p>{body_text}</p>\n<!-- /wp:paragraph -->"
     if gallery_content:
         content += "\n\n" + gallery_content
 
@@ -184,7 +192,7 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
         content += f'\n\n<!-- wp:embed {{"url":"{url}","type":"video","providerNameSlug":"vimeo","responsive":true}} -->\n<figure class="wp-block-embed is-type-video is-provider-vimeo"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n<!-- /wp:embed -->'
 
     for url in draft.get("videos", []):
-        content += f'\n\n<!-- wp:embed {{"url":"{url}","type":"video","providerNameSlug":"vimeo","responsive":true}} -->\n<figure class="wp-block-embed is-type-video is-provider-vimeo"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n<!-- /wp:embed -->'
+        content += f'\n<!-- wp:embed {{"url":"{url}","type":"video","providerNameSlug":"vimeo","responsive":true,"className":"no-margin"}} -->\n<figure class="wp-block-embed is-type-video is-provider-vimeo wp-block-embed-vimeo" style="margin:0;padding:0"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n<!-- /wp:embed -->'
 
     tag_ids = []
     for tag in draft.get("tags", []):
@@ -226,6 +234,45 @@ def get_file(file_id):
         print(f"שגיאה קבלת קובץ: {e}")
     return None
 
+def process_with_gemini(text):
+    if not GEMINI_API_KEY:
+        return None
+    prompt = f"""אתה עורך כתבות לאתר חדשות חרדי. קיבלת טקסט גולמי.
+
+המשימה שלך:
+1. כותרת ראשית - קצרה, מושכת, עד 10 מילים
+2. כותרת משנה - משפט אחד המסכם את הכתבה
+3. כותרת אדומה - 2-3 מילים בלבד
+4. גוף הכתבה - העתק בדיוק את הטקסט המקורי ללא שינוי כלשהו
+5. תגיות - 3-5 מילות מפתח מהטקסט בלבד
+
+חוקים מחייבים:
+- אסור להוסיף מידע שלא קיים בטקסט המקורי
+- אסור לשנות אפילו מילה אחת בגוף הכתבה
+- אסור להמציא שמות, תאריכים, או פרטים
+- השתמש רק במה שכתוב בטקסט
+
+החזר תשובה בפורמט JSON בלבד ללא backticks:
+{{"title": "...", "subtitle": "...", "red_title": "...", "body": "...", "tags": ["...", "..."]}}
+
+הטקסט:
+{text}"""
+
+    try:
+        resp = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}",
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+            timeout=30
+        )
+        if resp.status_code == 200:
+            result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+            result = result.strip().replace("```json", "").replace("```", "").strip()
+            return json.loads(result)
+        print(f"שגיאה Gemini: {resp.status_code}", flush=True)
+    except Exception as e:
+        print(f"שגיאה Gemini: {e}", flush=True)
+    return None
+
 def _show_summary(chat_id, draft):
     summary = f"""📋 <b>סיכום:</b>
 
@@ -263,6 +310,11 @@ def handle_message(msg):
             return
         drafts[user_id] = {"step": "title", "gallery": []}
         send_message(chat_id, "📝 <b>כתבה חדשה</b>\n\nשלח את <b>כותרת</b> הכתבה:")
+        return
+
+    if text in ("/smart", "🤖 העלאה חכמה"):
+        drafts[user_id] = {"step": "smart_text", "gallery": []}
+        send_message(chat_id, "🤖 <b>העלאה חכמה</b>\n\nשלח את הטקסט הגולמי של הכתבה:")
         return
 
     if text == "📋 כתבות אחרונות":
@@ -344,6 +396,70 @@ def handle_message(msg):
         draft["categories"] = []
         draft["cat_names"] = []
         send_message(chat_id, "✅ תגיות נשמרו!\n\nבחר <b>קטגוריות</b>:", keyboard)
+
+    elif step == "smart_text":
+        send_message(chat_id, "⏳ Gemini מעבד את הטקסט...")
+        result = process_with_gemini(text)
+        if result:
+            draft.update({
+                "title": result.get("title", ""),
+                "subtitle": result.get("subtitle", ""),
+                "red_title": result.get("red_title", ""),
+                "body": result.get("body", text),
+                "tags": result.get("tags", []),
+                "step": "smart_preview"
+            })
+            preview = f"""🤖 <b>תצוגה מקדימה:</b>
+
+<b>כותרת:</b> {draft['title']}
+<b>כותרת משנה:</b> {draft['subtitle']}
+<b>כותרת אדומה:</b> {draft['red_title']}
+<b>תגיות:</b> {', '.join(draft['tags'])}
+
+<b>גוף:</b>
+{draft['body'][:300]}{'...' if len(draft['body']) > 300 else ''}"""
+            send_message(chat_id, preview, {
+                "inline_keyboard": [
+                    [{"text": "✅ מאשר, המשך", "callback_data": "smart_approve"}],
+                    [{"text": "✏️ ערוך כותרת", "callback_data": "smart_edit_title"},
+                     {"text": "✏️ ערוך גוף", "callback_data": "smart_edit_body"}],
+                    [{"text": "✏️ ערוך תגיות", "callback_data": "smart_edit_tags"},
+                     {"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+                ]
+            })
+        else:
+            send_message(chat_id, "❌ שגיאה בעיבוד. נסה שוב או השתמש בהעלאה ידנית.", MAIN_MENU)
+            drafts[user_id] = {"step": "idle", "gallery": []}
+
+    elif step == "smart_edit_title_input":
+        draft["title"] = text
+        draft["step"] = "smart_preview"
+        send_message(chat_id, f"✅ כותרת עודכנה!\n\n<b>כותרת:</b> {text}\n\nהמשך?", {
+            "inline_keyboard": [[
+                {"text": "✅ מאשר, המשך", "callback_data": "smart_approve"},
+                {"text": "❌ ביטול", "callback_data": "publish_cancel"}
+            ]]
+        })
+
+    elif step == "smart_edit_body_input":
+        draft["body"] = text
+        draft["step"] = "smart_preview"
+        send_message(chat_id, "✅ גוף עודכן!\n\nהמשך?", {
+            "inline_keyboard": [[
+                {"text": "✅ מאשר, המשך", "callback_data": "smart_approve"},
+                {"text": "❌ ביטול", "callback_data": "publish_cancel"}
+            ]]
+        })
+
+    elif step == "smart_edit_tags_input":
+        draft["tags"] = [t.strip() for t in text.split(",")]
+        draft["step"] = "smart_preview"
+        send_message(chat_id, f"✅ תגיות עודכנו!\n\n{', '.join(draft['tags'])}\n\nהמשך?", {
+            "inline_keyboard": [[
+                {"text": "✅ מאשר, המשך", "callback_data": "smart_approve"},
+                {"text": "❌ ביטול", "callback_data": "publish_cancel"}
+            ]]
+        })
 
     elif step == "schedule_time":
         try:
@@ -610,6 +726,36 @@ def handle_callback(cb):
             send_message(chat_id, f"✅ <b>{cat_name}</b> נוספה!\nנבחרו: {', '.join(draft['cat_names'])}\n\nבחר עוד או לחץ סיימתי")
         else:
             send_message(chat_id, f"⚠️ {cat_name} כבר נבחרה.")
+
+    elif cb_data == "smart_approve":
+        # עובר לבחירת קטגוריות כמו כתבה רגילה
+        draft["step"] = "categories"
+        cats = get_wp_categories()
+        keyboard = {"inline_keyboard": []}
+        row = []
+        for cat_name, cat_id in cats.items():
+            row.append({"text": cat_name, "callback_data": f"cat_{cat_id}_{cat_name}"})
+            if len(row) == 2:
+                keyboard["inline_keyboard"].append(row)
+                row = []
+        if row:
+            keyboard["inline_keyboard"].append(row)
+        keyboard["inline_keyboard"].append([{"text": "✅ סיימתי", "callback_data": "cat_done"}])
+        draft["categories"] = []
+        draft["cat_names"] = []
+        send_message(chat_id, "✅ מעולה! בחר <b>קטגוריות</b>:", keyboard)
+
+    elif cb_data == "smart_edit_title":
+        draft["step"] = "smart_edit_title_input"
+        send_message(chat_id, f"כותרת נוכחית:\n<b>{draft.get('title','')}</b>\n\nשלח כותרת חדשה:")
+
+    elif cb_data == "smart_edit_body":
+        draft["step"] = "smart_edit_body_input"
+        send_message(chat_id, "שלח גוף כתבה חדש:")
+
+    elif cb_data == "smart_edit_tags":
+        draft["step"] = "smart_edit_tags_input"
+        send_message(chat_id, f"תגיות נוכחיות: {', '.join(draft.get('tags',[]))}\n\nשלח תגיות חדשות מופרדות בפסיק:")
 
     elif cb_data == "publish_now":
         send_message(chat_id, "⏳ מפרסם לוורדפרס...")
