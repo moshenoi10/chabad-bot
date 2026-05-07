@@ -540,7 +540,7 @@ def process_with_gemini(text):
         for attempt in range(2):
             print(f"Gemini ניסיון {attempt+1}...", flush=True)
             resp = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}",
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}",
                 json={"contents": [{"parts": [{"text": prompt}]}]},
                 timeout=60
             )
@@ -590,7 +590,7 @@ def improve_titles_with_ai(draft):
     try:
         if GEMINI_API_KEY:
             resp = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}",
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}",
                 json={"contents": [{"parts": [{"text": prompt}]}]},
                 timeout=30
             )
