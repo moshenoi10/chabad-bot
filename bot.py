@@ -30,7 +30,8 @@ offset = 0
 MAIN_MENU = {
     "keyboard": [
         [{"text": "✍️ כתבה חדשה"}, {"text": "🎉 מזל טוב"}],
-        [{"text": "✏️ עריכת כתבה"}, {"text": "🗑️ מחיקת כתבה"}]
+        [{"text": "✏️ עריכת כתבה"}, {"text": "🗑️ מחיקת כתבה"}],
+        [{"text": "📋 כתבות אחרונות"}, {"text": "📝 טיוטות"}]
     ],
     "resize_keyboard": True,
     "persistent": True
@@ -57,6 +58,18 @@ def notify_channel(title, subtitle, url):
     except Exception as e:
         print(f"שגיאה שליחה לערוץ: {e}")
 
+def get_recent_posts(status="publish"):
+    try:
+        resp = requests.get(
+            f"{WP_URL}/posts?per_page=5&status={status}&orderby=date&order=desc",
+            auth=(WP_USER, WP_PASSWORD), timeout=10
+        )
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        print(f"שגיאה כתבות אחרונות: {e}")
+    return []
+
 def get_wp_categories():
     try:
         resp = requests.get(f"{WP_URL}/categories?per_page=100",
@@ -80,7 +93,7 @@ def upload_image_to_wp(image_bytes, filename):
         print(f"שגיאה העלאת תמונה: {e}")
     return None, None
 
-def publish_to_wp(draft):
+def publish_to_wp(draft, status="publish", schedule_date=None):
     featured_id = None
     if draft.get("main_image"):
         featured_id, _ = upload_image_to_wp(draft["main_image"], "main.jpg")
@@ -113,13 +126,15 @@ def publish_to_wp(draft):
         "title": draft.get("title", ""),
         "content": content,
         "excerpt": draft.get("subtitle", ""),
-        "status": "publish",
+        "status": status,
         "categories": draft.get("categories", []),
         "tags": tag_ids,
         "acf": {
             "tag_label": draft.get("red_title", "")
         }
     }
+    if schedule_date:
+        post_data["date"] = schedule_date
     if featured_id:
         post_data["featured_media"] = featured_id
 
@@ -154,6 +169,28 @@ def handle_message(msg):
             return
         drafts[user_id] = {"step": "title", "gallery": []}
         send_message(chat_id, "📝 <b>כתבה חדשה</b>\n\nשלח את <b>כותרת</b> הכתבה:")
+        return
+
+    if text == "📋 כתבות אחרונות":
+        posts = get_recent_posts("publish")
+        if posts:
+            msg_text = "📋 <b>5 הכתבות האחרונות:</b>\n\n"
+            for p in posts:
+                msg_text += f"• <a href='{p['link']}'>{p['title']['rendered']}</a>\n"
+            send_message(chat_id, msg_text, MAIN_MENU)
+        else:
+            send_message(chat_id, "❌ לא נמצאו כתבות.", MAIN_MENU)
+        return
+
+    if text == "📝 טיוטות":
+        posts = get_recent_posts("draft")
+        if posts:
+            msg_text = "📝 <b>הטיוטות שלך:</b>\n\n"
+            for p in posts:
+                msg_text += f"• <a href='{p['link']}'>{p['title']['rendered']}</a>\n"
+            send_message(chat_id, msg_text, MAIN_MENU)
+        else:
+            send_message(chat_id, "אין טיוטות שמורות.", MAIN_MENU)
         return
 
     if text in ("/mazaltov", "🎉 מזל טוב"):
@@ -214,6 +251,22 @@ def handle_message(msg):
         draft["cat_names"] = []
         send_message(chat_id, "✅ תגיות נשמרו!\n\nבחר <b>קטגוריות</b>:", keyboard)
 
+    elif step == "schedule_time":
+        try:
+            from datetime import datetime
+            dt = datetime.strptime(text.strip(), "%d/%m/%Y %H:%M")
+            iso_date = dt.strftime("%Y-%m-%dT%H:%M:00")
+            draft["schedule_date"] = iso_date
+            send_message(chat_id, "⏳ מתזמן פרסום...")
+            resp = publish_to_wp(draft, "future", iso_date)
+            if resp.status_code == 201:
+                send_message(chat_id, f"✅ <b>הכתבה מתוזמנת לפרסום ב-{text}!</b>", MAIN_MENU)
+            else:
+                send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
+            drafts[user_id] = {"step": "idle", "gallery": []}
+        except ValueError:
+            send_message(chat_id, "⚠️ פורמט שגוי. נסה שוב:\n<code>DD/MM/YYYY HH:MM</code>")
+
     elif step == "edit_url":
         try:
             # נסה לחלץ ID מהURL
@@ -257,14 +310,48 @@ def handle_message(msg):
         update_data = {}
         if field == "title":
             update_data["title"] = text
-        elif field == "content":
-            update_data["content"] = text
+        elif field == "red_title":
+            update_data["acf"] = {"tag_label": text}
         r = requests.post(f"{WP_URL}/posts/{post_id}", json=update_data,
                          auth=(WP_USER, WP_PASSWORD), timeout=10)
         if r.status_code == 200:
             send_message(chat_id, "✅ הכתבה עודכנה!", MAIN_MENU)
         else:
             send_message(chat_id, f"❌ שגיאה: {r.text[:200]}")
+        drafts[user_id] = {"step": "idle", "gallery": []}
+
+    elif step == "edit_gallery_upload":
+        if "photo" in msg:
+            content_bytes = get_file(msg["photo"][-1]["file_id"])
+            if content_bytes:
+                # הוסף תמונה לגלריה הקיימת
+                post_id = draft.get("edit_id")
+                img_id, img_url = upload_image_to_wp(content_bytes, f"gallery_add.jpg")
+                if img_url:
+                    r = requests.get(f"{WP_URL}/posts/{post_id}", auth=(WP_USER, WP_PASSWORD), timeout=10)
+                    if r.status_code == 200:
+                        existing_content = r.json().get("content", {}).get("raw", "")
+                        new_content = existing_content + f'\n<figure class="wp-block-image size-full"><img src="{img_url}" /></figure>\n'
+                        requests.post(f"{WP_URL}/posts/{post_id}", json={"content": new_content},
+                                    auth=(WP_USER, WP_PASSWORD), timeout=10)
+                send_message(chat_id, f"✅ תמונה נוספה! שלח עוד או /done")
+        elif text == "/done":
+            send_message(chat_id, "✅ הגלריה עודכנה!", MAIN_MENU)
+            drafts[user_id] = {"step": "idle", "gallery": []}
+        else:
+            send_message(chat_id, "שלח תמונה או /done:")
+
+    elif step == "edit_video_url":
+        post_id = draft.get("edit_id")
+        r = requests.get(f"{WP_URL}/posts/{post_id}", auth=(WP_USER, WP_PASSWORD), timeout=10)
+        if r.status_code == 200:
+            existing_content = r.json().get("content", {}).get("raw", "")
+            new_content = existing_content + f'\n\n[embed]{text}[/embed]'
+            requests.post(f"{WP_URL}/posts/{post_id}", json={"content": new_content},
+                        auth=(WP_USER, WP_PASSWORD), timeout=10)
+            send_message(chat_id, "✅ סרטון נוסף לכתבה!", MAIN_MENU)
+        else:
+            send_message(chat_id, "❌ שגיאה בעדכון")
         drafts[user_id] = {"step": "idle", "gallery": []}
 
     elif step == "edit_image_upload":
@@ -376,10 +463,15 @@ def handle_message(msg):
 <b>קטגוריות:</b> {', '.join(draft.get('cat_names',[]))}
 <b>תמונה ראשית:</b> {'✅' if draft.get('main_image') else '❌'}
 <b>גלריה:</b> {len(draft.get('gallery',[]))} תמונות
-<b>וידאו:</b> {draft.get('video_url') or 'אין'}
-
-שלח /publish לפרסום או /cancel לביטול"""
-        send_message(chat_id, summary)
+<b>וידאו:</b> {draft.get('video_url') or 'אין'}"""
+        send_message(chat_id, summary, {
+            "inline_keyboard": [
+                [{"text": "🚀 פרסם עכשיו", "callback_data": "publish_now"},
+                 {"text": "⏰ תזמן פרסום", "callback_data": "publish_schedule"}],
+                [{"text": "💾 שמור כטיוטה", "callback_data": "publish_draft"},
+                 {"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+            ]
+        })
 
     elif step == "confirm":
         if text == "/publish":
@@ -422,6 +514,34 @@ def handle_callback(cb):
         else:
             send_message(chat_id, f"⚠️ {cat_name} כבר נבחרה.")
 
+    elif cb_data == "publish_now":
+        send_message(chat_id, "⏳ מפרסם לוורדפרס...")
+        resp = publish_to_wp(draft, "publish")
+        if resp.status_code == 201:
+            post_url = resp.json().get("link", "")
+            send_message(chat_id, f"✅ <b>הכתבה פורסמה!</b>\n🔗 {post_url}", MAIN_MENU)
+            notify_channel(draft.get("title", ""), draft.get("subtitle", ""), post_url)
+        else:
+            send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
+        drafts[user_id] = {"step": "idle", "gallery": []}
+
+    elif cb_data == "publish_draft":
+        send_message(chat_id, "⏳ שומר כטיוטה...")
+        resp = publish_to_wp(draft, "draft")
+        if resp.status_code == 201:
+            send_message(chat_id, "✅ <b>נשמר כטיוטה!</b>", MAIN_MENU)
+        else:
+            send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
+        drafts[user_id] = {"step": "idle", "gallery": []}
+
+    elif cb_data == "publish_schedule":
+        draft["step"] = "schedule_time"
+        send_message(chat_id, "⏰ שלח את מועד הפרסום בפורמט:\n<code>DD/MM/YYYY HH:MM</code>\n\nלדוגמה: <code>15/05/2026 09:00</code>")
+
+    elif cb_data == "publish_cancel":
+        drafts[user_id] = {"step": "idle", "gallery": []}
+        send_message(chat_id, "❌ הפעולה בוטלה.", MAIN_MENU)
+
     elif cb_data == "cat_done":
         draft["step"] = "main_image"
         send_message(chat_id, f"✅ קטגוריות: {', '.join(draft.get('cat_names',[]))}\n\nשלח את <b>התמונה הראשית</b>:")
@@ -431,6 +551,11 @@ def handle_callback(cb):
         draft["edit_field"] = "title"
         send_message(chat_id, "שלח את הכותרת החדשה:")
 
+    elif cb_data == "edit_red_title":
+        draft["step"] = "edit_field_value"
+        draft["edit_field"] = "red_title"
+        send_message(chat_id, "שלח את הכותרת האדומה החדשה:")
+
     elif cb_data == "edit_content":
         draft["step"] = "edit_field_value"
         draft["edit_field"] = "content"
@@ -438,7 +563,15 @@ def handle_callback(cb):
 
     elif cb_data == "edit_image":
         draft["step"] = "edit_image_upload"
-        send_message(chat_id, "שלח את התמונה החדשה:")
+        send_message(chat_id, "שלח את התמונה הראשית החדשה:")
+
+    elif cb_data == "edit_gallery":
+        draft["step"] = "edit_gallery_upload"
+        send_message(chat_id, "שלח תמונות להוספה לגלריה.\nכשסיימת שלח /done:")
+
+    elif cb_data == "edit_video":
+        draft["step"] = "edit_video_url"
+        send_message(chat_id, "שלח לינק וידאו מ-Vimeo:")
 
     elif cb_data == "delete_yes":
         post_id = draft.get("delete_id")
