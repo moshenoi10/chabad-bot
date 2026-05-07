@@ -937,24 +937,65 @@ def handle_message(msg):
 
     elif step == "edit_gallery_upload":
         if "photo" in msg:
-            content_bytes = get_file(msg["photo"][-1]["file_id"])
-            if content_bytes:
-                # הוסף תמונה לגלריה הקיימת
+            media_group_id = msg.get("media_group_id")
+            file_id = msg["photo"][-1]["file_id"]
+            
+            # טיפול ב-media group (כמה תמונות ביחד)
+            if media_group_id:
+                if draft.get("edit_gallery_group") != media_group_id:
+                    draft["edit_gallery_group"] = media_group_id
+                    draft["edit_gallery_pending"] = []
+                if file_id not in draft["edit_gallery_pending"]:
+                    draft["edit_gallery_pending"].append(file_id)
+                # שלח הודעה רק בתמונה הראשונה
+                if len(draft["edit_gallery_pending"]) == 1:
+                    send_message(chat_id, "⏳ מעלה תמונות לגלריה... שלח /done כשסיימת")
+            else:
+                # תמונה בודדת – העלה מיד
                 post_id = draft.get("edit_id")
-                img_id, img_url = upload_image_to_wp(content_bytes, f"gallery_add.jpg")
-                if img_url:
-                    r = requests.get(f"{WP_URL}/posts/{post_id}", auth=(WP_USER, WP_PASSWORD), timeout=10)
-                    if r.status_code == 200:
-                        existing_content = r.json().get("content", {}).get("raw", "")
-                        new_content = existing_content + f'\n<figure class="wp-block-image size-full"><img src="{img_url}" /></figure>\n'
-                        requests.post(f"{WP_URL}/posts/{post_id}", json={"content": new_content},
-                                    auth=(WP_USER, WP_PASSWORD), timeout=10)
-                send_message(chat_id, f"✅ תמונה נוספה! שלח עוד או /done")
+                send_message(chat_id, "⏳ מעלה תמונה...")
+                content_bytes = get_file(file_id)
+                if content_bytes:
+                    img_id, img_url = upload_image_to_wp(content_bytes, f"gallery_add.jpg")
+                    if img_url:
+                        r = requests.get(f"{WP_URL}/posts/{post_id}", auth=(WP_USER, WP_PASSWORD), timeout=10)
+                        if r.status_code == 200:
+                            existing_content = r.json().get("content", {}).get("raw", "")
+                            new_content = existing_content + f'\n<figure class="wp-block-image size-full"><img src="{img_url}" /></figure>\n'
+                            requests.post(f"{WP_URL}/posts/{post_id}", json={"content": new_content},
+                                        auth=(WP_USER, WP_PASSWORD), timeout=10)
+                        send_message(chat_id, "✅ תמונה נוספה!\n\nשלח עוד תמונות או /done לסיום:")
+
         elif text == "/done":
-            send_message(chat_id, "✅ הגלריה עודכנה!", get_menu(user_id))
-            drafts[user_id] = {"step": "idle", "gallery": []}
+            post_id = draft.get("edit_id")
+            pending = draft.get("edit_gallery_pending", [])
+            
+            if pending:
+                send_message(chat_id, f"⏳ מעלה {len(pending)} תמונות לגלריה...")
+                for fid in pending:
+                    content_bytes = get_file(fid)
+                    if content_bytes:
+                        img_id, img_url = upload_image_to_wp(content_bytes, f"gallery_add.jpg")
+                        if img_url:
+                            r = requests.get(f"{WP_URL}/posts/{post_id}", auth=(WP_USER, WP_PASSWORD), timeout=10)
+                            if r.status_code == 200:
+                                existing_content = r.json().get("content", {}).get("raw", "")
+                                new_content = existing_content + f'\n<figure class="wp-block-image size-full"><img src="{img_url}" /></figure>\n'
+                                requests.post(f"{WP_URL}/posts/{post_id}", json={"content": new_content},
+                                            auth=(WP_USER, WP_PASSWORD), timeout=10)
+            
+            send_message(chat_id, "✅ הגלריה עודכנה!\n\nהאם יש שינויים נוספים?", {
+                "inline_keyboard": [
+                    [{"text": "כותרת", "callback_data": "edit_title"},
+                     {"text": "כותרת אדומה", "callback_data": "edit_red_title"}],
+                    [{"text": "תמונה ראשית", "callback_data": "edit_image"},
+                     {"text": "הוספת תמונות", "callback_data": "edit_gallery"}],
+                    [{"text": "הוספת סרטון", "callback_data": "edit_video"},
+                     {"text": "✅ סיימתי", "callback_data": "edit_done"}]
+                ]
+            })
         else:
-            send_message(chat_id, "שלח תמונה או /done:")
+            send_message(chat_id, "שלח תמונות או /done:")
 
     elif step == "edit_video_url":
         post_id = draft.get("edit_id")
@@ -1343,6 +1384,10 @@ def handle_callback(cb):
     elif cb_data == "cat_done":
         draft["step"] = "main_image"
         send_message(chat_id, f"✅ קטגוריות: {', '.join(draft.get('cat_names',[]))}\n\nשלח את <b>התמונה הראשית</b>:")
+
+    elif cb_data == "edit_done":
+        drafts[user_id] = {"step": "idle", "gallery": []}
+        send_message(chat_id, "✅ הכתבה עודכנה בהצלחה!", get_menu(user_id))
 
     elif cb_data == "edit_title":
         draft["step"] = "edit_field_value"
