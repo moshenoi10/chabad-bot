@@ -484,14 +484,19 @@ def clean_json_string(result):
     last_brace = result.rfind("}")
     if last_brace != -1:
         result = result[:last_brace+1]
-    # ניסיון ראשון – פרסור ישיר
+    # ניסיון ראשון
     try:
         return json.loads(result)
     except json.JSONDecodeError:
         pass
-    # ניסיון שני – החלף גרשיים עבריים בתוך הטקסט
-    # מחפש " שיש לפניו אות עברית ואחריו אות עברית או רווח
-    fixed = re.sub(r'(?<=[א-תא-ת])"(?=[א-ת ])', '\u05f4', result)
+    # תיקון 1 – החלף newlines אמיתיים
+    fixed = result.replace('\n', '\\n').replace('\r', '')
+    try:
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+    # תיקון 2 – גרשיים עבריים אחרי אות עברית
+    fixed = re.sub(r'(?<=[א-ת])"', '\u05f4', fixed)
     try:
         return json.loads(fixed)
     except json.JSONDecodeError as e:
@@ -524,10 +529,11 @@ def process_with_gemini(text):
     prompt = build_prompt(text)
     try:
         for attempt in range(2):
+            print(f"Gemini ניסיון {attempt+1}...", flush=True)
             resp = requests.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}",
                 json={"contents": [{"parts": [{"text": prompt}]}]},
-                timeout=30
+                timeout=60
             )
             if resp.status_code in (429, 503):
                 if attempt == 0:
@@ -542,10 +548,10 @@ def process_with_gemini(text):
                 if parsed:
                     return parsed
                 return None
-            print(f"שגיאה Gemini: {resp.status_code}", flush=True)
+            print(f"שגיאה Gemini: {resp.status_code} {resp.text[:100]}", flush=True)
             break
     except Exception as e:
-        print(f"שגיאה Gemini: {e}", flush=True)
+        print(f"שגיאה Gemini exception: {e}", flush=True)
     
     # גיבוי – Groq
     print("עובר ל-Groq כגיבוי...", flush=True)
