@@ -637,6 +637,26 @@ def improve_titles_with_ai(draft):
 
 processed_updates = set()
 
+def _show_summary(chat_id, draft):
+    summary = f"""📋 <b>סיכום:</b>
+
+<b>כותרת:</b> {draft.get('title','')}
+<b>כותרת משנה:</b> {draft.get('subtitle','')}
+<b>כותרת אדומה:</b> {draft.get('red_title','')}
+<b>תגיות:</b> {', '.join(draft.get('tags',[]))}
+<b>קטגוריות:</b> {', '.join(draft.get('cat_names',[]))}
+<b>תמונה ראשית:</b> {'✅' if draft.get('main_image') else '❌'}
+<b>גלריה:</b> {len(draft.get('gallery',[]))} תמונות
+<b>וידאו:</b> {draft.get('video_url') or 'אין'}"""
+    send_message(chat_id, summary, {
+        "inline_keyboard": [
+            [{"text": "🚀 פרסם עכשיו", "callback_data": "publish_now"},
+             {"text": "⏰ תזמן פרסום", "callback_data": "publish_schedule"}],
+            [{"text": "💾 שמור כטיוטה", "callback_data": "publish_draft"},
+             {"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+        ]
+    })
+
 def handle_message(msg):
     chat_id = msg["chat"]["id"]
     user_id = str(msg["from"]["id"])
