@@ -264,6 +264,7 @@ def main():
                 params={"offset": offset, "timeout": 0},
                 timeout=10
             )
+            print(f"תגובה: {resp.text[:200]}", flush=True)
             updates = resp.json().get("result", [])
             
             if not updates:
