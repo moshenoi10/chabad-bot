@@ -503,6 +503,13 @@ def clean_json_string(result):
         print(f"שגיאה JSON סופית: {e}\nתשובה: {result[:500]}", flush=True)
         return None
 
+def prepare_text_for_ai(text):
+    """מכין טקסט לשליחה ל-AI – מחליף גרשיים עבריים בתו בטוח"""
+    import re
+    # החלף " בין אותיות עבריות בגרש עברי ״
+    text = re.sub(r'(?<=[א-ת])"(?=[א-ת\s])', '״', text)
+    return text
+
 def build_prompt(text):
     return f"""אתה עורך ראשי של אתר חדשות חרדי. כתוב בסגנון עיתונאי מקצועי ומושך.
 
@@ -526,6 +533,7 @@ def build_prompt(text):
 def process_with_gemini(text):
     if not GEMINI_API_KEY:
         return None
+    text = prepare_text_for_ai(text)
     prompt = build_prompt(text)
     try:
         for attempt in range(2):
@@ -1745,15 +1753,18 @@ def main():
             
             for update in updates:
                 offset = update["update_id"] + 1
-                print(f"עדכון: {update['update_id']}", flush=True)
+                uid = update["update_id"]
+                
+                if uid in processed_updates:
+                    continue
+                processed_updates.add(uid)
+                if len(processed_updates) > 200:
+                    processed_updates.clear()
+                
+                print(f"עדכון: {uid}", flush=True)
                 
                 if "message" in update:
-                    uid = update["update_id"]
-                    if uid not in processed_updates:
-                        processed_updates.add(uid)
-                        if len(processed_updates) > 500:
-                            processed_updates.pop()
-                        handle_message(update["message"])
+                    handle_message(update["message"])
                 elif "callback_query" in update:
                     handle_callback(update["callback_query"])
                 save_drafts()
