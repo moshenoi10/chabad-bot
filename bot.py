@@ -26,6 +26,15 @@ def run_server():
 drafts = {}
 offset = 0
 
+MAIN_MENU = {
+    "keyboard": [
+        [{"text": "✍️ כתבה חדשה"}, {"text": "🎉 מזל טוב"}],
+        [{"text": "✏️ עריכת כתבה"}, {"text": "🗑️ מחיקת כתבה"}]
+    ],
+    "resize_keyboard": True,
+    "persistent": True
+}
+
 def send_message(chat_id, text, reply_markup=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
@@ -127,14 +136,32 @@ def handle_message(msg):
     draft = drafts[user_id]
     step = draft.get("step", "idle")
 
-    if text in ("/start", "/new"):
+    if text in ("/start", "/new", "✍️ כתבה חדשה"):
+        if text == "/start":
+            send_message(chat_id, "שלום! 👋 בחר פעולה:", MAIN_MENU)
+            return
         drafts[user_id] = {"step": "title", "gallery": []}
         send_message(chat_id, "📝 <b>כתבה חדשה</b>\n\nשלח את <b>כותרת</b> הכתבה:")
         return
 
-    if text == "/cancel":
+    if text in ("/mazaltov", "🎉 מזל טוב"):
+        drafts[user_id] = {"step": "mazaltov_image", "gallery": []}
+        send_message(chat_id, "🎉 <b>מזל טוב</b>\n\nשלח את <b>התמונה</b>:")
+        return
+
+    if text in ("/edit", "✏️ עריכת כתבה"):
+        drafts[user_id] = {"step": "edit_url", "gallery": []}
+        send_message(chat_id, "✏️ <b>עריכת כתבה</b>\n\nשלח את ה-URL של הכתבה:")
+        return
+
+    if text in ("/delete", "🗑️ מחיקת כתבה"):
+        drafts[user_id] = {"step": "delete_url", "gallery": []}
+        send_message(chat_id, "🗑️ <b>מחיקת כתבה</b>\n\nשלח את ה-URL של הכתבה למחיקה:")
+        return
+
+    if text in ("/cancel", "❌ ביטול"):
         drafts[user_id] = {"step": "idle", "gallery": []}
-        send_message(chat_id, "❌ הכתבה בוטלה.")
+        send_message(chat_id, "❌ הפעולה בוטלה.", MAIN_MENU)
         return
 
     if step == "title":
@@ -174,6 +201,112 @@ def handle_message(msg):
         draft["categories"] = []
         draft["cat_names"] = []
         send_message(chat_id, "✅ תגיות נשמרו!\n\nבחר <b>קטגוריות</b>:", keyboard)
+
+    elif step == "edit_url":
+        # חילוץ ID מה-URL
+        try:
+            slug = text.rstrip("/").split("/")[-1]
+            r = requests.get(f"{WP_URL}/posts?slug={slug}", auth=(WP_USER, WP_PASSWORD), timeout=10)
+            posts = r.json()
+            if posts:
+                post = posts[0]
+                draft["edit_id"] = post["id"]
+                draft["step"] = "edit_field"
+                send_message(chat_id, f"""✏️ <b>עורך כתבה:</b>
+<b>{post['title']['rendered']}</b>
+
+מה תרצה לערוך?""", {
+                    "inline_keyboard": [
+                        [{"text": "כותרת", "callback_data": "edit_title"},
+                         {"text": "תוכן", "callback_data": "edit_content"}],
+                        [{"text": "תמונה ראשית", "callback_data": "edit_image"}]
+                    ]
+                })
+            else:
+                send_message(chat_id, "❌ כתבה לא נמצאה. נסה שוב:")
+        except Exception as e:
+            send_message(chat_id, f"❌ שגיאה: {e}")
+
+    elif step == "edit_field_value":
+        field = draft.get("edit_field")
+        post_id = draft.get("edit_id")
+        update_data = {}
+        if field == "title":
+            update_data["title"] = text
+        elif field == "content":
+            update_data["content"] = text
+        r = requests.post(f"{WP_URL}/posts/{post_id}", json=update_data,
+                         auth=(WP_USER, WP_PASSWORD), timeout=10)
+        if r.status_code == 200:
+            send_message(chat_id, "✅ הכתבה עודכנה!", MAIN_MENU)
+        else:
+            send_message(chat_id, f"❌ שגיאה: {r.text[:200]}")
+        drafts[user_id] = {"step": "idle", "gallery": []}
+
+    elif step == "edit_image_upload":
+        if "photo" in msg:
+            content = get_file(msg["photo"][-1]["file_id"])
+            if content:
+                post_id = draft.get("edit_id")
+                featured_id, _ = upload_image_to_wp(content, "edit_main.jpg")
+                if featured_id:
+                    r = requests.post(f"{WP_URL}/posts/{post_id}",
+                                     json={"featured_media": featured_id},
+                                     auth=(WP_USER, WP_PASSWORD), timeout=10)
+                    if r.status_code == 200:
+                        send_message(chat_id, "✅ תמונה ראשית עודכנה!", MAIN_MENU)
+                    else:
+                        send_message(chat_id, f"❌ שגיאה: {r.text[:200]}")
+                drafts[user_id] = {"step": "idle", "gallery": []}
+        else:
+            send_message(chat_id, "⚠️ שלח תמונה:")
+
+    elif step == "delete_url":
+        try:
+            slug = text.rstrip("/").split("/")[-1]
+            r = requests.get(f"{WP_URL}/posts?slug={slug}", auth=(WP_USER, WP_PASSWORD), timeout=10)
+            posts = r.json()
+            if posts:
+                post = posts[0]
+                draft["delete_id"] = post["id"]
+                draft["delete_title"] = post["title"]["rendered"]
+                draft["step"] = "delete_confirm"
+                send_message(chat_id, f"⚠️ האם למחוק את הכתבה:\n<b>{post['title']['rendered']}</b>?", {
+                    "inline_keyboard": [[
+                        {"text": "✅ כן, מחק", "callback_data": "delete_yes"},
+                        {"text": "❌ ביטול", "callback_data": "delete_no"}
+                    ]]
+                })
+            else:
+                send_message(chat_id, "❌ כתבה לא נמצאה. נסה שוב:")
+        except Exception as e:
+            send_message(chat_id, f"❌ שגיאה: {e}")
+
+    elif step == "mazaltov_image":
+        if "photo" in msg:
+            content = get_file(msg["photo"][-1]["file_id"])
+            if content:
+                send_message(chat_id, "⏳ מעלה לאתר...")
+                featured_id, _ = upload_image_to_wp(content, "mazaltov.jpg")
+                post_data = {
+                    "title": "מזל טוב",
+                    "content": "",
+                    "status": "publish",
+                    "categories": [18, 103],
+                    "acf": {"tag_label": "מזל טוב"}
+                }
+                if featured_id:
+                    post_data["featured_media"] = featured_id
+                resp = requests.post(f"{WP_URL}/posts", json=post_data,
+                                    auth=(WP_USER, WP_PASSWORD), timeout=30)
+                if resp.status_code == 201:
+                    post_url = resp.json().get("link", "")
+                    send_message(chat_id, f"✅ <b>מזל טוב פורסם!</b>\n🔗 {post_url}")
+                else:
+                    send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
+                drafts[user_id] = {"step": "idle", "gallery": []}
+        else:
+            send_message(chat_id, "⚠️ שלח תמונה:")
 
     elif step == "main_image":
         if "photo" in msg:
@@ -220,7 +353,7 @@ def handle_message(msg):
             resp = publish_to_wp(draft)
             if resp.status_code == 201:
                 post_url = resp.json().get("link", "")
-                send_message(chat_id, f"✅ <b>הכתבה פורסמה כטיוטה!</b>\n🔗 {post_url}")
+                send_message(chat_id, f"✅ <b>הכתבה פורסמה!</b>\n🔗 {post_url}", MAIN_MENU)
                 drafts[user_id] = {"step": "idle", "gallery": []}
             else:
                 send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
@@ -252,6 +385,34 @@ def handle_callback(cb):
         draft["step"] = "main_image"
         send_message(chat_id, f"✅ קטגוריות: {', '.join(draft.get('cat_names',[]))}\n\nשלח את <b>התמונה הראשית</b>:")
 
+    elif cb_data == "edit_title":
+        draft["step"] = "edit_field_value"
+        draft["edit_field"] = "title"
+        send_message(chat_id, "שלח את הכותרת החדשה:")
+
+    elif cb_data == "edit_content":
+        draft["step"] = "edit_field_value"
+        draft["edit_field"] = "content"
+        send_message(chat_id, "שלח את התוכן החדש:")
+
+    elif cb_data == "edit_image":
+        draft["step"] = "edit_image_upload"
+        send_message(chat_id, "שלח את התמונה החדשה:")
+
+    elif cb_data == "delete_yes":
+        post_id = draft.get("delete_id")
+        r = requests.delete(f"{WP_URL}/posts/{post_id}",
+                           auth=(WP_USER, WP_PASSWORD), timeout=10)
+        if r.status_code in (200, 201):
+            send_message(chat_id, "✅ הכתבה נמחקה!", MAIN_MENU)
+        else:
+            send_message(chat_id, f"❌ שגיאה: {r.text[:200]}")
+        drafts[user_id] = {"step": "idle", "gallery": []}
+
+    elif cb_data == "delete_no":
+        drafts[user_id] = {"step": "idle", "gallery": []}
+        send_message(chat_id, "❌ המחיקה בוטלה.", MAIN_MENU)
+
 def main():
     global offset
     print("🚀 בוט חבד מתחיל!", flush=True)
@@ -262,7 +423,8 @@ def main():
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setMyCommands",
             json={"commands": [
                 {"command": "new", "description": "✍️ כתבה חדשה"},
-                {"command": "cancel", "description": "❌ ביטול כתבה נוכחית"}
+                {"command": "mazaltov", "description": "🎉 מזל טוב"},
+                {"command": "cancel", "description": "❌ ביטול"}
             ]},
             timeout=10
         )
