@@ -48,11 +48,28 @@ def send_message(chat_id, text, reply_markup=None):
     except Exception as e:
         print(f"שגיאה שליחה: {e}")
 
+def wait_for_vimeo(video_id, max_wait=300):
+    """ממתין עד שהסרטון מוכן ב-Vimeo"""
+    headers = {
+        "Authorization": f"bearer {VIMEO_TOKEN}",
+        "Accept": "application/vnd.vimeo.*+json;version=3.4"
+    }
+    for _ in range(max_wait // 10):
+        try:
+            r = requests.get(f"https://api.vimeo.com/videos/{video_id}", headers=headers, timeout=10)
+            if r.status_code == 200:
+                status = r.json().get("transcode", {}).get("status", "")
+                if status == "complete":
+                    return True
+        except:
+            pass
+        time.sleep(10)
+    return False
+
 def upload_to_vimeo(video_bytes, title="סרטון חדש"):
     if not VIMEO_TOKEN:
         return None
     try:
-        # שלב 1: יצירת העלאה
         headers = {
             "Authorization": f"bearer {VIMEO_TOKEN}",
             "Content-Type": "application/json",
@@ -74,8 +91,9 @@ def upload_to_vimeo(video_bytes, title="סרטון חדש"):
 
         upload_link = create_resp.json()["upload"]["upload_link"]
         video_uri = create_resp.json()["uri"]
+        video_id = video_uri.split("/")[-1]
 
-        # שלב 2: העלאת הקובץ
+        # העלאת הקובץ
         upload_resp = requests.patch(
             upload_link,
             headers={
@@ -88,7 +106,9 @@ def upload_to_vimeo(video_bytes, title="סרטון חדש"):
             timeout=120
         )
         if upload_resp.status_code in (204, 200):
-            video_id = video_uri.split("/")[-1]
+            # המתנה לעיבוד
+            print(f"ממתין לעיבוד Vimeo {video_id}...", flush=True)
+            wait_for_vimeo(video_id)
             return f"https://vimeo.com/{video_id}"
         else:
             print(f"שגיאה העלאת Vimeo: {upload_resp.status_code}", flush=True)
@@ -160,7 +180,11 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
         content += "\n\n" + gallery_content
 
     if draft.get("video_url"):
-        content += f'\n\n[embed]{draft["video_url"]}[/embed]'
+        url = draft["video_url"]
+        content += f'\n\n<!-- wp:embed {{"url":"{url}","type":"video","providerNameSlug":"vimeo","responsive":true}} -->\n<figure class="wp-block-embed is-type-video is-provider-vimeo"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n<!-- /wp:embed -->'
+
+    for url in draft.get("videos", []):
+        content += f'\n\n<!-- wp:embed {{"url":"{url}","type":"video","providerNameSlug":"vimeo","responsive":true}} -->\n<figure class="wp-block-embed is-type-video is-provider-vimeo"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n<!-- /wp:embed -->'
 
     tag_ids = []
     for tag in draft.get("tags", []):
@@ -523,11 +547,12 @@ def handle_message(msg):
 
     elif step == "video":
         if text == "/skip":
-            draft["video_url"] = None
+            draft["step"] = "confirm"
+            _show_summary(chat_id, draft)
+        elif text == "/done":
             draft["step"] = "confirm"
             _show_summary(chat_id, draft)
         elif "video" in msg or "document" in msg:
-            # קובץ סרטון – העלאה ל-Vimeo
             send_message(chat_id, "⏳ מעלה סרטון ל-Vimeo, זה יכול לקחת כמה דקות...")
             file_id = msg.get("video", msg.get("document", {})).get("file_id")
             if file_id:
@@ -535,18 +560,13 @@ def handle_message(msg):
                 if video_bytes:
                     vimeo_url = upload_to_vimeo(video_bytes, draft.get("title", "סרטון"))
                     if vimeo_url:
-                        draft["video_url"] = vimeo_url
-                        send_message(chat_id, f"✅ הסרטון עלה ל-Vimeo!\n🔗 {vimeo_url}")
+                        draft.setdefault("videos", []).append(vimeo_url)
+                        send_message(chat_id, f"✅ סרטון {len(draft['videos'])} עלה!\n🔗 {vimeo_url}\n\nשלח סרטון נוסף או /done לסיום:")
                     else:
-                        send_message(chat_id, "❌ שגיאה בהעלאה ל-Vimeo. שלח לינק ידנית או /skip:")
-                        return
-            draft["step"] = "confirm"
-            _show_summary(chat_id, draft)
+                        send_message(chat_id, "❌ שגיאה. שלח לינק ידנית או /skip:")
         elif text.startswith("http"):
-            # לינק ידני
-            draft["video_url"] = text
-            draft["step"] = "confirm"
-            _show_summary(chat_id, draft)
+            draft.setdefault("videos", []).append(text)
+            send_message(chat_id, f"✅ לינק {len(draft['videos'])} נוסף!\n\nשלח סרטון נוסף או /done לסיום:")
         else:
             send_message(chat_id, "שלח קובץ סרטון, לינק Vimeo, או /skip:")
 
