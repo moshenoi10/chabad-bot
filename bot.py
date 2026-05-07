@@ -489,14 +489,9 @@ def clean_json_string(result):
         return json.loads(result)
     except json.JSONDecodeError:
         pass
-    # ניסיון שני – החלף גרשיים עבריים בתוך values
-    # מוצא כל value של JSON ומחליף " שלא escaped בתוכו
-    def fix_value(m):
-        val = m.group(2)
-        # escape גרשיים שלא escaped (לא אחרי backslash)
-        val = re.sub(r'(?<!\\)"', '\\"', val)
-        return f'"{m.group(1)}":{m.group(3)}"{val}"'
-    fixed = re.sub(r'"([^"]+)"(\s*:\s*)"((?:[^"\\]|\\.)*)"', fix_value, result)
+    # ניסיון שני – החלף גרשיים עבריים בתוך הטקסט
+    # מחפש דפוס של אות עברית + " + אות עברית (כמו ל"ג, אדמו"ר)
+    fixed = re.sub(r'(?<=[א-ת])"(?=[א-ת])', '״', result)
     try:
         return json.loads(fixed)
     except json.JSONDecodeError as e:
