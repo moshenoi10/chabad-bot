@@ -108,6 +108,8 @@ ADMIN_MENU = {
     "resize_keyboard": True,
     "persistent": True
 }
+
+MAIN_MENU = {
     "keyboard": [
         [{"text": "✍️ כתבה חדשה"}, {"text": "🤖 העלאה חכמה"}],
         [{"text": "🎉 מזל טוב"}, {"text": "🎬 העלאה ליוטיוב"}],
@@ -623,8 +625,13 @@ def handle_message(msg):
         return
 
     if text in ("/mazaltov", "🎉 מזל טוב"):
-        drafts[user_id] = {"step": "mazaltov_image", "gallery": []}
-        send_message(chat_id, "🎉 <b>מזל טוב</b>\n\nשלח את <b>התמונה</b>:")
+        drafts[user_id] = {"step": "idle", "gallery": []}
+        send_message(chat_id, "🎉 <b>מזל טוב</b>\n\nבחר סוג העלאה:", {
+            "inline_keyboard": [[
+                {"text": "📸 תמונה אחת", "callback_data": "mazaltov_single"},
+                {"text": "📸📸 כמה תמונות", "callback_data": "mazaltov_multi"}
+            ]]
+        })
         return
 
     if text in ("/edit", "✏️ עריכת כתבה"):
@@ -1012,6 +1019,41 @@ def handle_message(msg):
         except Exception as e:
             send_message(chat_id, f"❌ שגיאה: {e}")
 
+    elif step == "mazaltov_multi":
+        if "photo" in msg:
+            content = get_file(msg["photo"][-1]["file_id"])
+            if content:
+                draft.setdefault("mazaltov_images", []).append(content)
+                # שלח הודעה רק בתמונה הראשונה
+                if len(draft["mazaltov_images"]) == 1:
+                    send_message(chat_id, "📸 מקבל תמונות... שלח /done כשסיימת")
+        elif text == "/done":
+            images = draft.get("mazaltov_images", [])
+            if not images:
+                send_message(chat_id, "⚠️ לא התקבלו תמונות.")
+                return
+            send_message(chat_id, f"⏳ מעלה {len(images)} כתבות מזל טוב...")
+            success = 0
+            for i, img in enumerate(images):
+                featured_id, _ = upload_image_to_wp(img, f"mazaltov_{i}.jpg")
+                post_data = {
+                    "title": "מזל טוב",
+                    "content": "",
+                    "status": "publish",
+                    "categories": [18, 103],
+                    "acf": {"tag_label": "מזל טוב"}
+                }
+                if featured_id:
+                    post_data["featured_media"] = featured_id
+                resp = requests.post(f"{WP_URL}/posts", json=post_data,
+                                    auth=(WP_USER, WP_PASSWORD), timeout=30)
+                if resp.status_code == 201:
+                    success += 1
+            send_message(chat_id, f"✅ פורסמו {success}/{len(images)} כתבות מזל טוב!", MAIN_MENU)
+            drafts[user_id] = {"step": "idle", "gallery": []}
+        else:
+            send_message(chat_id, "שלח תמונות או /done לסיום:")
+
     elif step == "mazaltov_image":
         if "photo" in msg:
             content = get_file(msg["photo"][-1]["file_id"])
@@ -1163,6 +1205,15 @@ def handle_callback(cb):
     elif cb_data == "yt_smart":
         draft["step"] = "youtube_smart_text"
         send_message(chat_id, "🤖 שלח טקסט גולמי ו-Gemini יכין כותרת, תיאור ותגיות:")
+
+    elif cb_data == "mazaltov_single":
+        draft["step"] = "mazaltov_image"
+        send_message(chat_id, "🎉 שלח את <b>התמונה</b>:")
+
+    elif cb_data == "mazaltov_multi":
+        draft["step"] = "mazaltov_multi"
+        draft["mazaltov_images"] = []
+        send_message(chat_id, "🎉 שלח את כל התמונות (אפשר כמה ביחד).\nכשסיימת שלח /done:")
 
     elif cb_data == "upload_group_vimeo":
         files = draft.get("pending_group_files", [])
