@@ -94,7 +94,31 @@ def run_server():
     server = HTTPServer(("0.0.0.0", port), Handler)
     server.serve_forever()
 
+import pickle
+
 drafts = {}
+DRAFTS_FILE = "/tmp/drafts.pkl"
+
+def save_drafts():
+    try:
+        with open(DRAFTS_FILE, "wb") as f:
+            # שמור רק נתונים שאפשר לסריאליז (לא bytes של תמונות)
+            safe_drafts = {}
+            for uid, d in drafts.items():
+                safe = {k: v for k, v in d.items() 
+                       if k not in ("main_image", "gallery", "mazaltov_images", "pending_group_files")}
+                safe_drafts[uid] = safe
+            pickle.dump(safe_drafts, f)
+    except:
+        pass
+
+def load_drafts():
+    global drafts
+    try:
+        with open(DRAFTS_FILE, "rb") as f:
+            drafts = pickle.load(f)
+    except:
+        drafts = {}
 offset = 0
 
 ADMIN_MENU = {
@@ -434,56 +458,22 @@ def process_with_gemini(text):
 {text}"""
 
     try:
-        resp = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}",
-            json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=30
-        )
-        if resp.status_code == 200:
-            result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-            result = result.strip().replace("```json", "").replace("```", "").strip()
-            return json.loads(result)
-        print(f"שגיאה Gemini: {resp.status_code}", flush=True)
-    except Exception as e:
-        print(f"שגיאה Gemini: {e}", flush=True)
-    return None
-    if not GEMINI_API_KEY:
-        return None
-    prompt = f"""אתה עורך כתבות מנוסה לאתר חדשות חרדי. קיבלת טקסט גולמי. עליך לייצר:
-
-1. **כותרת ראשית** - משפט מושך ומלא שמסכם את הכתבה, בין 8-15 מילים. חייב להכיל את שם האירוע/אדם המרכזי.
-
-2. **כותרת משנה** - תיאור מפורט יותר, בין 15-25 מילים. צריך לכלול פרטים מרכזיים נוספים מהכתבה כמו שמות, מקומות, אירועים.
-
-3. **כותרת אדומה** - 2-4 מילים בלבד, הדגשה קצרה וחזקה.
-
-4. **גוף הכתבה** - העתק את הטקסט המקורי בדיוק, ללא שינוי כלשהו, אפילו לא תיקון שגיאות כתיב.
-
-5. **תגיות** - בין 5-8 מילות מפתח רלוונטיות מהטקסט (שמות אנשים, מקומות, אירועים).
-
-חוקים מחייבים:
-- אסור להוסיף מידע שלא קיים בטקסט המקורי
-- אסור לשנות אפילו מילה אחת בגוף הכתבה
-- הכותרת הראשית חייבת להיות לפחות 8 מילים
-- התגיות חייבות להיות לפחות 5
-
-החזר תשובה בפורמט JSON בלבד ללא backticks:
-{{"title": "...", "subtitle": "...", "red_title": "...", "body": "...", "tags": ["...", "...", "...", "...", "..."]}}
-
-הטקסט:
-{text}"""
-
-    try:
-        resp = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}",
-            json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=30
-        )
-        if resp.status_code == 200:
-            result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-            result = result.strip().replace("```json", "").replace("```", "").strip()
-            return json.loads(result)
-        print(f"שגיאה Gemini: {resp.status_code}", flush=True)
+        for attempt in range(3):
+            resp = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}",
+                json={"contents": [{"parts": [{"text": prompt}]}]},
+                timeout=30
+            )
+            if resp.status_code == 429:
+                print(f"Gemini 429, מחכה 15 שניות... (ניסיון {attempt+1}/3)", flush=True)
+                time.sleep(15)
+                continue
+            if resp.status_code == 200:
+                result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+                result = result.strip().replace("```json", "").replace("```", "").strip()
+                return json.loads(result)
+            print(f"שגיאה Gemini: {resp.status_code}", flush=True)
+            break
     except Exception as e:
         print(f"שגיאה Gemini: {e}", flush=True)
     return None
@@ -1390,6 +1380,7 @@ def handle_callback(cb):
 def main():
     global offset
     print("🚀 בוט חבד מתחיל!", flush=True)
+    load_drafts()
 
     # הגדרת תפריט פקודות
     try:
@@ -1433,6 +1424,7 @@ def main():
                     handle_message(update["message"])
                 elif "callback_query" in update:
                     handle_callback(update["callback_query"])
+                save_drafts()
                     
         except Exception as e:
             error_msg = f"שגיאה בלולאה הראשית: {str(e)}"
