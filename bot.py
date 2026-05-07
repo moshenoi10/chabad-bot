@@ -418,7 +418,37 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
                         auth=(WP_USER, WP_PASSWORD), timeout=30)
     return resp
 
-def get_file(file_id):
+def add_images_to_post(post_id, image_urls):
+    """מוסיף תמונות לכתבה בלי לשבור את האלמנטור"""
+    try:
+        # קבל את התוכן הנוכחי עם context=edit
+        r = requests.get(
+            f"{WP_URL}/posts/{post_id}?context=edit",
+            auth=(WP_USER, WP_PASSWORD), timeout=10
+        )
+        if r.status_code != 200:
+            return False
+        
+        post_data = r.json()
+        existing_content = post_data.get("content", {}).get("raw", "") or post_data.get("content", {}).get("rendered", "")
+        
+        # הוסף תמונות בסוף התוכן
+        new_images = ""
+        for img_url in image_urls:
+            new_images += f'\n<figure class="wp-block-image size-full"><img src="{img_url}" /></figure>\n'
+        
+        new_content = existing_content + new_images
+        
+        # עדכן רק את ה-content
+        update = requests.post(
+            f"{WP_URL}/posts/{post_id}",
+            json={"content": new_content},
+            auth=(WP_USER, WP_PASSWORD), timeout=10
+        )
+        return update.status_code == 200
+    except Exception as e:
+        print(f"שגיאה הוספת תמונות: {e}", flush=True)
+        return False
     try:
         r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile?file_id={file_id}", timeout=10)
         file_path = r.json()["result"]["file_path"]
@@ -939,61 +969,53 @@ def handle_message(msg):
         if "photo" in msg:
             media_group_id = msg.get("media_group_id")
             file_id = msg["photo"][-1]["file_id"]
-            
-            # טיפול ב-media group (כמה תמונות ביחד)
+
+            if "edit_gallery_pending" not in draft:
+                draft["edit_gallery_pending"] = []
+
             if media_group_id:
                 if draft.get("edit_gallery_group") != media_group_id:
                     draft["edit_gallery_group"] = media_group_id
-                    draft["edit_gallery_pending"] = []
                 if file_id not in draft["edit_gallery_pending"]:
                     draft["edit_gallery_pending"].append(file_id)
-                # שלח הודעה רק בתמונה הראשונה
                 if len(draft["edit_gallery_pending"]) == 1:
-                    send_message(chat_id, "⏳ מעלה תמונות לגלריה... שלח /done כשסיימת")
+                    send_message(chat_id, "📥 מקבל תמונות... שלח /done כשסיימת")
             else:
-                # תמונה בודדת – העלה מיד
-                post_id = draft.get("edit_id")
-                send_message(chat_id, "⏳ מעלה תמונה...")
-                content_bytes = get_file(file_id)
-                if content_bytes:
-                    img_id, img_url = upload_image_to_wp(content_bytes, f"gallery_add.jpg")
-                    if img_url:
-                        r = requests.get(f"{WP_URL}/posts/{post_id}", auth=(WP_USER, WP_PASSWORD), timeout=10)
-                        if r.status_code == 200:
-                            existing_content = r.json().get("content", {}).get("raw", "")
-                            new_content = existing_content + f'\n<figure class="wp-block-image size-full"><img src="{img_url}" /></figure>\n'
-                            requests.post(f"{WP_URL}/posts/{post_id}", json={"content": new_content},
-                                        auth=(WP_USER, WP_PASSWORD), timeout=10)
-                        send_message(chat_id, "✅ תמונה נוספה!\n\nשלח עוד תמונות או /done לסיום:")
+                draft["edit_gallery_pending"].append(file_id)
+                send_message(chat_id, f"📥 {len(draft['edit_gallery_pending'])} תמונות. שלח עוד או /done:")
 
         elif text == "/done":
             post_id = draft.get("edit_id")
             pending = draft.get("edit_gallery_pending", [])
-            
+
             if pending:
-                send_message(chat_id, f"⏳ מעלה {len(pending)} תמונות לגלריה...")
+                send_message(chat_id, f"⏳ מעלה {len(pending)} תמונות...")
+                image_urls = []
                 for fid in pending:
                     content_bytes = get_file(fid)
                     if content_bytes:
-                        img_id, img_url = upload_image_to_wp(content_bytes, f"gallery_add.jpg")
+                        img_id, img_url = upload_image_to_wp(content_bytes, "gallery_add.jpg")
                         if img_url:
-                            r = requests.get(f"{WP_URL}/posts/{post_id}", auth=(WP_USER, WP_PASSWORD), timeout=10)
-                            if r.status_code == 200:
-                                existing_content = r.json().get("content", {}).get("raw", "")
-                                new_content = existing_content + f'\n<figure class="wp-block-image size-full"><img src="{img_url}" /></figure>\n'
-                                requests.post(f"{WP_URL}/posts/{post_id}", json={"content": new_content},
-                                            auth=(WP_USER, WP_PASSWORD), timeout=10)
-            
-            send_message(chat_id, "✅ הגלריה עודכנה!\n\nהאם יש שינויים נוספים?", {
-                "inline_keyboard": [
-                    [{"text": "כותרת", "callback_data": "edit_title"},
-                     {"text": "כותרת אדומה", "callback_data": "edit_red_title"}],
-                    [{"text": "תמונה ראשית", "callback_data": "edit_image"},
-                     {"text": "הוספת תמונות", "callback_data": "edit_gallery"}],
-                    [{"text": "הוספת סרטון", "callback_data": "edit_video"},
-                     {"text": "✅ סיימתי", "callback_data": "edit_done"}]
-                ]
-            })
+                            image_urls.append(img_url)
+
+                if image_urls:
+                    success = add_images_to_post(post_id, image_urls)
+                    if success:
+                        send_message(chat_id, f"✅ {len(image_urls)} תמונות נוספו!\n\nהאם יש שינויים נוספים?", {
+                            "inline_keyboard": [
+                                [{"text": "כותרת", "callback_data": "edit_title"},
+                                 {"text": "כותרת אדומה", "callback_data": "edit_red_title"}],
+                                [{"text": "תמונה ראשית", "callback_data": "edit_image"},
+                                 {"text": "הוספת תמונות", "callback_data": "edit_gallery"}],
+                                [{"text": "הוספת סרטון", "callback_data": "edit_video"},
+                                 {"text": "✅ סיימתי", "callback_data": "edit_done"}]
+                            ]
+                        })
+                    else:
+                        send_message(chat_id, "❌ שגיאה בהוספת תמונות.")
+                draft["edit_gallery_pending"] = []
+            else:
+                send_message(chat_id, "⚠️ לא התקבלו תמונות.")
         else:
             send_message(chat_id, "שלח תמונות או /done:")
 
@@ -1001,7 +1023,7 @@ def handle_message(msg):
         post_id = draft.get("edit_id")
         r = requests.get(f"{WP_URL}/posts/{post_id}", auth=(WP_USER, WP_PASSWORD), timeout=10)
         if r.status_code == 200:
-            existing_content = r.json().get("content", {}).get("raw", "")
+            existing_content = r.json().get("content", {}).get("rendered", "")
             new_content = existing_content + f'\n\n[embed]{text}[/embed]'
             requests.post(f"{WP_URL}/posts/{post_id}", json={"content": new_content},
                         auth=(WP_USER, WP_PASSWORD), timeout=10)
