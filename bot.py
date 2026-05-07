@@ -258,6 +258,7 @@ def main():
     
     while True:
         try:
+            print(f"בודק עדכונים... offset={offset}", flush=True)
             resp = requests.get(
                 f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates",
                 params={"offset": offset, "timeout": 0},
