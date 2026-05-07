@@ -540,6 +540,10 @@ def build_prompt(text):
 הטקסט:
 {text}"""
 
+def process_with_gemini(text):
+    if not GEMINI_API_KEY:
+        return None
+    prompt = build_prompt(text)
     try:
         for attempt in range(3):
             resp = requests.post(
@@ -563,7 +567,7 @@ def build_prompt(text):
     
     # גיבוי – Groq
     print("עובר ל-Groq כגיבוי...", flush=True)
-    return process_with_groq(text, prompt)
+    return process_with_groq(text)
 
 def improve_titles_with_ai(draft):
     text = draft.get("body", "")
