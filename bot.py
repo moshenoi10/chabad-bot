@@ -64,15 +64,17 @@ def publish_to_wp(draft):
     if draft.get("main_image"):
         featured_id, _ = upload_image_to_wp(draft["main_image"], "main.jpg")
 
-    gallery_ids = []
+    # גלריה – תמונות אחת מתחת לשנייה
+    gallery_content = ""
     for i, img in enumerate(draft.get("gallery", [])):
-        img_id, _ = upload_image_to_wp(img, f"gallery_{i}.jpg")
-        if img_id:
-            gallery_ids.append(img_id)
+        img_id, img_url = upload_image_to_wp(img, f"gallery_{i}.jpg")
+        if img_url:
+            gallery_content += f'\n<figure class="wp-block-image size-full"><img src="{img_url}" /></figure>\n'
 
     content = draft.get("body", "")
-    if gallery_ids:
-        content += '\n\n[gallery ids="' + ",".join(str(i) for i in gallery_ids) + '"]'
+    if gallery_content:
+        content += "\n\n" + gallery_content
+
     if draft.get("video_url"):
         content += f'\n\n[embed]{draft["video_url"]}[/embed]'
 
@@ -90,9 +92,12 @@ def publish_to_wp(draft):
         "title": draft.get("title", ""),
         "content": content,
         "excerpt": draft.get("subtitle", ""),
-        "status": "draft",
+        "status": "publish",
         "categories": draft.get("categories", []),
         "tags": tag_ids,
+        "acf": {
+            "tag_label": draft.get("red_title", "")
+        }
     }
     if featured_id:
         post_data["featured_media"] = featured_id
@@ -250,6 +255,19 @@ def handle_callback(cb):
 def main():
     global offset
     print("🚀 בוט חבד מתחיל!", flush=True)
+
+    # הגדרת תפריט פקודות
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setMyCommands",
+            json={"commands": [
+                {"command": "new", "description": "✍️ כתבה חדשה"},
+                {"command": "cancel", "description": "❌ ביטול כתבה נוכחית"}
+            ]},
+            timeout=10
+        )
+    except:
+        pass
     
     # הפעל שרת HTTP ברקע
     t = threading.Thread(target=run_server, daemon=True)
