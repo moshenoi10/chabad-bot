@@ -465,9 +465,10 @@ def process_with_groq(text, prompt=None):
             json={
                 "model": "llama-3.1-8b-instant",
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3
+                "temperature": 0.3,
+                "max_tokens": 2000
             },
-            timeout=30
+            timeout=60
         )
         if resp.status_code == 200:
             result = resp.json()["choices"][0]["message"]["content"]
@@ -489,13 +490,13 @@ def clean_json_string(result):
         return json.loads(result)
     except json.JSONDecodeError:
         pass
-    # תיקון 1 – החלף newlines אמיתיים
+    # תיקון newlines אמיתיים בתוך JSON
     fixed = result.replace('\n', '\\n').replace('\r', '')
     try:
         return json.loads(fixed)
     except json.JSONDecodeError:
         pass
-    # תיקון 2 – גרשיים עבריים אחרי אות עברית
+    # תיקון גרשיים עבריים
     fixed = re.sub(r'(?<=[א-ת])"', '\u05f4', fixed)
     try:
         return json.loads(fixed)
