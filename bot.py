@@ -418,6 +418,16 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
                         auth=(WP_USER, WP_PASSWORD), timeout=30)
     return resp
 
+def get_file(file_id):
+    try:
+        r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile?file_id={file_id}", timeout=10)
+        file_path = r.json()["result"]["file_path"]
+        img = requests.get(f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}", timeout=30)
+        return img.content
+    except Exception as e:
+        print(f"שגיאה קבלת קובץ: {e}")
+    return None
+
 def add_images_to_post(post_id, image_urls):
     """מוסיף תמונות לכתבה בלי לשבור את האלמנטור"""
     try:
