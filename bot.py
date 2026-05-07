@@ -457,7 +457,7 @@ def process_with_groq(text, prompt=None):
     if not groq_key:
         return None
     if prompt is None:
-        prompt = build_prompt(text)
+        prompt = build_groq_prompt(text)
     try:
         resp = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
@@ -524,7 +524,22 @@ def prepare_text_for_ai(text):
     text = re.sub(r'(?<=[א-ת])"(?=[א-ת\s])', '״', text)
     return text
 
-def build_prompt(text):
+def build_groq_prompt(text):
+    """פרומפט קצר יותר לGroq שמוגבל ב-tokens"""
+    # קצר את הטקסט אם ארוך מדי
+    if len(text) > 800:
+        text = text[:800] + "..."
+    return f"""עורך חדשות חרדי. צור מהטקסט:
+1. כותרת: 8+ מילים עם שם מרכזי ונקודתיים
+2. כותרת משנה: פרטים עם • ביניהם, 15+ מילים
+3. כותרת אדומה: 2-4 מילים
+4. גוף: פסקאות של 2-3 משפטים, אל תוסיף מילים
+5. תגיות: 5 מילות מפתח
+
+JSON בלבד:
+{{"title":"...","subtitle":"...","red_title":"...","body":"...","tags":["...","...","...","...","..."]}}
+
+טקסט: {text}"""
     return f"""אתה עורך ראשי של אתר חדשות חרדי. כתוב בסגנון עיתונאי מקצועי ומושך.
 
 כללים:
