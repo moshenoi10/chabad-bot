@@ -203,27 +203,37 @@ def handle_message(msg):
         send_message(chat_id, "✅ תגיות נשמרו!\n\nבחר <b>קטגוריות</b>:", keyboard)
 
     elif step == "edit_url":
-        # חילוץ ID מה-URL
         try:
-            slug = text.rstrip("/").split("/")[-1]
-            r = requests.get(f"{WP_URL}/posts?slug={slug}", auth=(WP_USER, WP_PASSWORD), timeout=10)
-            posts = r.json()
-            if posts:
-                post = posts[0]
-                draft["edit_id"] = post["id"]
-                draft["step"] = "edit_field"
-                send_message(chat_id, f"""✏️ <b>עורך כתבה:</b>
+            # נסה לחלץ ID מהURL
+            part = text.rstrip("/").split("/")[-1]
+            if part.isdigit():
+                r = requests.get(f"{WP_URL}/posts/{part}", auth=(WP_USER, WP_PASSWORD), timeout=10)
+                if r.status_code == 200:
+                    post = r.json()
+                else:
+                    send_message(chat_id, "❌ כתבה לא נמצאה. נסה שוב:")
+                    return
+            else:
+                r = requests.get(f"{WP_URL}/posts?slug={part}", auth=(WP_USER, WP_PASSWORD), timeout=10)
+                posts = r.json()
+                if posts:
+                    post = posts[0]
+                else:
+                    send_message(chat_id, "❌ כתבה לא נמצאה. נסה שוב:")
+                    return
+
+            draft["edit_id"] = post["id"]
+            draft["step"] = "edit_field"
+            send_message(chat_id, f"""✏️ <b>עורך כתבה:</b>
 <b>{post['title']['rendered']}</b>
 
 מה תרצה לערוך?""", {
-                    "inline_keyboard": [
-                        [{"text": "כותרת", "callback_data": "edit_title"},
-                         {"text": "תוכן", "callback_data": "edit_content"}],
-                        [{"text": "תמונה ראשית", "callback_data": "edit_image"}]
-                    ]
-                })
-            else:
-                send_message(chat_id, "❌ כתבה לא נמצאה. נסה שוב:")
+                "inline_keyboard": [
+                    [{"text": "כותרת", "callback_data": "edit_title"},
+                     {"text": "תוכן", "callback_data": "edit_content"}],
+                    [{"text": "תמונה ראשית", "callback_data": "edit_image"}]
+                ]
+            })
         except Exception as e:
             send_message(chat_id, f"❌ שגיאה: {e}")
 
@@ -263,22 +273,32 @@ def handle_message(msg):
 
     elif step == "delete_url":
         try:
-            slug = text.rstrip("/").split("/")[-1]
-            r = requests.get(f"{WP_URL}/posts?slug={slug}", auth=(WP_USER, WP_PASSWORD), timeout=10)
-            posts = r.json()
-            if posts:
-                post = posts[0]
-                draft["delete_id"] = post["id"]
-                draft["delete_title"] = post["title"]["rendered"]
-                draft["step"] = "delete_confirm"
-                send_message(chat_id, f"⚠️ האם למחוק את הכתבה:\n<b>{post['title']['rendered']}</b>?", {
-                    "inline_keyboard": [[
-                        {"text": "✅ כן, מחק", "callback_data": "delete_yes"},
-                        {"text": "❌ ביטול", "callback_data": "delete_no"}
-                    ]]
-                })
+            part = text.rstrip("/").split("/")[-1]
+            if part.isdigit():
+                r = requests.get(f"{WP_URL}/posts/{part}", auth=(WP_USER, WP_PASSWORD), timeout=10)
+                if r.status_code == 200:
+                    post = r.json()
+                else:
+                    send_message(chat_id, "❌ כתבה לא נמצאה. נסה שוב:")
+                    return
             else:
-                send_message(chat_id, "❌ כתבה לא נמצאה. נסה שוב:")
+                r = requests.get(f"{WP_URL}/posts?slug={part}", auth=(WP_USER, WP_PASSWORD), timeout=10)
+                posts = r.json()
+                if posts:
+                    post = posts[0]
+                else:
+                    send_message(chat_id, "❌ כתבה לא נמצאה. נסה שוב:")
+                    return
+
+            draft["delete_id"] = post["id"]
+            draft["delete_title"] = post["title"]["rendered"]
+            draft["step"] = "delete_confirm"
+            send_message(chat_id, f"⚠️ האם למחוק את הכתבה:\n<b>{post['title']['rendered']}</b>?", {
+                "inline_keyboard": [[
+                    {"text": "✅ כן, מחק", "callback_data": "delete_yes"},
+                    {"text": "❌ ביטול", "callback_data": "delete_no"}
+                ]]
+            })
         except Exception as e:
             send_message(chat_id, f"❌ שגיאה: {e}")
 
