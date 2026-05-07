@@ -470,10 +470,17 @@ def process_with_groq(text, prompt):
         if resp.status_code == 200:
             result = resp.json()["choices"][0]["message"]["content"]
             result = result.strip().replace("```json", "").replace("```", "").strip()
+            # ניקוי תווי בקרה
+            import re
+            result = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', result)
             last_brace = result.rfind("}")
             if last_brace != -1:
                 result = result[:last_brace+1]
-            return json.loads(result)
+            try:
+                return json.loads(result)
+            except json.JSONDecodeError as e:
+                print(f"שגיאה Groq JSON: {e}\nתשובה: {result[:500]}", flush=True)
+                return None
         print(f"שגיאה Groq: {resp.status_code}", flush=True)
     except Exception as e:
         print(f"שגיאה Groq: {e}", flush=True)
@@ -527,7 +534,8 @@ def process_with_gemini(text):
             if resp.status_code == 200:
                 result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
                 result = result.strip().replace("```json", "").replace("```", "").strip()
-                # חיתוך עד הסוגר האחרון למקרה שיש תוכן אחרי ה-JSON
+                import re
+                result = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', result)
                 last_brace = result.rfind("}")
                 if last_brace != -1:
                     result = result[:last_brace+1]
