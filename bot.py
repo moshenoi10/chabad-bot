@@ -452,10 +452,12 @@ def convert_whatsapp_format(text):
     text = re.sub(r'~([^~]+)~', r'<s>\1</s>', text)
     return text
 
-def process_with_groq(text, prompt):
+def process_with_groq(text, prompt=None):
     groq_key = os.environ.get("GROQ_API_KEY", "")
     if not groq_key:
         return None
+    if prompt is None:
+        prompt = build_prompt(text)
     try:
         resp = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
@@ -469,27 +471,43 @@ def process_with_groq(text, prompt):
         )
         if resp.status_code == 200:
             result = resp.json()["choices"][0]["message"]["content"]
-            result = result.strip().replace("```json", "").replace("```", "").strip()
-            # ניקוי תווי בקרה
-            import re
-            result = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', result)
-            last_brace = result.rfind("}")
-            if last_brace != -1:
-                result = result[:last_brace+1]
-            try:
-                return json.loads(result)
-            except json.JSONDecodeError as e:
-                print(f"שגיאה Groq JSON: {e}\nתשובה: {result[:500]}", flush=True)
-                return None
+            return clean_json_string(result)
         print(f"שגיאה Groq: {resp.status_code}", flush=True)
     except Exception as e:
         print(f"שגיאה Groq: {e}", flush=True)
     return None
 
-def process_with_gemini(text):
-    if not GEMINI_API_KEY:
-        return None
-    prompt = f"""אתה עורך ראשי של אתר חדשות חרדי מוביל. אתה כותב כותרות מושכות, עשירות ומלאות תוכן בסגנון עיתונאי מקצועי.
+def clean_json_string(result):
+    """ניקוי ותיקון JSON עם תווים עבריים מיוחדים"""
+    import re
+    result = result.strip().replace("```json", "").replace("```", "").strip()
+    # ניקוי תווי בקרה (חוץ מ-\n ו-\t שצריך ל-JSON)
+    result = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', result)
+    # חיתוך עד הסוגר האחרון
+    last_brace = result.rfind("}")
+    if last_brace != -1:
+        result = result[:last_brace+1]
+    # תיקון גרשיים כפולים עבריים (ל"ג, אדמו"ר וכו') – escape רק בתוך values
+    def fix_geresh(s):
+        # מחלץ ומתקן כל value של JSON
+        def replacer(m):
+            key = m.group(1)
+            val = m.group(2)
+            # escape גרשיים שלא escaped
+            val = re.sub(r'(?<!\\)"', '\\"', val)
+            return f'"{key}": "{val}"'
+        return re.sub(r'"([^"]+)":\s*"((?:[^"\\]|\\.)*)"', replacer, s)
+    try:
+        return json.loads(result)
+    except json.JSONDecodeError:
+        try:
+            return json.loads(fix_geresh(result))
+        except json.JSONDecodeError as e:
+            print(f"שגיאה JSON סופית: {e}\nתשובה: {result[:500]}", flush=True)
+            return None
+
+def build_prompt(text):
+    return f"""אתה עורך ראשי של אתר חדשות חרדי מוביל. אתה כותב כותרות מושכות, עשירות ומלאות תוכן בסגנון עיתונאי מקצועי.
 
 דוגמה לאיכות הנדרשת:
 טקסט גולמי: "ר' לוי לבייב ביקר את מזכירו של הרבי הרב יהודה קרינסקי, הביקור היה חם ומתרפק..."
@@ -498,23 +516,23 @@ def process_with_gemini(text):
 כותרת אדומה מצוינת: "ביקור מרגש ב-770"
 
 כללי זהב לכותרות:
-- כותרת ראשית: שילוב של רגש + עובדה + שם מרכזי. השתמש בנקודתיים (:) ליצירת מתח. לפחות 8 מילים.
-- כותרת משנה: כל הפרטים החשובים מופרדים ב-• . לפחות 20 מילים. תן תחושה של סיקור מלא.
-- כותרת אדומה: 2-4 מילים, עוצמתיות ומושכות תשומת לב.
+- כותרת ראשית: שילוב רגש + עובדה + שם מרכזי. השתמש בנקודתיים (:) ליצירת מתח. לפחות 8 מילים.
+- כותרת משנה: כל הפרטים החשובים מופרדים ב-•. לפחות 20 מילים.
+- כותרת אדומה: 2-4 מילים עוצמתיות.
 
 עכשיו עבד על הטקסט הבא:
 
-1. **כותרת ראשית** - בסגנון הדוגמה למעלה, לפחות 8 מילים עם שם מרכזי.
-2. **כותרת משנה** - פירוט עשיר עם • בין הנקודות, לפחות 20 מילים.
-3. **כותרת אדומה** - 2-4 מילים עוצמתיות.
-4. **גוף הכתבה** - סדר את הטקסט בפסקאות הגיוניות:
+1. כותרת ראשית - בסגנון הדוגמה, לפחות 8 מילים עם שם מרכזי.
+2. כותרת משנה - פירוט עשיר עם • בין הנקודות, לפחות 20 מילים.
+3. כותרת אדומה - 2-4 מילים עוצמתיות.
+4. גוף הכתבה - סדר בפסקאות הגיוניות:
    - כל מחשבה או נושא נפרד = פסקה נפרדת
    - אם הטקסט גוש רצוף, חלק ל-2-4 משפטים לפסקה
    - אסור להוסיף מילה שלא קיימת בטקסט
-   - הסר תווי עיצוב וואטסאפ (* _ ~)
-   - גרשיים כפולים " החלף ב-' כדי לא לשבור JSON
+   - הסר תווי עיצוב וואטסאפ (* _ ~) אבל שמור גרשיים (")
    - הפסק בין פסקאות עם \\n\\n
-5. **תגיות** - 5-8 מילות מפתח.
+   - חשוב מאוד: גרשיים כפולים " בתוך הטקסט (כמו ל"ג, אדמו"ר) – כתוב אותם כך: ל\\"ג, אדמו\\"ר
+5. תגיות - 5-8 מילות מפתח.
 
 החזר JSON בלבד ללא backticks:
 {{"title": "...", "subtitle": "...", "red_title": "...", "body": "...", "tags": ["...", "...", "...", "...", "..."]}}
@@ -534,17 +552,10 @@ def process_with_gemini(text):
                 break
             if resp.status_code == 200:
                 result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-                result = result.strip().replace("```json", "").replace("```", "").strip()
-                import re
-                result = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', result)
-                last_brace = result.rfind("}")
-                if last_brace != -1:
-                    result = result[:last_brace+1]
-                try:
-                    return json.loads(result)
-                except json.JSONDecodeError as e:
-                    print(f"שגיאה JSON: {e}\nתשובה גולמית: {result[:500]}", flush=True)
-                    return None
+                parsed = clean_json_string(result)
+                if parsed:
+                    return parsed
+                return None
             print(f"שגיאה Gemini: {resp.status_code}", flush=True)
             break
     except Exception as e:
