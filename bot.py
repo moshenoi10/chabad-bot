@@ -463,7 +463,7 @@ def process_with_groq(text, prompt=None):
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
             json={
-                "model": "llama-3.3-70b-versatile",
+                "model": "llama3-8b-8192",
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3
             },
@@ -528,14 +528,18 @@ def process_with_gemini(text):
         return None
     prompt = build_prompt(text)
     try:
-        for attempt in range(3):
+        for attempt in range(2):
             resp = requests.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}",
                 json={"contents": [{"parts": [{"text": prompt}]}]},
                 timeout=30
             )
             if resp.status_code in (429, 503):
-                print(f"Gemini {resp.status_code}, עובר ל-Groq מיד...", flush=True)
+                if attempt == 0:
+                    print(f"Gemini 429, ממתין 20 שניות...", flush=True)
+                    time.sleep(20)
+                    continue
+                print(f"Gemini 429 שוב, עובר ל-Groq...", flush=True)
                 break
             if resp.status_code == 200:
                 result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
@@ -981,8 +985,16 @@ def handle_message(msg):
                 ]
             })
         else:
-            send_message(chat_id, "❌ שגיאה בעיבוד. נסה שוב או השתמש בהעלאה ידנית.", get_menu(user_id))
-            drafts[user_id] = {"step": "idle", "gallery": []}
+            # AI נכשל – שמור את הטקסט ושאל מה לעשות
+            draft["body"] = text
+            draft["step"] = "smart_text"
+            send_message(chat_id, "❌ ה-AI לא הצליח לעבד כרגע.\n\nמה תרצה לעשות?", {
+                "inline_keyboard": [
+                    [{"text": "🔄 נסה שוב", "callback_data": "smart_retry"}],
+                    [{"text": "✍️ המשך ידנית", "callback_data": "smart_manual_fallback"}],
+                    [{"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+                ]
+            })
 
     elif step == "smart_edit_subtitle_input":
         draft["subtitle"] = text
@@ -1490,6 +1502,61 @@ def handle_callback(cb):
         draft["categories"] = []
         draft["cat_names"] = []
         send_message(chat_id, "✅ מעולה! בחר <b>קטגוריות</b>:", keyboard)
+
+    elif cb_data == "smart_retry":
+        draft["step"] = "smart_text"
+        saved_text = draft.get("body", "")
+        if saved_text:
+            send_message(chat_id, "⏳ מנסה שוב...")
+            result = process_with_gemini(saved_text)
+            if result:
+                body_clean = convert_whatsapp_format(result.get("body", saved_text))
+                draft.update({
+                    "title": result.get("title", ""),
+                    "subtitle": result.get("subtitle", ""),
+                    "red_title": result.get("red_title", ""),
+                    "body": body_clean,
+                    "tags": result.get("tags", []),
+                    "step": "smart_preview"
+                })
+                import re
+                body_preview = re.sub(r'<[^>]+>', '', body_clean)[:300]
+                preview = f"""🤖 <b>תצוגה מקדימה:</b>
+
+<b>כותרת:</b> {draft['title']}
+<b>כותרת משנה:</b> {draft['subtitle']}
+<b>כותרת אדומה:</b> {draft['red_title']}
+<b>תגיות:</b> {', '.join(draft['tags'])}
+
+<b>גוף:</b>
+{body_preview}{'...' if len(body_clean) > 300 else ''}"""
+                send_message(chat_id, preview, {
+                    "inline_keyboard": [
+                        [{"text": "✅ מאשר, המשך", "callback_data": "smart_approve"}],
+                        [{"text": "✨ שפר כותרות", "callback_data": "smart_improve_titles"}],
+                        [{"text": "✏️ ערוך כותרת", "callback_data": "smart_edit_title"},
+                         {"text": "✏️ ערוך כותרת משנה", "callback_data": "smart_edit_subtitle"}],
+                        [{"text": "✏️ ערוך גוף", "callback_data": "smart_edit_body"},
+                         {"text": "✏️ ערוך תגיות", "callback_data": "smart_edit_tags"}],
+                        [{"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+                    ]
+                })
+            else:
+                send_message(chat_id, "❌ ה-AI עדיין לא זמין. נסה שוב בעוד דקה.", {
+                    "inline_keyboard": [
+                        [{"text": "🔄 נסה שוב", "callback_data": "smart_retry"}],
+                        [{"text": "✍️ המשך ידנית", "callback_data": "smart_manual_fallback"}],
+                        [{"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+                    ]
+                })
+        else:
+            send_message(chat_id, "שלח את הטקסט מחדש:")
+
+    elif cb_data == "smart_manual_fallback":
+        # עבור להעלאה ידנית עם הגוף שנשמר
+        draft["step"] = "title"
+        draft["title"] = ""
+        send_message(chat_id, "✍️ נעבור להעלאה ידנית.\n\nשלח את <b>הכותרת</b>:")
 
     elif cb_data == "smart_improve_titles":
         send_message(chat_id, "✨ משפר כותרות...")
