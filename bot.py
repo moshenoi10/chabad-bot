@@ -380,7 +380,7 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
         content += f'\n\n<!-- wp:embed {{"url":"{url}","type":"video","providerNameSlug":"vimeo","responsive":true}} -->\n<figure class="wp-block-embed is-type-video is-provider-vimeo"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n<!-- /wp:embed -->'
 
     for url in draft.get("videos", []):
-        content += f'\n<!-- wp:embed {{"url":"{url}","type":"video","providerNameSlug":"vimeo","responsive":true}} -->\n<figure class="wp-block-embed is-type-video is-provider-vimeo wp-block-embed-vimeo" style="margin:4px 0 !important;padding:0 !important"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n<!-- /wp:embed -->'
+        content += f'\n\n[embed]{url}[/embed]'
 
     tag_ids = []
     for tag in draft.get("tags", []):
@@ -464,8 +464,8 @@ def process_with_gemini(text):
                 json={"contents": [{"parts": [{"text": prompt}]}]},
                 timeout=30
             )
-            if resp.status_code == 429:
-                print(f"Gemini 429, מחכה 15 שניות... (ניסיון {attempt+1}/3)", flush=True)
+            if resp.status_code in (429, 503):
+                print(f"Gemini {resp.status_code}, מחכה 15 שניות... (ניסיון {attempt+1}/3)", flush=True)
                 time.sleep(15)
                 continue
             if resp.status_code == 200:
