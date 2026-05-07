@@ -490,8 +490,8 @@ def clean_json_string(result):
     except json.JSONDecodeError:
         pass
     # ניסיון שני – החלף גרשיים עבריים בתוך הטקסט
-    # מחפש דפוס של אות עברית + " + אות עברית (כמו ל"ג, אדמו"ר)
-    fixed = re.sub(r'(?<=[א-ת])"(?=[א-ת])', '״', result)
+    # מחפש " שיש לפניו אות עברית ואחריו אות עברית או רווח
+    fixed = re.sub(r'(?<=[א-תא-ת])"(?=[א-ת ])', '\u05f4', result)
     try:
         return json.loads(fixed)
     except json.JSONDecodeError as e:
@@ -1719,14 +1719,19 @@ def main():
     
     while True:
         try:
-            print(f"בודק עדכונים... offset={offset}", flush=True)
             resp = requests.get(
                 f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates",
                 params={"offset": offset, "timeout": 0},
                 timeout=10
             )
-            print(f"תגובה: {resp.text[:200]}", flush=True)
-            updates = resp.json().get("result", [])
+            data = resp.json()
+            
+            # טיפול ב-409 – instance כפול, ממתין
+            if not data.get("ok") and data.get("error_code") == 409:
+                time.sleep(5)
+                continue
+            
+            updates = data.get("result", [])
             
             if not updates:
                 time.sleep(1)
