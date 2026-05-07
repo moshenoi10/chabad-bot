@@ -452,6 +452,33 @@ def convert_whatsapp_format(text):
     text = re.sub(r'~([^~]+)~', r'<s>\1</s>', text)
     return text
 
+def process_with_groq(text, prompt):
+    groq_key = os.environ.get("GROQ_API_KEY", "")
+    if not groq_key:
+        return None
+    try:
+        resp = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+            json={
+                "model": "llama-3.3-70b-versatile",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3
+            },
+            timeout=30
+        )
+        if resp.status_code == 200:
+            result = resp.json()["choices"][0]["message"]["content"]
+            result = result.strip().replace("```json", "").replace("```", "").strip()
+            last_brace = result.rfind("}")
+            if last_brace != -1:
+                result = result[:last_brace+1]
+            return json.loads(result)
+        print(f"שגיאה Groq: {resp.status_code}", flush=True)
+    except Exception as e:
+        print(f"שגיאה Groq: {e}", flush=True)
+    return None
+
 def process_with_gemini(text):
     if not GEMINI_API_KEY:
         return None
@@ -514,7 +541,10 @@ def process_with_gemini(text):
             break
     except Exception as e:
         print(f"שגיאה Gemini: {e}", flush=True)
-    return None
+    
+    # גיבוי – Groq
+    print("עובר ל-Groq כגיבוי...", flush=True)
+    return process_with_groq(text, prompt)
 
 def _show_summary(chat_id, draft):
     summary = f"""📋 <b>סיכום:</b>
@@ -852,14 +882,25 @@ def handle_message(msg):
                 "inline_keyboard": [
                     [{"text": "✅ מאשר, המשך", "callback_data": "smart_approve"}],
                     [{"text": "✏️ ערוך כותרת", "callback_data": "smart_edit_title"},
-                     {"text": "✏️ ערוך גוף", "callback_data": "smart_edit_body"}],
-                    [{"text": "✏️ ערוך תגיות", "callback_data": "smart_edit_tags"},
-                     {"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+                     {"text": "✏️ ערוך כותרת משנה", "callback_data": "smart_edit_subtitle"}],
+                    [{"text": "✏️ ערוך גוף", "callback_data": "smart_edit_body"},
+                     {"text": "✏️ ערוך תגיות", "callback_data": "smart_edit_tags"}],
+                    [{"text": "❌ ביטול", "callback_data": "publish_cancel"}]
                 ]
             })
         else:
             send_message(chat_id, "❌ שגיאה בעיבוד. נסה שוב או השתמש בהעלאה ידנית.", get_menu(user_id))
             drafts[user_id] = {"step": "idle", "gallery": []}
+
+    elif step == "smart_edit_subtitle_input":
+        draft["subtitle"] = text
+        draft["step"] = "smart_preview"
+        send_message(chat_id, f"✅ כותרת משנה עודכנה!\n\n{text}\n\nהמשך?", {
+            "inline_keyboard": [[
+                {"text": "✅ מאשר, המשך", "callback_data": "smart_approve"},
+                {"text": "❌ ביטול", "callback_data": "publish_cancel"}
+            ]]
+        })
 
     elif step == "smart_edit_title_input":
         draft["title"] = text
@@ -1357,6 +1398,10 @@ def handle_callback(cb):
         draft["categories"] = []
         draft["cat_names"] = []
         send_message(chat_id, "✅ מעולה! בחר <b>קטגוריות</b>:", keyboard)
+
+    elif cb_data == "smart_edit_subtitle":
+        draft["step"] = "smart_edit_subtitle_input"
+        send_message(chat_id, f"כותרת משנה נוכחית:\n{draft.get('subtitle','')}\n\nשלח כותרת משנה חדשה:")
 
     elif cb_data == "smart_edit_title":
         draft["step"] = "smart_edit_title_input"
