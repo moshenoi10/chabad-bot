@@ -501,24 +501,52 @@ def clean_json_string(result):
         print(f"שגיאה JSON: לא נמצאו סוגריים\nתשובה: {result[:300]}", flush=True)
         return None
     result = result[first_brace:last_brace+1]
+
+    def fix_quotes(s):
+        """מתקן גרשיים כפולים שנמצאים בתוך ערכי JSON"""
+        output = []
+        in_string = False
+        i = 0
+        while i < len(s):
+            c = s[i]
+            if c == '\\' and i + 1 < len(s):
+                output.append(c)
+                output.append(s[i+1])
+                i += 2
+                continue
+            if c == '"':
+                if not in_string:
+                    in_string = True
+                    output.append(c)
+                else:
+                    j = i + 1
+                    while j < len(s) and s[j] in (' ', '\t'):
+                        j += 1
+                    if j >= len(s) or s[j] in (':', ',', '}', ']', '\n', '\r'):
+                        in_string = False
+                        output.append(c)
+                    else:
+                        output.append('\u05f4')
+            else:
+                output.append(c)
+            i += 1
+        return ''.join(output)
+
+    # ניסיון ראשון – ישיר
+    try:
+        return json.loads(result)
+    except json.JSONDecodeError:
+        pass
+    # תיקון גרשיים
+    fixed = fix_quotes(result)
+    try:
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
     # תיקון newlines
-    fixed = result.replace('\n', '\\n').replace('\r', '')
-    # ניסיון ראשון
+    fixed2 = fixed.replace('\n', '\\n').replace('\r', '')
     try:
-        return json.loads(fixed)
-    except json.JSONDecodeError:
-        pass
-    # תיקון גרשיים עבריים (אחרי אות עברית)
-    fixed = re.sub(r'(?<=[א-ת])"', '\u05f4', fixed)
-    try:
-        return json.loads(fixed)
-    except json.JSONDecodeError:
-        pass
-    # תיקון גרשיים אנגליים בתוך טקסט עברי (כמו "מירון של אוקראינה")
-    # מחפש " שבא אחרי מרחב/אות ולפני אות עברית או רווח
-    fixed = re.sub(r'(?<=[\u0590-\u05ff\s])"(?=[\u0590-\u05ff\s])', '\u05f4', fixed)
-    try:
-        return json.loads(fixed)
+        return json.loads(fixed2)
     except json.JSONDecodeError as e:
         print(f"שגיאה JSON סופית: {e}\nתשובה: {result[:500]}", flush=True)
         return None
