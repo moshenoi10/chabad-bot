@@ -552,7 +552,25 @@ def clean_json_string(result):
         print(f"שגיאה JSON סופית: {e}\nתשובה: {result[:500]}", flush=True)
         return None
 
-def prepare_text_for_ai(text):
+def restore_geresh(text):
+    """מחזיר גרשיים עבריים למילים שצריכות אותם"""
+    import re
+    # החלף ״ חזרה ל-" (אם AI השתמש בזה)
+    # מילים נפוצות עם גרש
+    common = {
+        "חב ד": 'חב"ד',
+        "ל ג": 'ל"ג',
+        "י ב": 'י"ב',
+        "אדמו ר": 'אדמו"ר',
+        "כ ק": 'כ"ק',
+        "ע ה": 'ע"ה',
+        "ז ל": 'ז"ל',
+        "שליט א": 'שליט"א',
+        "לנצ נר": 'לנצ"נר',
+    }
+    for wrong, right in common.items():
+        text = text.replace(wrong, right)
+    return text
     """מכין טקסט לשליחה ל-AI – מחליף גרשיים עבריים בתו בטוח"""
     import re
     # החלף " בין אותיות עבריות בגרש עברי ״
@@ -584,7 +602,7 @@ def build_prompt(text):
 - כותרת אדומה: 2-4 מילים עוצמתיות.
 - גוף: חלק לפסקאות של 2-4 משפטים. אל תוסיף מילים. הסר * _ ~
 - תגיות: 5-8 מילות מפתח.
-- חשוב מאוד: אל תשתמש בגרשיים כפולים " בתוך הטקסט בכלל. במקום "מירון" כתוב ׳מירון׳ (גרש עברי בודד משני צדדים)
+- חשוב מאוד: שמור על גרשיים עבריים במילים כמו חב"ד, ל"ג, אדמו"ר, כ"ק וכו'. כתוב אותם עם גרש ״ כך: חב״ד, ל״ג, אדמו״ר
 
 החזר JSON בלבד:
 {{"title":"...","subtitle":"...","red_title":"...","body":"...","tags":["...","...","...","...","..."]}}
@@ -634,6 +652,10 @@ def process_with_gemini(text):
                 result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
                 parsed = clean_json_string(result)
                 if parsed:
+                    # שחזר גרשיים שה-AI הסיר
+                    for field in ["title", "subtitle", "red_title", "body"]:
+                        if field in parsed:
+                            parsed[field] = restore_geresh(parsed[field])
                     return parsed
                 return None
             print(f"שגיאה Gemini: {resp.status_code} {resp.text[:100]}", flush=True)
