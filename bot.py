@@ -796,7 +796,7 @@ def download_drive_file(file_id):
 def list_drive_folder(folder_id):
     """מחזיר רשימת קבצים בתיקייה"""
     try:
-        url = f"https://www.googleapis.com/drive/v3/files?q='{folder_id}'+in+parents&key={GOOGLE_DRIVE_API_KEY}&fields=files(id,name,mimeType)&pageSize=20"
+        url = f"https://www.googleapis.com/drive/v3/files?q='{folder_id}'+in+parents&key={GOOGLE_DRIVE_API_KEY}&fields=files(id,name,mimeType)&pageSize=100"
         resp = requests.get(url, timeout=10)
         if resp.status_code == 200:
             files = resp.json().get("files", [])
@@ -833,11 +833,14 @@ def handle_drive_link(chat_id, user_id, url, draft):
                 return
             send_message(chat_id, f"📁 נמצאו {len(images)} תמונות. מוריד...")
             count = 0
-            for img in images[:10]:  # מגבלה של 10 תמונות
+            for i, img in enumerate(images):
                 content = download_drive_file(img["id"])
                 if content:
                     draft.setdefault("gallery", []).append(content)
                     count += 1
+                # הודעת התקדמות כל 10 תמונות
+                if (i + 1) % 10 == 0:
+                    send_message(chat_id, f"⏳ הורדתי {count}/{len(images)} תמונות...")
             send_message(chat_id, f"✅ {count} תמונות הורדו!\n\nשלח עוד או /done:")
 
     t = threading.Thread(target=_download, daemon=True)
