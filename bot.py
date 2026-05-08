@@ -304,7 +304,75 @@ def upload_to_vimeo(video_bytes, title="סרטון חדש"):
         print(f"שגיאה Vimeo: {e}", flush=True)
         return None
 
+def notify_channel(title, subtitle, url):
+    text = f"*עדכוני חב\"ד - {title}*\n{subtitle}\n{url}"
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": CHANNEL_ID, "text": text, "parse_mode": "Markdown"},
+            timeout=10
+        )
+    except Exception as e:
+        print(f"שגיאה שליחה לערוץ: {e}")
+
 def post_to_twitter(text, url=""):
+    if not all([TWITTER_API_KEY, TWITTER_API_SECRET, TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_SECRET]):
+        return False, "מפתחות Twitter חסרים"
+    try:
+        import hmac, hashlib, base64, urllib.parse, time as time_mod
+
+        tweet_text = f"{text}\n\n{url}" if url else text
+        if len(tweet_text) > 280:
+            tweet_text = f"{text[:270 - len(url)]}...\n\n{url}"
+
+        endpoint = "https://api.twitter.com/2/tweets"
+        timestamp = str(int(time_mod.time()))
+        nonce = base64.b64encode(os.urandom(16)).decode().strip("=+/")
+
+        oauth_params = {
+            "oauth_consumer_key": TWITTER_API_KEY,
+            "oauth_nonce": nonce,
+            "oauth_signature_method": "HMAC-SHA1",
+            "oauth_timestamp": timestamp,
+            "oauth_token": TWITTER_ACCESS_TOKEN,
+            "oauth_version": "1.0"
+        }
+
+        param_string = "&".join([
+            f"{urllib.parse.quote(str(k), safe='')}={urllib.parse.quote(str(v), safe='')}"
+            for k, v in sorted(oauth_params.items())
+        ])
+        base_string = "&".join([
+            "POST",
+            urllib.parse.quote(endpoint, safe=''),
+            urllib.parse.quote(param_string, safe='')
+        ])
+        signing_key = f"{urllib.parse.quote(TWITTER_API_SECRET, safe='')}&{urllib.parse.quote(TWITTER_ACCESS_SECRET, safe='')}"
+        signature = base64.b64encode(
+            hmac.new(signing_key.encode("utf-8"), base_string.encode("utf-8"), hashlib.sha1).digest()
+        ).decode()
+
+        oauth_params["oauth_signature"] = signature
+        auth_header = "OAuth " + ", ".join([
+            f'{urllib.parse.quote(str(k), safe="")}="{urllib.parse.quote(str(v), safe="")}"'
+            for k, v in sorted(oauth_params.items())
+        ])
+
+        resp = requests.post(
+            endpoint,
+            headers={"Authorization": auth_header, "Content-Type": "application/json"},
+            json={"text": tweet_text},
+            timeout=15
+        )
+        if resp.status_code in (200, 201):
+            return True, resp.json().get("data", {}).get("id", "")
+        return False, resp.text[:300]
+    except Exception as e:
+        return False, str(e)
+
+
+
+
     """מפרסם טוויט עם כותרת ולינק"""
     if not all([TWITTER_API_KEY, TWITTER_API_SECRET, TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_SECRET]):
         return False, "מפתחות Twitter חסרים"
@@ -1917,16 +1985,16 @@ def handle_callback(cb):
         if resp.status_code == 201:
             post_url = resp.json().get("link", "")
             post_title = draft.get("title", "")
-            send_message(chat_id, f"✅ <b>הכתבה פורסמה!</b>\n🔗 {post_url}", {
+            # שליחה אוטומטית לערוץ טלגרם
+            notify_channel(post_title, draft.get("subtitle", ""), post_url)
+            draft["last_post_url"] = post_url
+            draft["last_post_title"] = post_title
+            send_message(chat_id, f"✅ <b>הכתבה פורסמה ונשלחה לערוץ!</b>\n🔗 {post_url}", {
                 "inline_keyboard": [
-                    [{"text": "📱 שלח לערוץ טלגרם", "callback_data": f"share_telegram_{post_url}"},
-                     {"text": "🐦 פרסם בטוויטר", "callback_data": "share_twitter"}],
+                    [{"text": "🐦 פרסם גם בטוויטר", "callback_data": "share_twitter"}],
                     [{"text": "✅ סיום", "callback_data": "publish_done"}]
                 ]
             })
-            draft["last_post_url"] = post_url
-            draft["last_post_title"] = post_title
-            notify_channel(post_title, draft.get("subtitle", ""), post_url)
         else:
             send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
             drafts[user_id] = {"step": "idle", "gallery": []}
