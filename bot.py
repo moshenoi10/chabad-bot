@@ -16,6 +16,10 @@ YOUTUBE_CLIENT_ID = os.environ.get("YOUTUBE_CLIENT_ID", "")
 YOUTUBE_CLIENT_SECRET = os.environ.get("YOUTUBE_CLIENT_SECRET", "")
 YOUTUBE_CHANNEL_ID = os.environ.get("YOUTUBE_CHANNEL_ID", "UCXhNK4F73hySVUj66u5GFjg")
 GOOGLE_DRIVE_API_KEY = os.environ.get("GOOGLE_DRIVE_API_KEY", "")
+TWITTER_API_KEY = os.environ.get("TWITTER_API_KEY", "")
+TWITTER_API_SECRET = os.environ.get("TWITTER_API_SECRET", "")
+TWITTER_ACCESS_TOKEN = os.environ.get("TWITTER_ACCESS_TOKEN", "")
+TWITTER_ACCESS_SECRET = os.environ.get("TWITTER_ACCESS_SECRET", "")
 youtube_tokens = {}
 
 # ─── מערכת הרשאות ────────────────────────────────────────
@@ -300,7 +304,63 @@ def upload_to_vimeo(video_bytes, title="סרטון חדש"):
         print(f"שגיאה Vimeo: {e}", flush=True)
         return None
 
-def notify_channel(title, subtitle, url):
+def post_to_twitter(text, url=""):
+    """מפרסם טוויט עם כותרת ולינק"""
+    if not all([TWITTER_API_KEY, TWITTER_API_SECRET, TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_SECRET]):
+        return False, "מפתחות Twitter חסרים"
+    try:
+        import hmac
+        import hashlib
+        import base64
+        import urllib.parse
+        import time as time_mod
+
+        tweet_text = f"{text}\n\n{url}" if url else text
+        # קצר ל-280 תווים
+        if len(tweet_text) > 280:
+            max_title = 280 - len(url) - 5
+            tweet_text = f"{text[:max_title]}...\n\n{url}"
+
+        # OAuth 1.0a signature
+        endpoint = "https://api.twitter.com/2/tweets"
+        timestamp = str(int(time_mod.time()))
+        nonce = base64.b64encode(os.urandom(16)).decode().strip("=+/")
+
+        oauth_params = {
+            "oauth_consumer_key": TWITTER_API_KEY,
+            "oauth_nonce": nonce,
+            "oauth_signature_method": "HMAC-SHA1",
+            "oauth_timestamp": timestamp,
+            "oauth_token": TWITTER_ACCESS_TOKEN,
+            "oauth_version": "1.0"
+        }
+
+        # בנה signature
+        param_string = "&".join([f"{urllib.parse.quote(k, safe='')}={urllib.parse.quote(v, safe='')}"
+                                  for k, v in sorted(oauth_params.items())])
+        base_string = f"POST&{urllib.parse.quote(endpoint, safe='')}&{urllib.parse.quote(param_string, safe='')}"
+        signing_key = f"{urllib.parse.quote(TWITTER_API_SECRET, safe='')}&{urllib.parse.quote(TWITTER_ACCESS_SECRET, safe='')}"
+        signature = base64.b64encode(
+            hmac.new(signing_key.encode(), base_string.encode(), hashlib.sha1).digest()
+        ).decode()
+
+        oauth_params["oauth_signature"] = signature
+        auth_header = "OAuth " + ", ".join([f'{urllib.parse.quote(k, safe="")}="{urllib.parse.quote(v, safe="")}"'
+                                             for k, v in sorted(oauth_params.items())])
+
+        resp = requests.post(
+            endpoint,
+            headers={"Authorization": auth_header, "Content-Type": "application/json"},
+            json={"text": tweet_text},
+            timeout=15
+        )
+        if resp.status_code in (200, 201):
+            return True, resp.json().get("data", {}).get("id", "")
+        return False, resp.text[:200]
+    except Exception as e:
+        return False, str(e)
+
+
     text = f"*עדכוני חב\"ד - {title}*\n{subtitle}\n{url}"
     try:
         requests.post(
@@ -1856,11 +1916,20 @@ def handle_callback(cb):
         resp = publish_to_wp(draft, "publish")
         if resp.status_code == 201:
             post_url = resp.json().get("link", "")
-            send_message(chat_id, f"✅ <b>הכתבה פורסמה!</b>\n🔗 {post_url}", get_menu(user_id))
-            notify_channel(draft.get("title", ""), draft.get("subtitle", ""), post_url)
+            post_title = draft.get("title", "")
+            send_message(chat_id, f"✅ <b>הכתבה פורסמה!</b>\n🔗 {post_url}", {
+                "inline_keyboard": [
+                    [{"text": "📱 שלח לערוץ טלגרם", "callback_data": f"share_telegram_{post_url}"},
+                     {"text": "🐦 פרסם בטוויטר", "callback_data": "share_twitter"}],
+                    [{"text": "✅ סיום", "callback_data": "publish_done"}]
+                ]
+            })
+            draft["last_post_url"] = post_url
+            draft["last_post_title"] = post_title
+            notify_channel(post_title, draft.get("subtitle", ""), post_url)
         else:
             send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
-        drafts[user_id] = {"step": "idle", "gallery": []}
+            drafts[user_id] = {"step": "idle", "gallery": []}
 
     elif cb_data == "publish_draft":
         send_message(chat_id, "⏳ שומר כטיוטה...")
@@ -1886,6 +1955,21 @@ def handle_callback(cb):
     elif cb_data == "drive_link":
         draft["step"] = "drive_link_input"
         send_message(chat_id, "🔗 שלח את לינק Google Drive (תיקייה או קובץ):")
+
+    elif cb_data == "share_twitter":
+        post_url = draft.get("last_post_url", "")
+        post_title = draft.get("last_post_title", "")
+        send_message(chat_id, "⏳ מפרסם בטוויטר...")
+        success, result = post_to_twitter(post_title, post_url)
+        if success:
+            send_message(chat_id, f"✅ פורסם בטוויטר!", get_menu(user_id))
+        else:
+            send_message(chat_id, f"❌ שגיאה בטוויטר: {result}", get_menu(user_id))
+        drafts[user_id] = {"step": "idle", "gallery": []}
+
+    elif cb_data == "publish_done":
+        drafts[user_id] = {"step": "idle", "gallery": []}
+        send_message(chat_id, "✅ סיום!", get_menu(user_id))
 
     elif cb_data == "edit_done":
         drafts[user_id] = {"step": "idle", "gallery": []}
