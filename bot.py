@@ -552,6 +552,12 @@ def clean_json_string(result):
         print(f"שגיאה JSON סופית: {e}\nתשובה: {result[:500]}", flush=True)
         return None
 
+def prepare_text_for_ai(text):
+    """מכין טקסט לשליחה ל-AI – מחליף גרשיים עבריים בתו בטוח"""
+    import re
+    text = re.sub(r'(?<=[א-ת])"(?=[א-ת\s])', '״', text)
+    return text
+
 def restore_geresh(text):
     """מחזיר גרשיים עבריים למילים שצריכות אותם"""
     import re
@@ -773,9 +779,10 @@ def download_drive_file(file_id):
     """מוריד קובץ בודד מ-Google Drive"""
     try:
         url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={GOOGLE_DRIVE_API_KEY}"
-        resp = requests.get(url, timeout=30)
+        resp = requests.get(url, timeout=15, stream=True)
         if resp.status_code == 200:
             return resp.content
+        print(f"שגיאה Drive file: {resp.status_code}", flush=True)
     except Exception as e:
         print(f"שגיאה הורדת Drive: {e}", flush=True)
     return None
@@ -783,11 +790,10 @@ def download_drive_file(file_id):
 def list_drive_folder(folder_id):
     """מחזיר רשימת קבצים בתיקייה"""
     try:
-        url = f"https://www.googleapis.com/drive/v3/files?q='{folder_id}'+in+parents&key={GOOGLE_DRIVE_API_KEY}&fields=files(id,name,mimeType)"
-        resp = requests.get(url, timeout=15)
+        url = f"https://www.googleapis.com/drive/v3/files?q='{folder_id}'+in+parents&key={GOOGLE_DRIVE_API_KEY}&fields=files(id,name,mimeType)&pageSize=20"
+        resp = requests.get(url, timeout=10)
         if resp.status_code == 200:
             files = resp.json().get("files", [])
-            # סנן רק תמונות וסרטונים
             images = [f for f in files if f["mimeType"].startswith("image/")]
             videos = [f for f in files if f["mimeType"].startswith("video/")]
             return images, videos
@@ -797,50 +803,39 @@ def list_drive_folder(folder_id):
     return [], []
 
 def handle_drive_link(chat_id, user_id, url, draft):
-    """מטפל בלינק Drive – מוריד תמונות/סרטונים"""
-    drive_id, drive_type = extract_drive_id(url)
-    if not drive_id:
-        send_message(chat_id, "❌ לא זיהיתי לינק Google Drive תקין.")
-        return False
+    """מטפל בלינק Drive בthread נפרד"""
+    def _download():
+        drive_id, drive_type = extract_drive_id(url)
+        if not drive_id:
+            send_message(chat_id, "❌ לא זיהיתי לינק Google Drive תקין.")
+            return
 
-    if drive_type == "file":
-        send_message(chat_id, "⏳ מוריד קובץ מ-Drive...")
-        content = download_drive_file(drive_id)
-        if content:
-            draft["main_image"] = content
-            draft["step"] = "gallery"
-            send_message(chat_id, "✅ תמונה ראשית הורדה!\n\nשלח תמונות לגלריה או /done:")
-            return True
-        else:
-            send_message(chat_id, "❌ לא הצלחתי להוריד את הקובץ. וודא שהוא פתוח לצפייה.")
-            return False
+        if drive_type == "file":
+            send_message(chat_id, "⏳ מוריד קובץ מ-Drive...")
+            content = download_drive_file(drive_id)
+            if content:
+                draft.setdefault("gallery", []).append(content)
+                send_message(chat_id, f"✅ קובץ הורד! ({len(draft['gallery'])} תמונות)\n\nשלח עוד או /done:")
+            else:
+                send_message(chat_id, "❌ לא הצלחתי להוריד. וודא שהקובץ פתוח לצפייה.")
 
-    elif drive_type == "folder":
-        send_message(chat_id, "⏳ סורק תיקייה ב-Drive...")
-        images, videos = list_drive_folder(drive_id)
-        if not images and not videos:
-            send_message(chat_id, "❌ לא נמצאו תמונות או סרטונים בתיקייה.")
-            return False
-
-        send_message(chat_id, f"📁 נמצאו {len(images)} תמונות ו-{len(videos)} סרטונים.\n⏳ מוריד...")
-
-        # תמונה ראשית = תמונה ראשונה
-        if images:
-            first = download_drive_file(images[0]["id"])
-            if first:
-                draft["main_image"] = first
-
-            # שאר התמונות = גלריה
-            for img in images[1:]:
+        elif drive_type == "folder":
+            send_message(chat_id, "⏳ סורק תיקייה ב-Drive...")
+            images, videos = list_drive_folder(drive_id)
+            if not images:
+                send_message(chat_id, "❌ לא נמצאו תמונות בתיקייה.")
+                return
+            send_message(chat_id, f"📁 נמצאו {len(images)} תמונות. מוריד...")
+            count = 0
+            for img in images[:10]:  # מגבלה של 10 תמונות
                 content = download_drive_file(img["id"])
                 if content:
                     draft.setdefault("gallery", []).append(content)
+                    count += 1
+            send_message(chat_id, f"✅ {count} תמונות הורדו!\n\nשלח עוד או /done:")
 
-        send_message(chat_id, f"✅ הורדתי {len(images)} תמונות מ-Drive!\n\nממשיך לשלב הסרטון...")
-        draft["step"] = "video"
-        return True
-
-    return False
+    t = threading.Thread(target=_download, daemon=True)
+    t.start()
 
 def _show_summary(chat_id, draft):
     summary = f"""📋 <b>סיכום:</b>
@@ -1933,6 +1928,16 @@ def get_recent_posts(status="publish"):
     except Exception as e:
         print(f"שגיאה כתבות אחרונות: {e}")
     return []
+
+def keep_alive():
+    """שולח ping לבוט כל 10 דקות כדי שלא יירדם ב-Render"""
+    while True:
+        time.sleep(600)
+        try:
+            requests.get("https://chabad-bot.onrender.com", timeout=10)
+            print("✅ Keep-alive ping", flush=True)
+        except:
+            pass
 
 def main():
     global offset
