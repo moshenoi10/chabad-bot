@@ -495,7 +495,6 @@ def clean_json_string(result):
     import re
     result = result.strip().replace("```json", "").replace("```", "").strip()
     result = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', result)
-    # מצא את ה-{ הראשון וה-} האחרון
     first_brace = result.find("{")
     last_brace = result.rfind("}")
     if first_brace == -1 or last_brace == -1:
@@ -509,8 +508,15 @@ def clean_json_string(result):
         return json.loads(fixed)
     except json.JSONDecodeError:
         pass
-    # תיקון גרשיים עבריים
+    # תיקון גרשיים עבריים (אחרי אות עברית)
     fixed = re.sub(r'(?<=[א-ת])"', '\u05f4', fixed)
+    try:
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+    # תיקון גרשיים אנגליים בתוך טקסט עברי (כמו "מירון של אוקראינה")
+    # מחפש " שבא אחרי מרחב/אות ולפני אות עברית או רווח
+    fixed = re.sub(r'(?<=[\u0590-\u05ff\s])"(?=[\u0590-\u05ff\s])', '\u05f4', fixed)
     try:
         return json.loads(fixed)
     except json.JSONDecodeError as e:
@@ -549,7 +555,7 @@ def build_prompt(text):
 - כותרת אדומה: 2-4 מילים עוצמתיות.
 - גוף: חלק לפסקאות של 2-4 משפטים. אל תוסיף מילים. הסר * _ ~
 - תגיות: 5-8 מילות מפתח.
-- בתוך JSON: גרשיים כפולים (ל״ג, אדמו״ר) כתוב עם גרש עברי ״
+- חשוב מאוד: אל תשתמש בגרשיים כפולים " בתוך הטקסט בכלל. במקום "מירון" כתוב ׳מירון׳ (גרש עברי בודד משני צדדים)
 
 החזר JSON בלבד:
 {{"title":"...","subtitle":"...","red_title":"...","body":"...","tags":["...","...","...","...","..."]}}
