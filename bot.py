@@ -778,10 +778,16 @@ def extract_drive_id(url):
 def download_drive_file(file_id):
     """מוריד קובץ בודד מ-Google Drive"""
     try:
-        url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={GOOGLE_DRIVE_API_KEY}"
-        resp = requests.get(url, timeout=15, stream=True)
-        if resp.status_code == 200:
+        # שימוש בלינק הורדה ישיר – עובד לקבצים ציבוריים
+        url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        resp = requests.get(url, timeout=15, allow_redirects=True)
+        if resp.status_code == 200 and len(resp.content) > 1000:
             return resp.content
+        # נסיון שני – export דרך API
+        url2 = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={GOOGLE_DRIVE_API_KEY}"
+        resp2 = requests.get(url2, timeout=15)
+        if resp2.status_code == 200:
+            return resp2.content
         print(f"שגיאה Drive file: {resp.status_code}", flush=True)
     except Exception as e:
         print(f"שגיאה הורדת Drive: {e}", flush=True)
