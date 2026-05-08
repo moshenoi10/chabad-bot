@@ -4,7 +4,6 @@ import time
 import threading
 import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
-import pickle
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 WP_URL = "https://chabadupdates.com/wp-json/wp/v2"
@@ -21,10 +20,12 @@ youtube_tokens = {}
 # ─── מערכת הרשאות ────────────────────────────────────────
 SUPER_ADMIN_ID = "1798097090"  # אתה – הרשאה מלאה תמיד
 
+# רמות הרשאה: "admin" = כל הגישה, "editor" = העלאה בלבד, "blocked" = חסום
 users_permissions = {
     SUPER_ADMIN_ID: "admin"
 }
 
+# לוג פעולות
 activity_log = []
 
 def log_action(user_id, username, action):
@@ -92,9 +93,10 @@ def run_server():
     server = HTTPServer(("0.0.0.0", port), Handler)
     server.serve_forever()
 
+import pickle
+
 drafts = {}
-# שונה מ /tmp כדי שהטיוטות לא יימחקו כל רגע
-DRAFTS_FILE = "drafts.pkl"
+DRAFTS_FILE = "/tmp/drafts.pkl"
 
 def save_drafts():
     try:
@@ -115,7 +117,6 @@ def load_drafts():
             drafts = pickle.load(f)
     except:
         drafts = {}
-        
 offset = 0
 
 ADMIN_MENU = {
@@ -208,6 +209,8 @@ def upload_to_youtube(video_bytes, title, description="", tags=[]):
             },
             "status": {"privacyStatus": "public"}
         }
+        import json as json_lib
+        from requests_toolbelt import MultipartEncoder
         
         init_resp = requests.post(
             "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
@@ -305,8 +308,6 @@ def notify_channel(title, subtitle, url):
 
 def get_menu(user_id):
     return ADMIN_MENU if is_admin(str(user_id)) else MAIN_MENU
-
-def get_recent_posts(status="publish"):
     try:
         resp = requests.get(
             f"{WP_URL}/posts?per_page=5&status={status}&orderby=date&order=desc",
@@ -362,15 +363,15 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
     import re
     paragraphs = [p.strip() for p in re.split(r'\n{1,}', body_text) if p.strip()]
     if paragraphs:
-        content = "\n\n".join([f"\n<p>{p}</p>\n" for p in paragraphs])
+        content = "\n\n".join([f"<!-- wp:paragraph -->\n<p>{p}</p>\n<!-- /wp:paragraph -->" for p in paragraphs])
     else:
-        content = f"\n<p>{body_text}</p>\n"
+        content = f"<!-- wp:paragraph -->\n<p>{body_text}</p>\n<!-- /wp:paragraph -->"
     if gallery_content:
         content += "\n\n" + gallery_content
 
     if draft.get("video_url"):
         url = draft["video_url"]
-        content += f'\n\n\n<figure class="wp-block-embed is-type-video is-provider-vimeo"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n'
+        content += f'\n\n<!-- wp:embed {{"url":"{url}","type":"video","providerNameSlug":"vimeo","responsive":true}} -->\n<figure class="wp-block-embed is-type-video is-provider-vimeo"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n<!-- /wp:embed -->'
 
     for url in draft.get("videos", []):
         video_id = url.split("/")[-1]
@@ -458,14 +459,12 @@ def process_with_groq(text, prompt=None):
     if prompt is None:
         prompt = build_groq_prompt(text)
     try:
-        # שימוש במודל מתקדם יותר עם הכרחת JSON
         resp = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
             json={
-                "model": "llama-3.3-70b-versatile",
+                "model": "llama-3.1-8b-instant",
                 "messages": [{"role": "user", "content": prompt}],
-                "response_format": {"type": "json_object"},
                 "temperature": 0.3,
                 "max_tokens": 2000
             },
@@ -474,26 +473,19 @@ def process_with_groq(text, prompt=None):
         if resp.status_code == 200:
             result = resp.json()["choices"][0]["message"]["content"]
             return clean_json_string(result)
-        
         if resp.status_code == 429:
-            print(f"Groq 429, ממתין שניה מנסה שוב...", flush=True)
-            time.sleep(1)
+            print(f"Groq 429, ממתין 30 שניות...", flush=True)
+            time.sleep(30)
+            # נסיון שני
             resp = requests.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-                json={
-                    "model": "llama-3.3-70b-versatile", 
-                    "messages": [{"role": "user", "content": prompt}], 
-                    "response_format": {"type": "json_object"},
-                    "temperature": 0.3, 
-                    "max_tokens": 2000
-                },
+                json={"model": "llama-3.1-8b-instant", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3, "max_tokens": 2000},
                 timeout=60
             )
             if resp.status_code == 200:
                 result = resp.json()["choices"][0]["message"]["content"]
                 return clean_json_string(result)
-                
         print(f"שגיאה Groq: {resp.status_code} | {resp.text[:300]}", flush=True)
     except Exception as e:
         print(f"שגיאה Groq: {e}", flush=True)
@@ -503,32 +495,37 @@ def clean_json_string(result):
     import re
     result = result.strip().replace("```json", "").replace("```", "").strip()
     result = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', result)
-    
+    # מצא את ה-{ הראשון וה-} האחרון
     first_brace = result.find("{")
     last_brace = result.rfind("}")
     if first_brace == -1 or last_brace == -1:
+        print(f"שגיאה JSON: לא נמצאו סוגריים\nתשובה: {result[:300]}", flush=True)
         return None
     result = result[first_brace:last_brace+1]
-    
+    # תיקון newlines
     fixed = result.replace('\n', '\\n').replace('\r', '')
-    
+    # ניסיון ראשון
+    try:
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+    # תיקון גרשיים עבריים
+    fixed = re.sub(r'(?<=[א-ת])"', '\u05f4', fixed)
     try:
         return json.loads(fixed)
     except json.JSONDecodeError as e:
-        # במקרה שהמודל בכל זאת החזיר מרכאות בתוך הערכים
-        fixed = re.sub(r'(?<=[א-ת])"(?=[א-ת\s])', '״', fixed)
-        try:
-            return json.loads(fixed)
-        except:
-            print(f"שגיאה JSON סופית: {e}\nתשובה: {result[:500]}", flush=True)
-            return None
+        print(f"שגיאה JSON סופית: {e}\nתשובה: {result[:500]}", flush=True)
+        return None
 
 def prepare_text_for_ai(text):
+    """מכין טקסט לשליחה ל-AI – מחליף גרשיים עבריים בתו בטוח"""
     import re
+    # החלף " בין אותיות עבריות בגרש עברי ״
     text = re.sub(r'(?<=[א-ת])"(?=[א-ת\s])', '״', text)
     return text
 
 def build_groq_prompt(text):
+    """פרומפט קצר יותר לGroq שמוגבל ב-tokens"""
     if len(text) > 800:
         text = text[:800] + "..."
     return f"""עורך חדשות חרדי. צור מהטקסט:
@@ -538,12 +535,27 @@ def build_groq_prompt(text):
 4. גוף: פסקאות של 2-3 משפטים, אל תוסיף מילים
 5. תגיות: 5 מילות מפתח
 
-החזר אך ורק JSON תקין (JSON Object), ללא שום טקסט מקדים:
+JSON בלבד:
 {{"title":"...","subtitle":"...","red_title":"...","body":"...","tags":["...","...","...","...","..."]}}
 
 טקסט: {text}"""
 
 def build_prompt(text):
+    return f"""אתה עורך ראשי של אתר חדשות חרדי. כתוב בסגנון עיתונאי מקצועי ומושך.
+
+כללים:
+- כותרת ראשית: רגש + עובדה + שם מרכזי, עם נקודתיים (:). לפחות 8 מילים. לדוגמה: "ביקור של זיכרונות ותנופה: ר' לוי לבייב בחצרות קודשנו"
+- כותרת משנה: פרטים עשירים מופרדים ב-•. לפחות 15 מילים.
+- כותרת אדומה: 2-4 מילים עוצמתיות.
+- גוף: חלק לפסקאות של 2-4 משפטים. אל תוסיף מילים. הסר * _ ~
+- תגיות: 5-8 מילות מפתח.
+- בתוך JSON: גרשיים כפולים (ל״ג, אדמו״ר) כתוב עם גרש עברי ״
+
+החזר JSON בלבד:
+{{"title":"...","subtitle":"...","red_title":"...","body":"...","tags":["...","...","...","...","..."]}}
+
+טקסט:
+{text}"""
     return f"""אתה עורך ראשי של אתר חדשות חרדי. כתוב בסגנון עיתונאי מקצועי ומושך.
 
 כללים:
@@ -569,22 +581,28 @@ def process_with_gemini(text):
     text = prepare_text_for_ai(text)
     prompt = build_prompt(text)
     try:
-        print(f"Gemini ניסיון ראשון...", flush=True)
-        resp = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
-            json={"contents": [{"parts": [{"text": prompt}]}]},
-            timeout=60
-        )
-        if resp.status_code in (429, 503):
-            # ללא Sleep תוקע, עובר ישר לגיבוי
-            print(f"Gemini {resp.status_code}, עובר ל-Groq...", flush=True)
-        elif resp.status_code == 200:
-            result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-            parsed = clean_json_string(result)
-            if parsed:
-                return parsed
-        else:
+        for attempt in range(2):
+            print(f"Gemini ניסיון {attempt+1}...", flush=True)
+            resp = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}",
+                json={"contents": [{"parts": [{"text": prompt}]}]},
+                timeout=60
+            )
+            if resp.status_code in (429, 503):
+                if attempt == 0:
+                    print(f"Gemini 429, ממתין 20 שניות...", flush=True)
+                    time.sleep(20)
+                    continue
+                print(f"Gemini 429 שוב, עובר ל-Groq...", flush=True)
+                break
+            if resp.status_code == 200:
+                result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+                parsed = clean_json_string(result)
+                if parsed:
+                    return parsed
+                return None
             print(f"שגיאה Gemini: {resp.status_code} {resp.text[:100]}", flush=True)
+            break
     except Exception as e:
         print(f"שגיאה Gemini exception: {e}", flush=True)
     
@@ -612,39 +630,68 @@ def improve_titles_with_ai(draft):
 החזר JSON בלבד:
 {{"title": "...", "subtitle": "...", "red_title": "..."}}"""
 
+    # נסה Gemini קודם
     try:
         if GEMINI_API_KEY:
             resp = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}",
                 json={"contents": [{"parts": [{"text": prompt}]}]},
                 timeout=30
             )
             if resp.status_code == 200:
                 result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-                return clean_json_string(result)
+                result = result.strip().replace("```json", "").replace("```", "").strip()
+                import re
+                result = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', result)
+                last_brace = result.rfind("}")
+                if last_brace != -1:
+                    result = result[:last_brace+1]
+                return json.loads(result)
     except Exception as e:
         print(f"שגיאה שיפור כותרות Gemini: {e}", flush=True)
 
+    # גיבוי Groq
     try:
         groq_key = os.environ.get("GROQ_API_KEY", "")
         if groq_key:
             resp = requests.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-                json={
-                    "model": "llama-3.3-70b-versatile", 
-                    "messages": [{"role": "user", "content": prompt}], 
-                    "response_format": {"type": "json_object"},
-                    "temperature": 0.5
-                },
+                json={"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}], "temperature": 0.5},
                 timeout=30
             )
             if resp.status_code == 200:
                 result = resp.json()["choices"][0]["message"]["content"]
-                return clean_json_string(result)
+                result = result.strip().replace("```json", "").replace("```", "").strip()
+                import re
+                result = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', result)
+                last_brace = result.rfind("}")
+                if last_brace != -1:
+                    result = result[:last_brace+1]
+                return json.loads(result)
     except Exception as e:
         print(f"שגיאה שיפור כותרות Groq: {e}", flush=True)
     return None
+
+
+    summary = f"""📋 <b>סיכום:</b>
+
+<b>כותרת:</b> {draft.get('title','')}
+<b>כותרת משנה:</b> {draft.get('subtitle','')}
+<b>כותרת אדומה:</b> {draft.get('red_title','')}
+<b>תגיות:</b> {', '.join(draft.get('tags',[]))}
+<b>קטגוריות:</b> {', '.join(draft.get('cat_names',[]))}
+<b>תמונה ראשית:</b> {'✅' if draft.get('main_image') else '❌'}
+<b>גלריה:</b> {len(draft.get('gallery',[]))} תמונות
+<b>וידאו:</b> {draft.get('video_url') or 'אין'}"""
+    send_message(chat_id, summary, {
+        "inline_keyboard": [
+            [{"text": "🚀 פרסם עכשיו", "callback_data": "publish_now"},
+             {"text": "⏰ תזמן פרסום", "callback_data": "publish_schedule"}],
+            [{"text": "💾 שמור כטיוטה", "callback_data": "publish_draft"},
+             {"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+        ]
+    })
 
 processed_updates = set()
 
@@ -872,7 +919,7 @@ def handle_message(msg):
         })
 
     elif step == "article_yt_smart_text":
-        send_message(chat_id, "⏳ מעבד נתונים...")
+        send_message(chat_id, "⏳ Gemini מעבד...")
         result = process_with_gemini(text)
         if result:
             draft["yt_title"] = result.get("title", draft.get("title", "סרטון"))
@@ -896,7 +943,7 @@ def handle_message(msg):
             send_message(chat_id, "❌ שגיאה בעיבוד. שלח שוב.")
 
     elif step == "youtube_smart_text":
-        send_message(chat_id, "⏳ המערכת מעבדת...")
+        send_message(chat_id, "⏳ Gemini מעבד...")
         result = process_with_gemini(text)
         if result:
             draft["yt_title"] = result.get("title", "")
@@ -957,7 +1004,7 @@ def handle_message(msg):
             send_message(chat_id, "⚠️ שלח קובץ סרטון:")
 
     elif step == "smart_text":
-        send_message(chat_id, "⏳ מעבד את הטקסט...")
+        send_message(chat_id, "⏳ Gemini מעבד את הטקסט...")
         result = process_with_gemini(text)
         if result:
             body_clean = convert_whatsapp_format(result.get("body", text))
@@ -992,9 +1039,10 @@ def handle_message(msg):
                 ]
             })
         else:
+            # AI נכשל – שמור את הטקסט ושאל מה לעשות
             draft["body"] = text
             draft["step"] = "smart_text"
-            send_message(chat_id, "❌ עיבוד הטקסט נכשל כרגע.\n\nמה תרצה לעשות?", {
+            send_message(chat_id, "❌ ה-AI לא הצליח לעבד כרגע.\n\nמה תרצה לעשות?", {
                 "inline_keyboard": [
                     [{"text": "🔄 נסה שוב", "callback_data": "smart_retry"}],
                     [{"text": "✍️ המשך ידנית", "callback_data": "smart_manual_fallback"}],
@@ -1413,7 +1461,7 @@ def handle_callback(cb):
 
     elif cb_data == "yt_smart":
         draft["step"] = "youtube_smart_text"
-        send_message(chat_id, "🤖 שלח טקסט גולמי והמערכת תכין כותרת, תיאור ותגיות:")
+        send_message(chat_id, "🤖 שלח טקסט גולמי ו-Gemini יכין כותרת, תיאור ותגיות:")
 
     elif cb_data == "mazaltov_single":
         draft["step"] = "mazaltov_image"
@@ -1473,7 +1521,7 @@ def handle_callback(cb):
 
     elif cb_data == "upload_youtube_smart":
         draft["step"] = "article_yt_smart_text"
-        send_message(chat_id, "🤖 שלח טקסט גולמי והמערכת תכין כותרת ותגיות לסרטון:")
+        send_message(chat_id, "🤖 שלח טקסט גולמי ו-Gemini יכין כותרת ותגיות לסרטון:")
 
     elif cb_data == "upload_youtube":
         file_id = draft.get("pending_video_file_id")
@@ -1548,7 +1596,7 @@ def handle_callback(cb):
                     ]
                 })
             else:
-                send_message(chat_id, "❌ ה-AI עדיין לא זמין.", {
+                send_message(chat_id, "❌ ה-AI עדיין לא זמין. נסה שוב בעוד דקה.", {
                     "inline_keyboard": [
                         [{"text": "🔄 נסה שוב", "callback_data": "smart_retry"}],
                         [{"text": "✍️ המשך ידנית", "callback_data": "smart_manual_fallback"}],
@@ -1559,6 +1607,7 @@ def handle_callback(cb):
             send_message(chat_id, "שלח את הטקסט מחדש:")
 
     elif cb_data == "smart_manual_fallback":
+        # עבור להעלאה ידנית עם הגוף שנשמר
         draft["step"] = "title"
         draft["title"] = ""
         send_message(chat_id, "✍️ נעבור להעלאה ידנית.\n\nשלח את <b>הכותרת</b>:")
@@ -1693,6 +1742,18 @@ def handle_callback(cb):
         drafts[user_id] = {"step": "idle", "gallery": []}
         send_message(chat_id, "❌ המחיקה בוטלה.", get_menu(user_id))
 
+def get_recent_posts(status="publish"):
+    try:
+        resp = requests.get(
+            f"{WP_URL}/posts?per_page=5&status={status}&orderby=date&order=desc",
+            auth=(WP_USER, WP_PASSWORD), timeout=10
+        )
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        print(f"שגיאה כתבות אחרונות: {e}")
+    return []
+
 def main():
     global offset
     print("🚀 בוט חבד מתחיל!", flush=True)
@@ -1724,6 +1785,7 @@ def main():
             )
             data = resp.json()
             
+            # טיפול ב-409 – instance כפול, ממתין
             if not data.get("ok") and data.get("error_code") == 409:
                 time.sleep(5)
                 continue
