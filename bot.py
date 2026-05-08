@@ -15,6 +15,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 YOUTUBE_CLIENT_ID = os.environ.get("YOUTUBE_CLIENT_ID", "")
 YOUTUBE_CLIENT_SECRET = os.environ.get("YOUTUBE_CLIENT_SECRET", "")
 YOUTUBE_CHANNEL_ID = os.environ.get("YOUTUBE_CHANNEL_ID", "UCXhNK4F73hySVUj66u5GFjg")
+GOOGLE_DRIVE_API_KEY = os.environ.get("GOOGLE_DRIVE_API_KEY", "")
 youtube_tokens = {}
 
 # ─── מערכת הרשאות ────────────────────────────────────────
@@ -729,6 +730,96 @@ def improve_titles_with_ai(draft):
 
 processed_updates = set()
 
+def extract_drive_id(url):
+    """מחלץ ID של קובץ או תיקייה מלינק Google Drive"""
+    import re
+    # תיקייה: /folders/ID
+    folder = re.search(r'/folders/([a-zA-Z0-9_-]+)', url)
+    if folder:
+        return folder.group(1), "folder"
+    # קובץ: /file/d/ID
+    file = re.search(r'/file/d/([a-zA-Z0-9_-]+)', url)
+    if file:
+        return file.group(1), "file"
+    # id= בפרמטר
+    param = re.search(r'[?&]id=([a-zA-Z0-9_-]+)', url)
+    if param:
+        return param.group(1), "file"
+    return None, None
+
+def download_drive_file(file_id):
+    """מוריד קובץ בודד מ-Google Drive"""
+    try:
+        url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={GOOGLE_DRIVE_API_KEY}"
+        resp = requests.get(url, timeout=30)
+        if resp.status_code == 200:
+            return resp.content
+    except Exception as e:
+        print(f"שגיאה הורדת Drive: {e}", flush=True)
+    return None
+
+def list_drive_folder(folder_id):
+    """מחזיר רשימת קבצים בתיקייה"""
+    try:
+        url = f"https://www.googleapis.com/drive/v3/files?q='{folder_id}'+in+parents&key={GOOGLE_DRIVE_API_KEY}&fields=files(id,name,mimeType)"
+        resp = requests.get(url, timeout=15)
+        if resp.status_code == 200:
+            files = resp.json().get("files", [])
+            # סנן רק תמונות וסרטונים
+            images = [f for f in files if f["mimeType"].startswith("image/")]
+            videos = [f for f in files if f["mimeType"].startswith("video/")]
+            return images, videos
+        print(f"שגיאה Drive folder: {resp.status_code} {resp.text[:200]}", flush=True)
+    except Exception as e:
+        print(f"שגיאה Drive folder: {e}", flush=True)
+    return [], []
+
+def handle_drive_link(chat_id, user_id, url, draft):
+    """מטפל בלינק Drive – מוריד תמונות/סרטונים"""
+    drive_id, drive_type = extract_drive_id(url)
+    if not drive_id:
+        send_message(chat_id, "❌ לא זיהיתי לינק Google Drive תקין.")
+        return False
+
+    if drive_type == "file":
+        send_message(chat_id, "⏳ מוריד קובץ מ-Drive...")
+        content = download_drive_file(drive_id)
+        if content:
+            draft["main_image"] = content
+            draft["step"] = "gallery"
+            send_message(chat_id, "✅ תמונה ראשית הורדה!\n\nשלח תמונות לגלריה או /done:")
+            return True
+        else:
+            send_message(chat_id, "❌ לא הצלחתי להוריד את הקובץ. וודא שהוא פתוח לצפייה.")
+            return False
+
+    elif drive_type == "folder":
+        send_message(chat_id, "⏳ סורק תיקייה ב-Drive...")
+        images, videos = list_drive_folder(drive_id)
+        if not images and not videos:
+            send_message(chat_id, "❌ לא נמצאו תמונות או סרטונים בתיקייה.")
+            return False
+
+        send_message(chat_id, f"📁 נמצאו {len(images)} תמונות ו-{len(videos)} סרטונים.\n⏳ מוריד...")
+
+        # תמונה ראשית = תמונה ראשונה
+        if images:
+            first = download_drive_file(images[0]["id"])
+            if first:
+                draft["main_image"] = first
+
+            # שאר התמונות = גלריה
+            for img in images[1:]:
+                content = download_drive_file(img["id"])
+                if content:
+                    draft.setdefault("gallery", []).append(content)
+
+        send_message(chat_id, f"✅ הורדתי {len(images)} תמונות מ-Drive!\n\nממשיך לשלב הסרטון...")
+        draft["step"] = "video"
+        return True
+
+    return False
+
 def _show_summary(chat_id, draft):
     summary = f"""📋 <b>סיכום:</b>
 
@@ -1251,10 +1342,12 @@ def handle_message(msg):
 
     elif step == "edit_video_url":
         post_id = draft.get("edit_id")
-        r = requests.get(f"{WP_URL}/posts/{post_id}", auth=(WP_USER, WP_PASSWORD), timeout=10)
+        r = requests.get(f"{WP_URL}/posts/{post_id}?context=edit", auth=(WP_USER, WP_PASSWORD), timeout=10)
         if r.status_code == 200:
-            existing_content = r.json().get("content", {}).get("rendered", "")
-            new_content = existing_content + f'\n\n[embed]{text}[/embed]'
+            existing_content = r.json().get("content", {}).get("raw", "") or r.json().get("content", {}).get("rendered", "")
+            video_id = text.split("/")[-1]
+            new_video = f'\n\n<div style="padding:56.25% 0 0 0;position:relative;"><iframe src="https://player.vimeo.com/video/{video_id}" frameborder="0" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe></div><script src="https://player.vimeo.com/api/player.js"></script>\n'
+            new_content = existing_content + new_video
             requests.post(f"{WP_URL}/posts/{post_id}", json={"content": new_content},
                         auth=(WP_USER, WP_PASSWORD), timeout=10)
             send_message(chat_id, "✅ סרטון נוסף לכתבה!", get_menu(user_id))
@@ -1371,13 +1464,19 @@ def handle_message(msg):
         else:
             send_message(chat_id, "⚠️ שלח תמונה:")
 
+    elif step == "drive_link_input":
+        if text and "drive.google.com" in text:
+            handle_drive_link(chat_id, user_id, text, draft)
+        else:
+            send_message(chat_id, "⚠️ שלח לינק תקין מ-Google Drive:")
+
     elif step == "main_image":
         if "photo" in msg:
             content = get_file(msg["photo"][-1]["file_id"])
             if content:
                 draft["main_image"] = content
                 draft["step"] = "gallery"
-                send_message(chat_id, "✅ תמונה ראשית נשמרה!\n\nשלח תמונות לגלריה.\nכשסיימת שלח /done")
+                send_message(chat_id, "✅ תמונה ראשית נשמרה!\n\nשלח תמונות לגלריה, לינק Google Drive, או /done:")
         else:
             send_message(chat_id, "⚠️ שלח תמונה:")
 
@@ -1388,6 +1487,27 @@ def handle_message(msg):
                 draft["gallery"].append(content)
                 if len(draft["gallery"]) == 1:
                     send_message(chat_id, "📥 מקבל תמונות... שלח /done כשסיימת")
+        elif text and text.startswith("http") and "drive.google.com" in text:
+            # Drive לגלריה
+            drive_id, drive_type = extract_drive_id(text)
+            if drive_id:
+                send_message(chat_id, "⏳ מוריד תמונות מ-Drive...")
+                if drive_type == "folder":
+                    images, _ = list_drive_folder(drive_id)
+                    count = 0
+                    for img in images:
+                        content = download_drive_file(img["id"])
+                        if content:
+                            draft.setdefault("gallery", []).append(content)
+                            count += 1
+                    send_message(chat_id, f"✅ {count} תמונות הורדו מ-Drive!\n\nשלח עוד תמונות או /done:")
+                elif drive_type == "file":
+                    content = download_drive_file(drive_id)
+                    if content:
+                        draft.setdefault("gallery", []).append(content)
+                        send_message(chat_id, f"✅ תמונה הורדה מ-Drive! ({len(draft['gallery'])} סה\"כ)\n\nשלח עוד או /done:")
+            else:
+                send_message(chat_id, "❌ לינק Drive לא תקין.")
         elif text == "/done":
             draft["step"] = "video"
             count = len(draft['gallery'])
@@ -1725,6 +1845,10 @@ def handle_callback(cb):
     elif cb_data == "cat_done":
         draft["step"] = "main_image"
         send_message(chat_id, f"✅ קטגוריות: {', '.join(draft.get('cat_names',[]))}\n\nשלח את <b>התמונה הראשית</b>:")
+
+    elif cb_data == "drive_link":
+        draft["step"] = "drive_link_input"
+        send_message(chat_id, "🔗 שלח את לינק Google Drive (תיקייה או קובץ):")
 
     elif cb_data == "edit_done":
         drafts[user_id] = {"step": "idle", "gallery": []}
