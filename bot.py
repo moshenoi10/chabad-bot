@@ -226,7 +226,11 @@ def upload_to_youtube(video_bytes, title, description="", tags=[]):
         
         if upload_resp.status_code in (200, 201):
             video_id = upload_resp.json()["id"]
-            return f"https://www.youtube.com/watch?v={video_id}", None
+            yt_url = f"https://www.youtube.com/watch?v={video_id}"
+            # בדוק אם הסרטון קצר מ-60 שניות – אם כן הוסף #Shorts
+            if len(video_bytes) < 50_000_000:  # סרטון קטן מ-50MB כנראה קצר
+                yt_url = f"https://www.youtube.com/shorts/{video_id}"
+            return yt_url, None
         return None, f"שגיאה: {upload_resp.status_code}"
     except Exception as e:
         return None, str(e)
@@ -375,8 +379,11 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
         content += f'\n\n<!-- wp:embed {{"url":"{url}","type":"video","providerNameSlug":"vimeo","responsive":true}} -->\n<figure class="wp-block-embed is-type-video is-provider-vimeo"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n<!-- /wp:embed -->'
 
     for url in draft.get("videos", []):
-        video_id = url.split("/")[-1]
-        content += f'\n\n<div style="padding:56.25% 0 0 0;position:relative;"><iframe src="https://player.vimeo.com/video/{video_id}" frameborder="0" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe></div><script src="https://player.vimeo.com/api/player.js"></script>\n'
+        if "vimeo.com" in url:
+            video_id = url.split("/")[-1].split("?")[0]
+            content += f'\n\n<div style="padding:56.25% 0 0 0;position:relative;"><iframe src="https://player.vimeo.com/video/{video_id}" frameborder="0" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe></div><script src="https://player.vimeo.com/api/player.js"></script>\n'
+        elif "youtube.com" in url or "youtu.be" in url:
+            content += f'\n\n<!-- wp:embed {{"url":"{url}","type":"video","providerNameSlug":"youtube","responsive":true}} -->\n<figure class="wp-block-embed is-type-video is-provider-youtube"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n<!-- /wp:embed -->'
 
     tag_ids = []
     for tag in draft.get("tags", []):
@@ -388,6 +395,9 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
         except:
             pass
 
+    # הסתרת תמונה ראשית בתוך הכתבה אם יש סרטון
+    has_video = bool(draft.get("video_url") or draft.get("videos"))
+    
     post_data = {
         "title": draft.get("title", ""),
         "content": content,
@@ -396,7 +406,8 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
         "categories": draft.get("categories", []),
         "tags": tag_ids,
         "acf": {
-            "tag_label": draft.get("red_title", "")
+            "tag_label": draft.get("red_title", ""),
+            "hide_featured_image": has_video
         }
     }
     if schedule_date:
