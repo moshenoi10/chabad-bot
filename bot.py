@@ -1941,21 +1941,17 @@ def handle_callback(cb):
                         send_message(chat_id, f"❌ שגיאה: {error}")
 
     elif cb_data == "smart_approve":
-        draft["step"] = "categories"
-        cats = get_wp_categories()
-        keyboard = {"inline_keyboard": []}
-        row = []
-        for cat_name, cat_id in cats.items():
-            row.append({"text": cat_name, "callback_data": f"cat_{cat_id}_{cat_name}"})
-            if len(row) == 2:
-                keyboard["inline_keyboard"].append(row)
-                row = []
-        if row:
-            keyboard["inline_keyboard"].append(row)
-        keyboard["inline_keyboard"].append([{"text": "✅ סיימתי", "callback_data": "cat_done"}])
-        draft["categories"] = []
-        draft["cat_names"] = []
-        send_message(chat_id, "✅ מעולה! בחר <b>קטגוריות</b>:", keyboard)
+        send_message(chat_id, "⏳ בוחר קטגוריות אוטומטית...")
+        cats, cat_names = auto_select_categories(draft.get("title",""), draft.get("body",""))
+        draft["categories"] = cats
+        draft["cat_names"] = cat_names
+        draft["step"] = "main_image"
+        send_message(chat_id,
+            f"✅ קטגוריות נבחרו: <b>{', '.join(cat_names)}</b>\n\nשלח את <b>התמונה הראשית</b>:", {
+            "inline_keyboard": [[
+                {"text": "🔄 שנה קטגוריות", "callback_data": "change_categories"}
+            ]]
+        })
 
     elif cb_data == "smart_retry":
         draft["step"] = "smart_text"
@@ -2105,6 +2101,26 @@ def handle_callback(cb):
         draft["step"] = "drive_link_input"
         send_message(chat_id, "🔗 שלח את לינק Google Drive (תיקייה או קובץ):")
 
+    elif cb_data == "change_categories":
+        draft["step"] = "categories"
+        cats = get_wp_categories()
+        keyboard = {"inline_keyboard": []}
+        row = []
+        # הצג רק קטגוריות רלוונטיות
+        relevant_ids = [11, 26, 25, 52, 45, 50, 51, 49, 48, 1087, 1090, 1091, 1089, 1088, 47, 46, 62, 1083, 63, 1084, 1085, 1086, 24]
+        for cat_name, cat_id in cats.items():
+            if cat_id in relevant_ids:
+                row.append({"text": cat_name, "callback_data": f"cat_{cat_id}_{cat_name}"})
+                if len(row) == 2:
+                    keyboard["inline_keyboard"].append(row)
+                    row = []
+        if row:
+            keyboard["inline_keyboard"].append(row)
+        keyboard["inline_keyboard"].append([{"text": "✅ סיימתי", "callback_data": "cat_done"}])
+        draft["categories"] = []
+        draft["cat_names"] = []
+        send_message(chat_id, "בחר קטגוריות:", keyboard)
+
     elif cb_data == "email_toggle":
         email_system["active"] = not email_system["active"]
         status = "✅ הופעלה" if email_system["active"] else "⏸️ הושהתה"
@@ -2155,11 +2171,32 @@ def handle_callback(cb):
                     "categories": [],
                     "cat_names": []
                 }
+                # בחר קטגוריות אוטומטית
+                cats, cat_names = auto_select_categories(new_draft["title"], new_draft["body"])
+                new_draft["categories"] = cats
+                new_draft["cat_names"] = cat_names
                 # הוסף תמונות מהמייל
                 images = pending.get("images", [])
                 if images:
                     new_draft["main_image"] = images[0]
                     new_draft["gallery"] = images[1:]
+                # העלה סרטונים ל-Vimeo
+                videos = pending.get("videos", [])
+                if videos:
+                    send_message(chat_id, f"⏳ מעלה {len(videos)} סרטונים ל-Vimeo...")
+                    vimeo_urls = []
+                    vimeo_ids = []
+                    for i, vid_bytes in enumerate(videos):
+                        result_v = upload_to_vimeo(vid_bytes, new_draft.get("title", f"סרטון {i+1}"))
+                        if result_v and isinstance(result_v, tuple):
+                            url, vid_id = result_v
+                            if url:
+                                vimeo_urls.append(url)
+                                vimeo_ids.append(vid_id)
+                    if vimeo_urls:
+                        new_draft["videos"] = vimeo_urls
+                        new_draft["vimeo_ids"] = vimeo_ids
+                        send_message(chat_id, f"✅ {len(vimeo_urls)} סרטונים עלו ל-Vimeo!")
                 drafts[user_id] = new_draft
                 import re
                 body_preview = re.sub(r'<[^>]+>', '', new_draft["body"])[:300]
@@ -2417,7 +2454,37 @@ def email_monitor_loop():
             print(f"שגיאה לולאת מייל: {e}", flush=True)
             time.sleep(60)
 
-def get_email_status():
+def auto_select_categories(title, body):
+    """בוחר קטגוריות אוטומטית לפי תוכן הכתבה"""
+    prompt = f"""אתה עוזר לסיווג כתבות לאתר חב"ד. בחר קטגוריות מהרשימה הבאה לפי תוכן הכתבה.
+
+חוקים:
+1. חייב לבחור קטגוריית על אחת בלבד: "חבד בארץ" או "חבד בעולם" או "חדשות"
+2. אם יש קטגוריית משנה מתאימה – הוסף גם אותה
+3. אם הכתבה עוסקת באירופה – הוסף גם "אירופה" (קטגוריית ביניים)
+4. אל תבחר יותר מ-3 קטגוריות סה"כ
+
+קטגוריות זמינות:
+חבד בארץ (id:11): ירושלים (id:52), כפר חבד (id:45), לוד (id:50), צפת (id:51), קריית מלאכי (id:49)
+חבד בעולם (id:26): אירופה (id:48) > אוקראינה (id:1087), אנגליה (id:1090), בלגיה (id:1091), צרפת (id:1089), רוסיה (id:1088) | ארהב (id:47), קראון הייטס (id:46)
+חדשות (id:25): ברוך דיין האמת (id:62), דבר מלכות (id:1083), הפינה השבועית (id:63), זכרון להולכים (id:1084), חסידים מספרים (id:1085), מבצעים (id:1086), פוליטיקה (id:24)
+
+כותרת: {title}
+תוכן: {body[:500]}
+
+החזר JSON בלבד:
+{{"categories": [id1, id2], "category_names": ["שם1", "שם2"]}}"""
+
+    try:
+        result = process_with_gemini(prompt)
+        if result and "categories" in result:
+            return result["categories"], result["category_names"]
+    except:
+        pass
+    # ברירת מחדל – חדשות
+    return [25], ["חדשות"]
+
+
     """מחזיר סטטוס מערכת המייל"""
     status = "✅ פעילה" if email_system["active"] else "⏸️ מושהית"
     interval_min = email_system["interval"] // 60
