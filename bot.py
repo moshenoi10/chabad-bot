@@ -20,6 +20,18 @@ TWITTER_API_KEY = os.environ.get("TWITTER_API_KEY", "")
 TWITTER_API_SECRET = os.environ.get("TWITTER_API_SECRET", "")
 TWITTER_ACCESS_TOKEN = os.environ.get("TWITTER_ACCESS_TOKEN", "")
 TWITTER_ACCESS_SECRET = os.environ.get("TWITTER_ACCESS_SECRET", "")
+EMAIL_USER = os.environ.get("EMAIL_USER", "")
+EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "")
+
+# ─── מערכת מייל ────────────────────────────────────────
+email_system = {
+    "active": True,              # האם המערכת פעילה
+    "interval": 1800,            # כל כמה שניות לבדוק (ברירת מחדל: 30 דקות)
+    "allowed_senders": ["mnoishtat@gmail.com"],  # כתובות מורשות
+    "last_check": 0,             # זמן הבדיקה האחרונה
+    "seen_ids": set(),           # מיילים שכבר טופלו
+    "pending_email": {}          # מייל ממתין לאישור
+}
 youtube_tokens = {}
 
 # ─── מערכת הרשאות ────────────────────────────────────────
@@ -69,6 +81,10 @@ def notify_admin_error(error_msg):
         pass
 
 class Handler(BaseHTTPRequestHandler):
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
     def do_GET(self):
         if self.path.startswith("/youtube/callback"):
             from urllib.parse import urlparse, parse_qs
@@ -130,7 +146,8 @@ ADMIN_MENU = {
         [{"text": "🎉 מזל טוב"}, {"text": "🎬 העלאה ליוטיוב"}],
         [{"text": "✏️ עריכת כתבה"}, {"text": "🗑️ מחיקת כתבה"}],
         [{"text": "📋 כתבות אחרונות"}, {"text": "📝 טיוטות"}],
-        [{"text": "👥 ניהול משתמשים"}, {"text": "📊 לוג פעולות"}]
+        [{"text": "👥 ניהול משתמשים"}, {"text": "📊 לוג פעולות"}],
+        [{"text": "📧 ניהול מייל"}]
     ],
     "resize_keyboard": True,
     "persistent": True
@@ -1065,7 +1082,71 @@ def handle_message(msg):
     if text and not text.startswith("/"):
         log_action(user_id, username, f"הודעה: {text[:50]}")
 
-    if text in ("/start", "/new", "✍️ כתבה חדשה"):
+    if text == "📧 ניהול מייל" and is_admin(user_id):
+        send_message(chat_id, get_email_status(), {
+            "inline_keyboard": [
+                [{"text": "⏸️ השהה" if email_system["active"] else "▶️ הפעל", "callback_data": "email_toggle"},
+                 {"text": "🔄 בדוק עכשיו", "callback_data": "email_check_now"}],
+                [{"text": "⏱️ שנה תדירות", "callback_data": "email_change_interval"}],
+                [{"text": "➕ הוסף כתובת", "callback_data": "email_add_sender"},
+                 {"text": "➖ הסר כתובת", "callback_data": "email_remove_sender"}]
+            ]
+        })
+        return
+
+    if step == "email_add_sender_input" and is_admin(user_id):
+        if "@" in text:
+            email_system["allowed_senders"].append(text.strip().lower())
+            send_message(chat_id, f"✅ כתובת {text} נוספה!", get_menu(user_id))
+        else:
+            send_message(chat_id, "⚠️ כתובת מייל לא תקינה.")
+        draft["step"] = "idle"
+        return
+
+    if step == "email_remove_sender_input" and is_admin(user_id):
+        if text in email_system["allowed_senders"]:
+            email_system["allowed_senders"].remove(text)
+            send_message(chat_id, f"✅ כתובת {text} הוסרה!", get_menu(user_id))
+        else:
+            send_message(chat_id, "⚠️ כתובת לא נמצאה.")
+        draft["step"] = "idle"
+        return
+
+    if step == "email_interval_input" and is_admin(user_id):
+        try:
+            minutes = int(text)
+            email_system["interval"] = minutes * 60
+            send_message(chat_id, f"✅ תדירות עודכנה ל-{minutes} דקות!", get_menu(user_id))
+        except:
+            send_message(chat_id, "⚠️ שלח מספר בדקות (לדוגמה: 30)")
+        draft["step"] = "idle"
+        return
+
+    if step == "email_pending_url" and is_admin(user_id):
+        # קיבל URL לכתבה עבור הוספת תמונות/סרטון
+        pending = email_system.get("pending_email", {})
+        if pending.get("type") == "add_images" and text.startswith("http"):
+            part = text.rstrip("/").split("/")[-1]
+            post_id = part if part.isdigit() else None
+            if not post_id:
+                r = requests.get(f"{WP_URL}/posts?slug={part}", auth=(WP_USER, WP_PASSWORD), timeout=10)
+                posts = r.json()
+                post_id = str(posts[0]["id"]) if posts else None
+            if post_id:
+                send_message(chat_id, "⏳ מעלה תמונות...")
+                image_urls = []
+                for img_bytes in pending.get("images", []):
+                    img_id, img_url = upload_image_to_wp(img_bytes, "email_img.jpg")
+                    if img_url:
+                        image_urls.append(img_url)
+                if image_urls:
+                    add_images_to_post(post_id, image_urls)
+                    send_message(chat_id, f"✅ {len(image_urls)} תמונות נוספו!", get_menu(user_id))
+                else:
+                    send_message(chat_id, "❌ לא הצלחתי להעלות תמונות.")
+            email_system["pending_email"] = {}
+        draft["step"] = "idle"
+        return
         if text == "/start":
             menu = ADMIN_MENU if is_admin(user_id) else MAIN_MENU
             send_message(chat_id, "שלום! 👋 בחר פעולה:", menu)
@@ -2024,6 +2105,96 @@ def handle_callback(cb):
         draft["step"] = "drive_link_input"
         send_message(chat_id, "🔗 שלח את לינק Google Drive (תיקייה או קובץ):")
 
+    elif cb_data == "email_toggle":
+        email_system["active"] = not email_system["active"]
+        status = "✅ הופעלה" if email_system["active"] else "⏸️ הושהתה"
+        send_message(chat_id, f"מערכת המייל {status}!", get_menu(user_id))
+
+    elif cb_data == "email_check_now":
+        send_message(chat_id, "⏳ בודק מיילים...")
+        threading.Thread(target=check_emails, daemon=True).start()
+        send_message(chat_id, "✅ בדיקה הופעלה! תקבל הודעה אם יש מיילים חדשים.")
+
+    elif cb_data == "email_change_interval":
+        draft["step"] = "email_interval_input"
+        send_message(chat_id, f"⏱️ תדירות נוכחית: {email_system['interval']//60} דקות\n\nשלח מספר דקות חדש:")
+
+    elif cb_data == "email_add_sender":
+        draft["step"] = "email_add_sender_input"
+        send_message(chat_id, "➕ שלח את כתובת המייל להוספה:")
+
+    elif cb_data == "email_remove_sender":
+        senders = email_system["allowed_senders"]
+        if not senders:
+            send_message(chat_id, "אין כתובות מורשות.")
+        else:
+            keyboard = {"inline_keyboard": [[{"text": s, "callback_data": f"email_rm_{s}"}] for s in senders]}
+            send_message(chat_id, "בחר כתובת להסרה:", keyboard)
+
+    elif cb_data.startswith("email_rm_"):
+        addr = cb_data.replace("email_rm_", "")
+        if addr in email_system["allowed_senders"]:
+            email_system["allowed_senders"].remove(addr)
+            send_message(chat_id, f"✅ {addr} הוסרה!", get_menu(user_id))
+
+    elif cb_data == "email_approve":
+        pending = email_system.get("pending_email", {})
+        if pending.get("type") == "article":
+            send_message(chat_id, "⏳ Gemini מעבד את המייל...")
+            body = pending.get("body", "")
+            result = process_with_gemini(body)
+            if result:
+                new_draft = {
+                    "step": "smart_preview",
+                    "title": result.get("title", ""),
+                    "subtitle": result.get("subtitle", ""),
+                    "red_title": result.get("red_title", ""),
+                    "body": convert_whatsapp_format(result.get("body", body)),
+                    "tags": result.get("tags", []),
+                    "gallery": [],
+                    "categories": [],
+                    "cat_names": []
+                }
+                # הוסף תמונות מהמייל
+                images = pending.get("images", [])
+                if images:
+                    new_draft["main_image"] = images[0]
+                    new_draft["gallery"] = images[1:]
+                drafts[user_id] = new_draft
+                import re
+                body_preview = re.sub(r'<[^>]+>', '', new_draft["body"])[:300]
+                preview = f"""📧 <b>כתבה ממייל – תצוגה מקדימה:</b>
+
+<b>כותרת:</b> {new_draft['title']}
+<b>כותרת משנה:</b> {new_draft['subtitle']}
+<b>כותרת אדומה:</b> {new_draft['red_title']}
+<b>תגיות:</b> {', '.join(new_draft['tags'])}
+<b>תמונות:</b> {len(images)}
+
+<b>גוף:</b>
+{body_preview}{'...' if len(new_draft['body']) > 300 else ''}"""
+                send_message(chat_id, preview, {
+                    "inline_keyboard": [
+                        [{"text": "✅ מאשר, המשך", "callback_data": "smart_approve"}],
+                        [{"text": "✨ שפר כותרות", "callback_data": "smart_improve_titles"}],
+                        [{"text": "✏️ ערוך כותרת", "callback_data": "smart_edit_title"},
+                         {"text": "✏️ ערוך כותרת משנה", "callback_data": "smart_edit_subtitle"}],
+                        [{"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+                    ]
+                })
+            else:
+                send_message(chat_id, "❌ שגיאה בעיבוד. נסה שוב.", get_menu(user_id))
+            email_system["pending_email"] = {}
+
+    elif cb_data == "email_reject":
+        email_system["pending_email"] = {}
+        send_message(chat_id, "❌ המייל נדחה.", get_menu(user_id))
+
+    elif cb_data == "email_cancel":
+        email_system["pending_email"] = {}
+        drafts[user_id]["step"] = "idle"
+        send_message(chat_id, "❌ בוטל.", get_menu(user_id))
+
     elif cb_data == "share_twitter":
         post_url = draft.get("last_post_url", "")
         post_title = draft.get("last_post_title", "")
@@ -2111,6 +2282,155 @@ def keep_alive():
         except:
             pass
 
+def check_emails():
+    """בודק את תיבת הדואר ומטפל במיילים חדשים"""
+    if not EMAIL_USER or not EMAIL_PASSWORD:
+        return
+    # אם יש מייל ממתין לאישור – לא מביא חדשים
+    if email_system.get("pending_email"):
+        return
+    try:
+        import imaplib
+        import email as email_lib
+        from email.header import decode_header
+        from datetime import datetime, timezone
+
+        mail = imaplib.IMAP4_SSL("imap.gmail.com")
+        mail.login(EMAIL_USER, EMAIL_PASSWORD)
+        mail.select("inbox")
+
+        # רק מיילים שלא נקראו שהגיעו אחרי שהבוט עלה
+        _, data = mail.search(None, "UNSEEN")
+        email_ids = data[0].split()
+
+        for eid in email_ids:
+            if eid in email_system["seen_ids"]:
+                continue
+
+            _, msg_data = mail.fetch(eid, "(RFC822)")
+            msg = email_lib.message_from_bytes(msg_data[0][1])
+
+            # סמן כנקרא
+            mail.store(eid, '+FLAGS', '\\Seen')
+            email_system["seen_ids"].add(eid)
+
+            # חלץ כותרת
+            subject_raw = msg.get("Subject", "")
+            subject = decode_header(subject_raw)[0][0]
+            if isinstance(subject, bytes):
+                subject = subject.decode("utf-8", errors="ignore")
+
+            # חלץ שולח
+            sender = msg.get("From", "")
+            sender_email = sender.split("<")[-1].replace(">", "").strip().lower()
+
+            # בדוק אם השולח מורשה
+            if sender_email not in [s.lower() for s in email_system["allowed_senders"]]:
+                continue
+
+            # חלץ תוכן
+            body = ""
+            images = []
+            videos = []
+
+            for part in msg.walk():
+                ctype = part.get_content_type()
+                if ctype == "text/plain" and not body:
+                    payload = part.get_payload(decode=True)
+                    if payload:
+                        body = payload.decode("utf-8", errors="ignore")
+                elif ctype.startswith("image/"):
+                    images.append(part.get_payload(decode=True))
+                elif ctype.startswith("video/"):
+                    videos.append(part.get_payload(decode=True))
+
+            # זיהוי כותרות מיוחדות
+            if "הוספת תמונות" in subject or "הוספת תמונה" in subject:
+                email_system["pending_email"] = {
+                    "type": "add_images",
+                    "images": images,
+                    "videos": videos
+                }
+                send_message(SUPER_ADMIN_ID,
+                    f"📧 <b>מייל חדש: הוספת תמונות</b>\n"
+                    f"משולח: {sender_email}\n"
+                    f"תמונות: {len(images)}\n\n"
+                    f"שלח לינק לכתבה שאליה להוסיף:", {
+                    "inline_keyboard": [[
+                        {"text": "❌ בטל", "callback_data": "email_cancel"}
+                    ]]
+                })
+
+            elif "הוספת סרטון" in subject or "הוספת וידאו" in subject:
+                email_system["pending_email"] = {
+                    "type": "add_video",
+                    "videos": videos
+                }
+                send_message(SUPER_ADMIN_ID,
+                    f"📧 <b>מייל חדש: הוספת סרטון</b>\n"
+                    f"משולח: {sender_email}\n\n"
+                    f"שלח לינק לכתבה שאליה להוסיף:", {
+                    "inline_keyboard": [[
+                        {"text": "❌ בטל", "callback_data": "email_cancel"}
+                    ]]
+                })
+
+            else:
+                # מייל רגיל – שאל אם להכין כתבה
+                email_system["pending_email"] = {
+                    "type": "article",
+                    "subject": subject,
+                    "body": body,
+                    "images": images,
+                    "videos": videos
+                }
+                preview = body[:200] + "..." if len(body) > 200 else body
+                send_message(SUPER_ADMIN_ID,
+                    f"📧 <b>מייל חדש מ-{sender_email}</b>\n"
+                    f"<b>כותרת:</b> {subject}\n"
+                    f"<b>תמונות:</b> {len(images)} | <b>סרטונים:</b> {len(videos)}\n\n"
+                    f"<b>תוכן:</b>\n{preview}\n\n"
+                    f"האם להכין כתבה?", {
+                    "inline_keyboard": [[
+                        {"text": "✅ כן, הכן כתבה", "callback_data": "email_approve"},
+                        {"text": "❌ לא", "callback_data": "email_reject"}
+                    ]]
+                })
+
+            # עצור אחרי מייל אחד – המתן לאישור
+            break
+
+        mail.logout()
+        email_system["last_check"] = time.time()
+
+    except Exception as e:
+        print(f"שגיאה בדיקת מייל: {e}", flush=True)
+
+def email_monitor_loop():
+    """לולאת בדיקת מייל ברקע"""
+    while True:
+        try:
+            if email_system["active"]:
+                check_emails()
+            time.sleep(email_system["interval"])
+        except Exception as e:
+            print(f"שגיאה לולאת מייל: {e}", flush=True)
+            time.sleep(60)
+
+def get_email_status():
+    """מחזיר סטטוס מערכת המייל"""
+    status = "✅ פעילה" if email_system["active"] else "⏸️ מושהית"
+    interval_min = email_system["interval"] // 60
+    senders = "\n".join([f"• {s}" for s in email_system["allowed_senders"]])
+    last = time.strftime("%H:%M", time.localtime(email_system["last_check"])) if email_system["last_check"] else "טרם נבדק"
+    return f"""📧 <b>מערכת מייל</b>
+
+<b>סטטוס:</b> {status}
+<b>בדיקה כל:</b> {interval_min} דקות
+<b>בדיקה אחרונה:</b> {last}
+<b>כתובות מורשות:</b>
+{senders}"""
+
 def main():
     global offset
     print("🚀 בוט חבד מתחיל!", flush=True)
@@ -2132,6 +2452,12 @@ def main():
     t = threading.Thread(target=run_server, daemon=True)
     t.start()
     print("🌐 שרת HTTP פועל", flush=True)
+
+    # הפעל מוניטור מייל
+    if EMAIL_USER and EMAIL_PASSWORD:
+        t_email = threading.Thread(target=email_monitor_loop, daemon=True)
+        t_email.start()
+        print("📧 מוניטור מייל פועל", flush=True)
     
     while True:
         try:
