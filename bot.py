@@ -2492,9 +2492,17 @@ def main():
                 print(f"עדכון: {uid}", flush=True)
                 
                 if "message" in update:
-                    handle_message(update["message"])
+                    try:
+                        handle_message(update["message"])
+                    except Exception as e:
+                        print(f"שגיאה handle_message: {e}", flush=True)
+                        import traceback
+                        traceback.print_exc()
                 elif "callback_query" in update:
-                    handle_callback(update["callback_query"])
+                    try:
+                        handle_callback(update["callback_query"])
+                    except Exception as e:
+                        print(f"שגיאה handle_callback: {e}", flush=True)
                 save_drafts()
                     
         except Exception as e:
