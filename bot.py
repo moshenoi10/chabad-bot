@@ -540,9 +540,6 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
         except:
             pass
 
-    # הסתרת תמונה ראשית בתוך הכתבה אם יש סרטון
-    has_video = bool(draft.get("video_url") or draft.get("videos"))
-    
     post_data = {
         "title": draft.get("title", ""),
         "content": content,
@@ -550,11 +547,11 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
         "status": status,
         "categories": draft.get("categories", []),
         "tags": tag_ids,
-        "acf": {
-            "tag_label": draft.get("red_title", ""),
-            "hide_featured_image": has_video
-        }
     }
+    # הוסף ACF רק אם יש ערך
+    red_title = draft.get("red_title", "")
+    if red_title:
+        post_data["acf"] = {"tag_label": red_title}
     if schedule_date:
         post_data["date"] = schedule_date
     if featured_id:
@@ -1945,13 +1942,18 @@ def handle_callback(cb):
         cats, cat_names = auto_select_categories(draft.get("title",""), draft.get("body",""))
         draft["categories"] = cats
         draft["cat_names"] = cat_names
-        draft["step"] = "main_image"
-        send_message(chat_id,
-            f"✅ קטגוריות נבחרו: <b>{', '.join(cat_names)}</b>\n\nשלח את <b>התמונה הראשית</b>:", {
-            "inline_keyboard": [[
-                {"text": "🔄 שנה קטגוריות", "callback_data": "change_categories"}
-            ]]
-        })
+        # אם מגיע ממייל – דלג ישר לסיכום
+        if draft.get("from_email"):
+            draft["step"] = "confirm"
+            _show_summary(chat_id, draft)
+        else:
+            draft["step"] = "main_image"
+            send_message(chat_id,
+                f"✅ קטגוריות נבחרו: <b>{', '.join(cat_names)}</b>\n\nשלח את <b>התמונה הראשית</b>:", {
+                "inline_keyboard": [[
+                    {"text": "🔄 שנה קטגוריות", "callback_data": "change_categories"}
+                ]]
+            })
 
     elif cb_data == "smart_retry":
         draft["step"] = "smart_text"
@@ -2169,7 +2171,8 @@ def handle_callback(cb):
                     "tags": result.get("tags", []),
                     "gallery": [],
                     "categories": [],
-                    "cat_names": []
+                    "cat_names": [],
+                    "from_email": True
                 }
                 # בחר קטגוריות אוטומטית
                 cats, cat_names = auto_select_categories(new_draft["title"], new_draft["body"])
