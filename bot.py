@@ -2319,6 +2319,20 @@ def keep_alive():
         except:
             pass
 
+def get_email_status():
+    """מחזיר סטטוס מערכת המייל"""
+    status = "✅ פעילה" if email_system["active"] else "⏸️ מושהית"
+    interval_min = email_system["interval"] // 60
+    senders = "\n".join([f"• {s}" for s in email_system["allowed_senders"]])
+    last = time.strftime("%H:%M", time.localtime(email_system["last_check"])) if email_system["last_check"] else "טרם נבדק"
+    return f"""📧 <b>מערכת מייל</b>
+
+<b>סטטוס:</b> {status}
+<b>בדיקה כל:</b> {interval_min} דקות
+<b>בדיקה אחרונה:</b> {last}
+<b>כתובות מורשות:</b>
+{senders}"""
+
 def check_emails():
     """בודק את תיבת הדואר ומטפל במיילים חדשים"""
     if not EMAIL_USER or not EMAIL_PASSWORD:
