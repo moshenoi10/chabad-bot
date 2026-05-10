@@ -198,7 +198,13 @@ def send_message(chat_id, text, reply_markup=None):
     if reply_markup:
         data["reply_markup"] = json.dumps(reply_markup)
     try:
-        requests.post(url, json=data, timeout=10)
+        resp = requests.post(url, json=data, timeout=10)
+        if not resp.ok:
+            # נסה בלי parse_mode
+            data2 = {"chat_id": chat_id, "text": text}
+            if reply_markup:
+                data2["reply_markup"] = json.dumps(reply_markup)
+            requests.post(url, json=data2, timeout=10)
     except Exception as e:
         print(f"שגיאה שליחה: {e}")
 
@@ -1337,14 +1343,20 @@ def handle_message(msg):
     elif step == "tags":
         draft["tags"] = [t.strip() for t in text.split(",")]
         draft["step"] = "categories"
-        cats = get_wp_categories()
+        try:
+            cats = get_wp_categories()
+        except Exception as e:
+            print(f"שגיאה קטגוריות: {e}", flush=True)
+            cats = {}
         keyboard = {"inline_keyboard": []}
         row = []
+        relevant_ids = [11, 26, 25, 52, 45, 50, 51, 49, 48, 1087, 1090, 1091, 1089, 1088, 47, 46, 62, 1083, 63, 1084, 1085, 1086, 24]
         for cat_name, cat_id in cats.items():
-            row.append({"text": cat_name, "callback_data": f"cat_{cat_id}_{cat_name}"})
-            if len(row) == 2:
-                keyboard["inline_keyboard"].append(row)
-                row = []
+            if cat_id in relevant_ids:
+                row.append({"text": cat_name, "callback_data": f"cat_{cat_id}_{cat_name}"})
+                if len(row) == 2:
+                    keyboard["inline_keyboard"].append(row)
+                    row = []
         if row:
             keyboard["inline_keyboard"].append(row)
         keyboard["inline_keyboard"].append([{"text": "✅ סיימתי", "callback_data": "cat_done"}])
