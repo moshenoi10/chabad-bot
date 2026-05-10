@@ -608,8 +608,9 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
     }
     # הוסף ACF רק אם יש ערך לא ריק
     red_title = draft.get("red_title", "").strip()
+    print(f"red_title: '{red_title}'", flush=True)
     if red_title:
-        post_data["acf"] = {"tag_label": red_title}
+        post_data["meta"] = {"tag_label": red_title}
     if schedule_date:
         post_data["date"] = schedule_date
     if featured_id:
@@ -1626,7 +1627,7 @@ def handle_message(msg):
         elif field == "subtitle":
             update_data["excerpt"] = text
         elif field == "red_title":
-            update_data["acf"] = {"tag_label": text}
+            update_data["meta"] = {"tag_label": text}
         r = requests.post(f"{WP_URL}/posts/{post_id}", json=update_data,
                          auth=(WP_USER, WP_PASSWORD), timeout=10)
         if r.status_code == 200:
@@ -1807,8 +1808,7 @@ def handle_message(msg):
                     "title": "מזל טוב",
                     "content": "",
                     "status": "publish",
-                    "categories": [18, 103],
-                    "acf": {"tag_label": "מזל טוב"}
+                    "categories": [18, 103]
                 }
                 if featured_id:
                     post_data["featured_media"] = featured_id
@@ -1831,8 +1831,7 @@ def handle_message(msg):
                     "title": "מזל טוב",
                     "content": "",
                     "status": "publish",
-                    "categories": [18, 103],
-                    "acf": {"tag_label": "מזל טוב"}
+                    "categories": [18, 103]
                 }
                 if featured_id:
                     post_data["featured_media"] = featured_id
