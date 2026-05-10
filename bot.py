@@ -35,12 +35,27 @@ email_system = {
 youtube_tokens = {}
 
 # ─── מערכת הרשאות ────────────────────────────────────────
-SUPER_ADMIN_ID = "1798097090"  # אתה – הרשאה מלאה תמיד
+SUPER_ADMIN_ID = "1798097090"
 
-# רמות הרשאה: "admin" = כל הגישה, "editor" = העלאה בלבד, "blocked" = חסום
+# רמות הרשאה: "admin", "senior_editor", "editor", "blocked"
 users_permissions = {
     SUPER_ADMIN_ID: "admin"
 }
+
+def get_permission(user_id):
+    uid = str(user_id)
+    if uid == SUPER_ADMIN_ID:
+        return "admin"
+    return users_permissions.get(uid, None)
+
+def is_admin(user_id):
+    return get_permission(str(user_id)) == "admin"
+
+def is_senior_editor(user_id):
+    return get_permission(str(user_id)) in ("admin", "senior_editor")
+
+def is_editor(user_id):
+    return get_permission(str(user_id)) in ("admin", "senior_editor", "editor")
 
 # לוג פעולות
 activity_log = []
@@ -147,22 +162,35 @@ ADMIN_MENU = {
         [{"text": "✏️ עריכת כתבה"}, {"text": "🗑️ מחיקת כתבה"}],
         [{"text": "📋 כתבות אחרונות"}, {"text": "📝 טיוטות"}],
         [{"text": "👥 ניהול משתמשים"}, {"text": "📊 לוג פעולות"}],
-        [{"text": "📧 ניהול מייל"}]
+        [{"text": "📧 ניהול מייל"}, {"text": "📈 אנליטיקס"}]
     ],
     "resize_keyboard": True,
     "persistent": True
 }
 
-MAIN_MENU = {
+SENIOR_EDITOR_MENU = {
     "keyboard": [
         [{"text": "✍️ כתבה חדשה"}, {"text": "🤖 העלאה חכמה"}],
         [{"text": "🎉 מזל טוב"}, {"text": "🎬 העלאה ליוטיוב"}],
         [{"text": "✏️ עריכת כתבה"}, {"text": "🗑️ מחיקת כתבה"}],
-        [{"text": "📋 כתבות אחרונות"}, {"text": "📝 טיוטות"}]
+        [{"text": "📋 כתבות אחרונות"}, {"text": "📝 טיוטות"}],
+        [{"text": "📧 ניהול מייל"}, {"text": "📈 אנליטיקס"}]
     ],
     "resize_keyboard": True,
     "persistent": True
 }
+
+EDITOR_MENU = {
+    "keyboard": [
+        [{"text": "✍️ כתבה חדשה"}, {"text": "🎉 מזל טוב"}],
+        [{"text": "✏️ עריכת כתבה"}, {"text": "🎬 העלאה ליוטיוב"}]
+    ],
+    "resize_keyboard": True,
+    "persistent": True
+}
+
+# לשמור תאימות אחורה
+MAIN_MENU = SENIOR_EDITOR_MENU
 
 def send_message(chat_id, text, reply_markup=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -322,7 +350,7 @@ def upload_to_vimeo(video_bytes, title="סרטון חדש"):
         return None
 
 def notify_channel(title, subtitle, url):
-    text = f"*עדכוני חב\"ד - {title}*\n{subtitle}\n{url}"
+    text = f"*עדכוני חב״ד - {title}*\n{subtitle}\n\n*לכתבה המלאה לחצו ⬇️*\n{url}"
     try:
         requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
@@ -457,17 +485,12 @@ def post_to_twitter(text, url=""):
         print(f"שגיאה שליחה לערוץ: {e}")
 
 def get_menu(user_id):
-    return ADMIN_MENU if is_admin(str(user_id)) else MAIN_MENU
-    try:
-        resp = requests.get(
-            f"{WP_URL}/posts?per_page=5&status={status}&orderby=date&order=desc",
-            auth=(WP_USER, WP_PASSWORD), timeout=10
-        )
-        if resp.status_code == 200:
-            return resp.json()
-    except Exception as e:
-        print(f"שגיאה כתבות אחרונות: {e}")
-    return []
+    perm = get_permission(str(user_id))
+    if perm == "admin":
+        return ADMIN_MENU
+    elif perm == "senior_editor":
+        return SENIOR_EDITOR_MENU
+    return EDITOR_MENU
 
 def get_wp_categories():
     try:
@@ -529,6 +552,35 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
             content += f'\n\n<div style="padding:56.25% 0 0 0;position:relative;"><iframe src="https://player.vimeo.com/video/{video_id}" frameborder="0" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe></div><script src="https://player.vimeo.com/api/player.js"></script>\n'
         elif "youtube.com" in url or "youtu.be" in url:
             content += f'\n\n<!-- wp:embed {{"url":"{url}","type":"video","providerNameSlug":"youtube","responsive":true}} -->\n<figure class="wp-block-embed is-type-video is-provider-youtube"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n<!-- /wp:embed -->'
+
+    # העלאת PDF לוורדפרס
+    for pdf in draft.get("pdf_files", []):
+        try:
+            url = f"{WP_URL}/media"
+            headers = {"Content-Disposition": f"attachment; filename={pdf['name']}",
+                      "Content-Type": "application/pdf"}
+            resp = requests.post(url, headers=headers, data=pdf["bytes"],
+                               auth=(WP_USER, WP_PASSWORD), timeout=30)
+            if resp.status_code == 201:
+                pdf_url = resp.json()["source_url"]
+                pdf_name = pdf["name"]
+                content += f'\n\n<!-- wp:file {{"url":"{pdf_url}","fileName":"{pdf_name}"}} -->\n<div class="wp-block-file"><a href="{pdf_url}">{pdf_name}</a></div>\n<!-- /wp:file -->'
+        except Exception as e:
+            print(f"שגיאה העלאת PDF: {e}", flush=True)
+
+    # העלאת קבצי שמע לוורדפרס
+    for audio in draft.get("audio_files", []):
+        try:
+            url = f"{WP_URL}/media"
+            headers = {"Content-Disposition": f"attachment; filename={audio['name']}",
+                      "Content-Type": "audio/mpeg"}
+            resp = requests.post(url, headers=headers, data=audio["bytes"],
+                               auth=(WP_USER, WP_PASSWORD), timeout=30)
+            if resp.status_code == 201:
+                audio_url = resp.json()["source_url"]
+                content += f'\n\n<!-- wp:audio -->\n<figure class="wp-block-audio"><audio controls src="{audio_url}"></audio></figure>\n<!-- /wp:audio -->'
+        except Exception as e:
+            print(f"שגיאה העלאת שמע: {e}", flush=True)
 
     tag_ids = []
     for tag in draft.get("tags", []):
@@ -1046,8 +1098,16 @@ def handle_message(msg):
         target_id = text.replace("/approve_", "")
         users_permissions[target_id] = "editor"
         send_message(chat_id, f"✅ משתמש {target_id} אושר כעורך!")
-        send_message(int(target_id), "✅ הגישה שלך אושרה! שלח /start להתחיל.", MAIN_MENU)
-        log_action(user_id, username, f"אישור משתמש {target_id}")
+        send_message(int(target_id), "✅ הגישה שלך אושרה! שלח /start להתחיל.", EDITOR_MENU)
+        log_action(user_id, username, f"אישור עורך {target_id}")
+        return
+
+    if text.startswith("/approvesenior_") and is_admin(user_id):
+        target_id = text.replace("/approvesenior_", "")
+        users_permissions[target_id] = "senior_editor"
+        send_message(chat_id, f"✅ משתמש {target_id} אושר כעורך ראשי!")
+        send_message(int(target_id), "✅ הגישה שלך אושרה כעורך ראשי! שלח /start להתחיל.", SENIOR_EDITOR_MENU)
+        log_action(user_id, username, f"אישור עורך ראשי {target_id}")
         return
 
     if text.startswith("/block_") and is_admin(user_id):
@@ -1060,12 +1120,25 @@ def handle_message(msg):
     if text.startswith("/makeadmin_") and user_id == SUPER_ADMIN_ID:
         target_id = text.replace("/makeadmin_", "")
         users_permissions[target_id] = "admin"
-        send_message(chat_id, f"✅ משתמש {target_id} הוגדר כאדמין!")
+        send_message(chat_id, f"✅ משתמש {target_id} הוגדר כמנהל!")
         return
 
     if text == "👥 ניהול משתמשים" and is_admin(user_id):
-        users_list = "\n".join([f"• {uid}: {perm}" for uid, perm in users_permissions.items()])
-        send_message(chat_id, f"👥 <b>משתמשים מורשים:</b>\n\n{users_list}\n\nלהוסיף עורך: /approve_[ID]\nלחסום: /block_[ID]\nלהפוך לאדמין: /makeadmin_[ID]")
+        total = len(users_permissions)
+        by_role = {}
+        for uid, perm in users_permissions.items():
+            by_role.setdefault(perm, []).append(uid)
+        
+        users_text = f"👥 <b>משתמשים מורשים ({total}):</b>\n\n"
+        role_names = {"admin": "🔴 מנהל", "senior_editor": "🟡 עורך ראשי", "editor": "🟢 עורך", "blocked": "⛔ חסום"}
+        for role, uids in by_role.items():
+            users_text += f"<b>{role_names.get(role, role)}:</b>\n"
+            for uid in uids:
+                users_text += f"  • {uid}\n"
+            users_text += "\n"
+        
+        users_text += "פקודות:\n/approve_[ID] → עורך\n/approvesenior_[ID] → עורך ראשי\n/makeadmin_[ID] → מנהל\n/block_[ID] → חסום"
+        send_message(chat_id, users_text)
         return
 
     if text == "📊 לוג פעולות" and is_admin(user_id):
@@ -1079,7 +1152,27 @@ def handle_message(msg):
     if text and not text.startswith("/"):
         log_action(user_id, username, f"הודעה: {text[:50]}")
 
-    if text == "📧 ניהול מייל" and is_admin(user_id):
+    if text == "📈 אנליטיקס" and is_senior_editor(user_id):
+        send_message(chat_id, "📈 <b>אנליטיקס</b>\n\nמה תרצה לבדוק?", {
+            "inline_keyboard": [
+                [{"text": "🏆 5 הכתבות הנצפות ביותר", "callback_data": "analytics_top"}],
+                [{"text": "👥 כניסות לאתר", "callback_data": "analytics_visits"}],
+                [{"text": "🔍 בדוק כתבה ספציפית", "callback_data": "analytics_page"}]
+            ]
+        })
+        return
+
+    if step == "analytics_page_input" and is_senior_editor(user_id):
+        send_message(chat_id, "⏳ מושך נתונים...")
+        send_message(chat_id, "לאיזה תקופה?", {
+            "inline_keyboard": [
+                [{"text": "24 שעות", "callback_data": f"analytics_page_1_{text}"},
+                 {"text": "שבוע", "callback_data": f"analytics_page_7_{text}"}],
+                [{"text": "חודש", "callback_data": f"analytics_page_30_{text}"}]
+            ]
+        })
+        draft["step"] = "idle"
+        return
         send_message(chat_id, get_email_status(), {
             "inline_keyboard": [
                 [{"text": "⏸️ השהה" if email_system["active"] else "▶️ הפעל", "callback_data": "email_toggle"},
@@ -1153,6 +1246,9 @@ def handle_message(msg):
         return
 
     if text in ("/smart", "🤖 העלאה חכמה"):
+        if not is_senior_editor(user_id):
+            send_message(chat_id, "❌ אין לך הרשאה להעלאה חכמה.")
+            return
         drafts[user_id] = {"step": "smart_text", "gallery": []}
         send_message(chat_id, "🤖 <b>העלאה חכמה</b>\n\nשלח את הטקסט הגולמי של הכתבה:")
         return
@@ -1216,7 +1312,7 @@ def handle_message(msg):
         return
 
     if text in ("/delete", "🗑️ מחיקת כתבה"):
-        if not is_admin(user_id):
+        if not is_senior_editor(user_id):
             send_message(chat_id, "❌ אין לך הרשאה למחוק כתבות.")
             return
         drafts[user_id] = {"step": "delete_url", "gallery": []}
@@ -1730,25 +1826,47 @@ def handle_message(msg):
                 draft["gallery"].append(content)
                 if len(draft["gallery"]) == 1:
                     send_message(chat_id, "📥 מקבל תמונות... שלח /done כשסיימת")
+        elif "document" in msg:
+            doc = msg["document"]
+            mime = doc.get("mime_type", "")
+            file_id = doc["file_id"]
+            if mime == "application/pdf":
+                content = get_file(file_id)
+                if content:
+                    draft.setdefault("pdf_files", []).append({"bytes": content, "name": doc.get("file_name", "document.pdf")})
+                    send_message(chat_id, f"✅ PDF נוסף! ({len(draft.get('pdf_files',[]))} קבצים)\n\nשלח עוד או /done:")
+            elif mime and mime.startswith("audio/"):
+                content = get_file(file_id)
+                if content:
+                    draft.setdefault("audio_files", []).append({"bytes": content, "name": doc.get("file_name", "audio.mp3")})
+                    send_message(chat_id, f"✅ קובץ שמע נוסף!\n\nשלח עוד או /done:")
+            else:
+                send_message(chat_id, "⚠️ סוג קובץ לא נתמך. שלח תמונה, PDF, או קובץ שמע.")
+        elif "audio" in msg:
+            content = get_file(msg["audio"]["file_id"])
+            if content:
+                draft.setdefault("audio_files", []).append({"bytes": content, "name": msg["audio"].get("file_name", "audio.mp3")})
+                send_message(chat_id, f"✅ קובץ שמע נוסף!\n\nשלח עוד או /done:")
         elif text and text.startswith("http") and "drive.google.com" in text:
-            # Drive לגלריה
             drive_id, drive_type = extract_drive_id(text)
             if drive_id:
                 send_message(chat_id, "⏳ מוריד תמונות מ-Drive...")
                 if drive_type == "folder":
                     images, _ = list_drive_folder(drive_id)
                     count = 0
-                    for img in images:
+                    for i, img in enumerate(images):
                         content = download_drive_file(img["id"])
                         if content:
                             draft.setdefault("gallery", []).append(content)
                             count += 1
-                    send_message(chat_id, f"✅ {count} תמונות הורדו מ-Drive!\n\nשלח עוד תמונות או /done:")
+                        if (i + 1) % 10 == 0:
+                            send_message(chat_id, f"⏳ הורדתי {count}/{len(images)} תמונות...")
+                    send_message(chat_id, f"✅ {count} תמונות הורדו!\n\nשלח עוד או /done:")
                 elif drive_type == "file":
                     content = download_drive_file(drive_id)
                     if content:
                         draft.setdefault("gallery", []).append(content)
-                        send_message(chat_id, f"✅ תמונה הורדה מ-Drive! ({len(draft['gallery'])} סה\"כ)\n\nשלח עוד או /done:")
+                        send_message(chat_id, f"✅ תמונה הורדה! ({len(draft['gallery'])} סה\"כ)\n\nשלח עוד או /done:")
             else:
                 send_message(chat_id, "❌ לינק Drive לא תקין.")
         elif text == "/done":
@@ -2123,6 +2241,82 @@ def handle_callback(cb):
         draft["cat_names"] = []
         send_message(chat_id, "בחר קטגוריות:", keyboard)
 
+    elif cb_data == "analytics_top":
+        send_message(chat_id, "לאיזה תקופה?", {
+            "inline_keyboard": [
+                [{"text": "24 שעות אחרונות", "callback_data": "analytics_top_1"},
+                 {"text": "שבוע אחרון", "callback_data": "analytics_top_7"}],
+                [{"text": "חודש אחרון", "callback_data": "analytics_top_30"}]
+            ]
+        })
+
+    elif cb_data.startswith("analytics_top_"):
+        days = cb_data.replace("analytics_top_", "")
+        period = f"{days}daysAgo"
+        period_name = {"1": "24 השעות האחרונות", "7": "השבוע האחרון", "30": "החודש האחרון"}.get(days, "")
+        send_message(chat_id, "⏳ מושך נתונים...")
+        data = get_analytics_data(period)
+        if data and data.get("rows"):
+            msg = f"🏆 <b>חמש הכתבות הנצפות ביותר באתר ״עדכוני חב״ד״</b>\n<b>{period_name}:</b>\n\n"
+            for i, row in enumerate(data["rows"][:5], 1):
+                title = row["dimensionValues"][0]["value"]
+                path = row["dimensionValues"][1]["value"]
+                views = row["metricValues"][0]["value"]
+                url = f"https://chabadupdates.com{path}"
+                msg += f"<b>{i}. {title}</b>\n{url}\n👁 {views} צפיות\n\n"
+            send_message(chat_id, msg)
+        else:
+            send_message(chat_id, "❌ לא נמצאו נתונים. בדוק שה-Analytics מחובר.")
+
+    elif cb_data == "analytics_visits":
+        send_message(chat_id, "לאיזה תקופה?", {
+            "inline_keyboard": [
+                [{"text": "היום", "callback_data": "analytics_visits_1"},
+                 {"text": "שבוע", "callback_data": "analytics_visits_7"}],
+                [{"text": "חודש", "callback_data": "analytics_visits_30"}]
+            ]
+        })
+
+    elif cb_data.startswith("analytics_visits_"):
+        days = cb_data.replace("analytics_visits_", "")
+        period = f"{days}daysAgo"
+        period_name = {"1": "היום", "7": "השבוע האחרון", "30": "החודש האחרון"}.get(days, "")
+        send_message(chat_id, "⏳ מושך נתונים...")
+        data = get_analytics_totals(period)
+        if data:
+            msg = f"""📊 <b>סטטיסטיקות אתר ״עדכוני חב״ד״</b>
+<b>{period_name}:</b>
+
+👥 משתמשים: <b>{data['users']}</b>
+🔗 סשנים: <b>{data['sessions']}</b>
+👁 צפיות בדפים: <b>{data['pageviews']}</b>"""
+            send_message(chat_id, msg)
+        else:
+            send_message(chat_id, "❌ לא נמצאו נתונים.")
+
+    elif cb_data == "analytics_page":
+        draft["step"] = "analytics_page_input"
+        send_message(chat_id, "🔍 שלח לינק לכתבה שתרצה לבדוק:")
+
+    elif cb_data.startswith("analytics_page_"):
+        parts = cb_data.split("_", 3)
+        days = parts[2]
+        url = parts[3]
+        period = f"{days}daysAgo"
+        period_name = {"1": "24 שעות", "7": "שבוע", "30": "חודש"}.get(days, "")
+        data = get_analytics_page(url, period)
+        if data:
+            msg = f"""🔍 <b>{data['title']}</b>
+
+<b>תקופה:</b> {period_name}
+👁 צפיות: <b>{data['pageviews']}</b>
+👥 משתמשים: <b>{data['users']}</b>
+
+🔗 {url}"""
+            send_message(chat_id, msg)
+        else:
+            send_message(chat_id, "❌ לא נמצאו נתונים לכתבה זו.")
+
     elif cb_data == "email_toggle":
         email_system["active"] = not email_system["active"]
         status = "✅ הופעלה" if email_system["active"] else "⏸️ הושהתה"
@@ -2322,7 +2516,162 @@ def keep_alive():
         except:
             pass
 
-def get_email_status():
+GA_PROPERTY_ID = os.environ.get("GA_PROPERTY_ID", "")
+GA_SERVICE_ACCOUNT_JSON = os.environ.get("GA_SERVICE_ACCOUNT_JSON", "")
+
+def get_analytics_token():
+    """מקבל token לגישה ל-Google Analytics"""
+    if not GA_SERVICE_ACCOUNT_JSON:
+        return None
+    try:
+        import json as json_lib
+        import time as time_mod
+        import base64
+        import hashlib
+        import hmac as hmac_lib
+
+        sa = json_lib.loads(GA_SERVICE_ACCOUNT_JSON)
+        
+        # בנה JWT
+        header = base64.urlsafe_b64encode(json_lib.dumps({"alg":"RS256","typ":"JWT"}).encode()).rstrip(b'=').decode()
+        now = int(time_mod.time())
+        payload = base64.urlsafe_b64encode(json_lib.dumps({
+            "iss": sa["client_email"],
+            "scope": "https://www.googleapis.com/auth/analytics.readonly",
+            "aud": "https://oauth2.googleapis.com/token",
+            "exp": now + 3600,
+            "iat": now
+        }).encode()).rstrip(b'=').decode()
+        
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.backends import default_backend
+        
+        private_key = serialization.load_pem_private_key(
+            sa["private_key"].encode(),
+            password=None,
+            backend=default_backend()
+        )
+        
+        signing_input = f"{header}.{payload}".encode()
+        signature = private_key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
+        sig = base64.urlsafe_b64encode(signature).rstrip(b'=').decode()
+        
+        jwt = f"{header}.{payload}.{sig}"
+        
+        resp = requests.post("https://oauth2.googleapis.com/token", data={
+            "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            "assertion": jwt
+        }, timeout=10)
+        
+        if resp.status_code == 200:
+            return resp.json()["access_token"]
+    except Exception as e:
+        print(f"שגיאה Analytics token: {e}", flush=True)
+    return None
+
+def get_analytics_data(period="7daysAgo", limit=5):
+    """מושך נתוני Analytics"""
+    token = get_analytics_token()
+    if not token:
+        return None
+    try:
+        resp = requests.post(
+            f"https://analyticsdata.googleapis.com/v1beta/properties/{GA_PROPERTY_ID}:runReport",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={
+                "dateRanges": [{"startDate": period, "endDate": "today"}],
+                "metrics": [{"name": "screenPageViews"}],
+                "dimensions": [{"name": "pageTitle"}, {"name": "pagePath"}],
+                "orderBys": [{"metric": {"metricName": "screenPageViews"}, "desc": True}],
+                "limit": limit,
+                "dimensionFilter": {
+                    "filter": {
+                        "fieldName": "pagePath",
+                        "stringFilter": {"matchType": "CONTAINS", "value": "/archives/"}
+                    }
+                }
+            },
+            timeout=15
+        )
+        if resp.status_code == 200:
+            return resp.json()
+        print(f"שגיאה Analytics: {resp.status_code} {resp.text[:200]}", flush=True)
+    except Exception as e:
+        print(f"שגיאה Analytics data: {e}", flush=True)
+    return None
+
+def get_analytics_totals(period="7daysAgo"):
+    """מושך סה"כ כניסות לאתר"""
+    token = get_analytics_token()
+    if not token:
+        return None
+    try:
+        resp = requests.post(
+            f"https://analyticsdata.googleapis.com/v1beta/properties/{GA_PROPERTY_ID}:runReport",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={
+                "dateRanges": [{"startDate": period, "endDate": "today"}],
+                "metrics": [
+                    {"name": "sessions"},
+                    {"name": "screenPageViews"},
+                    {"name": "activeUsers"}
+                ]
+            },
+            timeout=15
+        )
+        if resp.status_code == 200:
+            rows = resp.json().get("rows", [])
+            if rows:
+                vals = rows[0]["metricValues"]
+                return {
+                    "sessions": vals[0]["value"],
+                    "pageviews": vals[1]["value"],
+                    "users": vals[2]["value"]
+                }
+    except Exception as e:
+        print(f"שגיאה Analytics totals: {e}", flush=True)
+    return None
+
+def get_analytics_page(url, period="7daysAgo"):
+    """מושך נתוני כניסות לכתבה ספציפית"""
+    token = get_analytics_token()
+    if not token:
+        return None
+    try:
+        # חלץ path מה-URL
+        from urllib.parse import urlparse
+        path = urlparse(url).path
+        
+        resp = requests.post(
+            f"https://analyticsdata.googleapis.com/v1beta/properties/{GA_PROPERTY_ID}:runReport",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={
+                "dateRanges": [{"startDate": period, "endDate": "today"}],
+                "metrics": [{"name": "screenPageViews"}, {"name": "activeUsers"}],
+                "dimensions": [{"name": "pageTitle"}, {"name": "pagePath"}],
+                "dimensionFilter": {
+                    "filter": {
+                        "fieldName": "pagePath",
+                        "stringFilter": {"matchType": "EXACT", "value": path}
+                    }
+                }
+            },
+            timeout=15
+        )
+        if resp.status_code == 200:
+            rows = resp.json().get("rows", [])
+            if rows:
+                return {
+                    "title": rows[0]["dimensionValues"][0]["value"],
+                    "pageviews": rows[0]["metricValues"][0]["value"],
+                    "users": rows[0]["metricValues"][1]["value"]
+                }
+    except Exception as e:
+        print(f"שגיאה Analytics page: {e}", flush=True)
+    return None
+
+
     """מחזיר סטטוס מערכת המייל"""
     status = "✅ פעילה" if email_system["active"] else "⏸️ מושהית"
     interval_min = email_system["interval"] // 60
