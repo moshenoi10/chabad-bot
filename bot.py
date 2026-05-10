@@ -2866,30 +2866,39 @@ def email_monitor_loop():
 
 def auto_select_categories(title, body):
     """בוחר קטגוריות אוטומטית לפי תוכן הכתבה"""
-    prompt = f"""אתה עוזר לסיווג כתבות לאתר חב"ד. בחר קטגוריות לפי הכללים הבאים:
+    prompt = f"""בחר קטגוריות לכתבה הבאה לפי הכללים:
 
-כלל 1 – חב"ד בעולם (id:26): אם הכתבה מזכירה מדינה או עיר מחוץ לישראל → בחר חב"ד בעולם + קטגוריית המדינה אם קיימת.
-כלל 2 – חב"ד בארץ (id:11): אם הכתבה מזכירה יישוב בישראל → בחר חב"ד בארץ + קטגוריית הישוב אם קיימת.
-כלל 3 – חדשות (id:25): רק אם אין התייחסות למקום ספציפי, או אם מדובר בתוכן כללי.
-כלל 4 – לא לבחור יותר מ-3 קטגוריות.
+כלל 1: אם מוזכרת מדינה או עיר מחוץ לישראל → חב"ד בעולם (id:26) + מדינה אם קיימת
+כלל 2: אם מוזכר יישוב בישראל → חב"ד בארץ (id:11) + יישוב אם קיים
+כלל 3: אחרת → חדשות (id:25)
+כלל 4: לא יותר מ-3 קטגוריות
 
-קטגוריות זמינות:
-חב"ד בארץ (id:11): ירושלים (id:52), כפר חב"ד (id:45), לוד (id:50), צפת (id:51), קריית מלאכי (id:49)
-חב"ד בעולם (id:26): אירופה (id:48) > אוקראינה (id:1087), אנגליה (id:1090), בלגיה (id:1091), צרפת (id:1089), רוסיה (id:1088) | ארה"ב (id:47), קראון הייטס (id:46)
-חדשות (id:25): ברוך דיין האמת (id:62), דבר מלכות (id:1083), הפינה השבועית (id:63), זכרון להולכים (id:1084), חסידים מספרים (id:1085), מבצעים (id:1086), פוליטיקה (id:24)
+קטגוריות:
+חב"ד בארץ(11): ירושלים(52), כפר חב"ד(45), לוד(50), צפת(51), קריית מלאכי(49)
+חב"ד בעולם(26): אירופה(48)>אוקראינה(1087),אנגליה(1090),בלגיה(1091),צרפת(1089),רוסיה(1088) | ארה"ב(47), קראון הייטס(46)
+חדשות(25): ברוך דיין האמת(62), דבר מלכות(1083), הפינה השבועית(63), זכרון להולכים(1084), חסידים מספרים(1085), מבצעים(1086), פוליטיקה(24)
 
 כותרת: {title}
-תוכן: {body[:600]}
+תוכן: {body[:400]}
 
-החזר JSON בלבד:
-{{"categories": [id1, id2], "category_names": ["שם1", "שם2"]}}"""
+החזר JSON בלבד ללא הסבר:
+{{"categories":[id1,id2],"category_names":["שם1","שם2"]}}"""
 
     try:
-        result = process_with_gemini(prompt)
-        if result and "categories" in result:
-            return result["categories"], result["category_names"]
-    except:
-        pass
+        # שלח ישירות ל-Gemini בלי build_prompt
+        if GEMINI_API_KEY:
+            resp = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}",
+                json={"contents": [{"parts": [{"text": prompt}]}]},
+                timeout=15
+            )
+            if resp.status_code == 200:
+                result_text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+                parsed = clean_json_string(result_text)
+                if parsed and "categories" in parsed:
+                    return parsed["categories"], parsed["category_names"]
+    except Exception as e:
+        print(f"שגיאה קטגוריות: {e}", flush=True)
     return [25], ["חדשות"]
 
 
