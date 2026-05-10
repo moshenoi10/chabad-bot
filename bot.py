@@ -606,8 +606,8 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
         "categories": draft.get("categories", []),
         "tags": tag_ids,
     }
-    # הוסף ACF רק אם יש ערך
-    red_title = draft.get("red_title", "")
+    # הוסף ACF רק אם יש ערך לא ריק
+    red_title = draft.get("red_title", "").strip()
     if red_title:
         post_data["acf"] = {"tag_label": red_title}
     if schedule_date:
@@ -766,7 +766,12 @@ def clean_json_string(result):
 def prepare_text_for_ai(text):
     """מכין טקסט לשליחה ל-AI – מחליף גרשיים עבריים בתו בטוח"""
     import re
-    text = re.sub(r'(?<=[א-ת])"(?=[א-ת\s])', '״', text)
+    # החלף " בין אותיות עבריות (כמו ת"ת, ל"ג, אדמו"ר)
+    text = re.sub(r'(?<=[א-ת])"(?=[א-ת])', '״', text)
+    # החלף " אחרי אות עברית ולפני רווח (כמו כ"ק )
+    text = re.sub(r'(?<=[א-ת])"(?=\s)', '״', text)
+    # החלף " אחרי אות עברית בסוף מילה
+    text = re.sub(r'(?<=[א-ת])"(?=[,\.!?\s\n])', '״', text)
     return text
 
 def restore_geresh(text):
@@ -1484,15 +1489,18 @@ def handle_message(msg):
             })
             import re
             body_preview = re.sub(r'<[^>]+>', '', body_clean)[:300]
+            # escape תווים מיוחדים של HTML
+            def escape_html(s):
+                return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
             preview = f"""🤖 <b>תצוגה מקדימה:</b>
 
-<b>כותרת:</b> {draft['title']}
-<b>כותרת משנה:</b> {draft['subtitle']}
-<b>כותרת אדומה:</b> {draft['red_title']}
-<b>תגיות:</b> {', '.join(draft['tags'])}
+<b>כותרת:</b> {escape_html(draft['title'])}
+<b>כותרת משנה:</b> {escape_html(draft['subtitle'])}
+<b>כותרת אדומה:</b> {escape_html(draft['red_title'])}
+<b>תגיות:</b> {escape_html(', '.join(draft['tags']))}
 
 <b>גוף:</b>
-{body_preview}{'...' if len(body_clean) > 300 else ''}"""
+{escape_html(body_preview)}{'...' if len(body_clean) > 300 else ''}"""
             send_message(chat_id, preview, {
                 "inline_keyboard": [
                     [{"text": "✅ מאשר, המשך", "callback_data": "smart_approve"}],
