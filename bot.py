@@ -557,7 +557,7 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
     for pdf in draft.get("pdf_files", []):
         try:
             url = f"{WP_URL}/media"
-            headers = {"Content-Disposition": f"attachment; filename={pdf['name']}",
+            headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{requests.utils.quote(pdf['name'])}",
                       "Content-Type": "application/pdf"}
             resp = requests.post(url, headers=headers, data=pdf["bytes"],
                                auth=(WP_USER, WP_PASSWORD), timeout=30)
@@ -572,7 +572,7 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
     for audio in draft.get("audio_files", []):
         try:
             url = f"{WP_URL}/media"
-            headers = {"Content-Disposition": f"attachment; filename={audio['name']}",
+            headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{requests.utils.quote(audio['name'])}",
                       "Content-Type": "audio/mpeg"}
             resp = requests.post(url, headers=headers, data=audio["bytes"],
                                auth=(WP_USER, WP_PASSWORD), timeout=30)
@@ -1641,7 +1641,7 @@ def handle_message(msg):
             if content_bytes:
                 if mime == "application/pdf":
                     url = f"{WP_URL}/media"
-                    headers = {"Content-Disposition": f"attachment; filename={doc.get('file_name','doc.pdf')}",
+                    headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{requests.utils.quote(doc.get('file_name','doc.pdf'))}",
                               "Content-Type": "application/pdf"}
                     resp = requests.post(url, headers=headers, data=content_bytes,
                                        auth=(WP_USER, WP_PASSWORD), timeout=30)
@@ -1656,7 +1656,7 @@ def handle_message(msg):
                         send_message(chat_id, f"✅ PDF נוסף! שלח עוד או /done:")
                 elif mime and mime.startswith("audio/"):
                     url = f"{WP_URL}/media"
-                    headers = {"Content-Disposition": f"attachment; filename={doc.get('file_name','audio.mp3')}",
+                    headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{requests.utils.quote(doc.get('file_name','audio.mp3'))}",
                               "Content-Type": mime}
                     resp = requests.post(url, headers=headers, data=content_bytes,
                                        auth=(WP_USER, WP_PASSWORD), timeout=30)
