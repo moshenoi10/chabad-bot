@@ -1619,25 +1619,59 @@ def handle_message(msg):
         if "photo" in msg:
             media_group_id = msg.get("media_group_id")
             file_id = msg["photo"][-1]["file_id"]
-
             if "edit_gallery_pending" not in draft:
                 draft["edit_gallery_pending"] = []
-
             if media_group_id:
                 if draft.get("edit_gallery_group") != media_group_id:
                     draft["edit_gallery_group"] = media_group_id
                 if file_id not in draft["edit_gallery_pending"]:
                     draft["edit_gallery_pending"].append(file_id)
                 if len(draft["edit_gallery_pending"]) == 1:
-                    send_message(chat_id, "📥 מקבל תמונות... שלח /done כשסיימת")
+                    send_message(chat_id, "📥 מקבל קבצים... שלח /done כשסיימת")
             else:
                 draft["edit_gallery_pending"].append(file_id)
-                send_message(chat_id, f"📥 {len(draft['edit_gallery_pending'])} תמונות. שלח עוד או /done:")
+                send_message(chat_id, f"📥 {len(draft['edit_gallery_pending'])} קבצים. שלח עוד או /done:")
+
+        elif "document" in msg:
+            doc = msg["document"]
+            mime = doc.get("mime_type", "")
+            file_id = doc["file_id"]
+            post_id = draft.get("edit_id")
+            content_bytes = get_file(file_id)
+            if content_bytes:
+                if mime == "application/pdf":
+                    url = f"{WP_URL}/media"
+                    headers = {"Content-Disposition": f"attachment; filename={doc.get('file_name','doc.pdf')}",
+                              "Content-Type": "application/pdf"}
+                    resp = requests.post(url, headers=headers, data=content_bytes,
+                                       auth=(WP_USER, WP_PASSWORD), timeout=30)
+                    if resp.status_code == 201:
+                        pdf_url = resp.json()["source_url"]
+                        pdf_name = doc.get("file_name", "document.pdf")
+                        r = requests.get(f"{WP_URL}/posts/{post_id}?context=edit", auth=(WP_USER, WP_PASSWORD), timeout=10)
+                        if r.status_code == 200:
+                            existing = r.json().get("content", {}).get("raw", "")
+                            new_content = existing + f'\n\n<!-- wp:file {{"url":"{pdf_url}","fileName":"{pdf_name}"}} -->\n<div class="wp-block-file"><a href="{pdf_url}">{pdf_name}</a></div>\n<!-- /wp:file -->'
+                            requests.post(f"{WP_URL}/posts/{post_id}", json={"content": new_content}, auth=(WP_USER, WP_PASSWORD), timeout=10)
+                        send_message(chat_id, f"✅ PDF נוסף! שלח עוד או /done:")
+                elif mime and mime.startswith("audio/"):
+                    url = f"{WP_URL}/media"
+                    headers = {"Content-Disposition": f"attachment; filename={doc.get('file_name','audio.mp3')}",
+                              "Content-Type": mime}
+                    resp = requests.post(url, headers=headers, data=content_bytes,
+                                       auth=(WP_USER, WP_PASSWORD), timeout=30)
+                    if resp.status_code == 201:
+                        audio_url = resp.json()["source_url"]
+                        r = requests.get(f"{WP_URL}/posts/{post_id}?context=edit", auth=(WP_USER, WP_PASSWORD), timeout=10)
+                        if r.status_code == 200:
+                            existing = r.json().get("content", {}).get("raw", "")
+                            new_content = existing + f'\n\n<!-- wp:audio -->\n<figure class="wp-block-audio"><audio controls src="{audio_url}"></audio></figure>\n<!-- /wp:audio -->'
+                            requests.post(f"{WP_URL}/posts/{post_id}", json={"content": new_content}, auth=(WP_USER, WP_PASSWORD), timeout=10)
+                        send_message(chat_id, f"✅ קובץ שמע נוסף! שלח עוד או /done:")
 
         elif text == "/done":
             post_id = draft.get("edit_id")
             pending = draft.get("edit_gallery_pending", [])
-
             if pending:
                 send_message(chat_id, f"⏳ מעלה {len(pending)} תמונות...")
                 image_urls = []
@@ -1647,7 +1681,6 @@ def handle_message(msg):
                         img_id, img_url = upload_image_to_wp(content_bytes, "gallery_add.jpg")
                         if img_url:
                             image_urls.append(img_url)
-
                 if image_urls:
                     success = add_images_to_post(post_id, image_urls)
                     if success:
@@ -1665,9 +1698,10 @@ def handle_message(msg):
                         send_message(chat_id, "❌ שגיאה בהוספת תמונות.")
                 draft["edit_gallery_pending"] = []
             else:
-                send_message(chat_id, "⚠️ לא התקבלו תמונות.")
+                drafts[user_id] = {"step": "idle", "gallery": []}
+                send_message(chat_id, "✅ סיום!", get_menu(user_id))
         else:
-            send_message(chat_id, "שלח תמונות או /done:")
+            send_message(chat_id, "שלח תמונות, PDF, קובץ שמע, או /done:")
 
     elif step == "edit_video_url":
         post_id = draft.get("edit_id")
@@ -1765,7 +1799,7 @@ def handle_message(msg):
             send_message(chat_id, f"✅ פורסמו {success}/{len(images)} כתבות מזל טוב!", get_menu(user_id))
             drafts[user_id] = {"step": "idle", "gallery": []}
         else:
-            send_message(chat_id, "שלח תמונות או /done לסיום:")
+            send_message(chat_id, "שלח תמונות, PDF, קובץ שמע, או /done לסיום:")
 
     elif step == "mazaltov_image":
         if "photo" in msg:
@@ -1805,7 +1839,7 @@ def handle_message(msg):
             if content:
                 draft["main_image"] = content
                 draft["step"] = "gallery"
-                send_message(chat_id, "✅ תמונה ראשית נשמרה!\n\nשלח תמונות לגלריה, לינק Google Drive, או /done:")
+                send_message(chat_id, "✅ תמונה ראשית נשמרה!\n\nשלח תמונות, PDF, קובץ שמע, או לינק Google Drive. כשסיימת שלח /done:")
         else:
             send_message(chat_id, "⚠️ שלח תמונה:")
 
@@ -1815,7 +1849,7 @@ def handle_message(msg):
             if content:
                 draft["gallery"].append(content)
                 if len(draft["gallery"]) == 1:
-                    send_message(chat_id, "📥 מקבל תמונות... שלח /done כשסיימת")
+                    send_message(chat_id, "📥 מקבל קבצים... שלח תמונות, PDF, קובץ שמע, או /done כשסיימת")
         elif "document" in msg:
             doc = msg["document"]
             mime = doc.get("mime_type", "")
@@ -2464,7 +2498,7 @@ def handle_callback(cb):
 
     elif cb_data == "edit_gallery":
         draft["step"] = "edit_gallery_upload"
-        send_message(chat_id, "שלח תמונות להוספה לגלריה.\nכשסיימת שלח /done:")
+        send_message(chat_id, "שלח תמונות, PDF, או קובץ שמע להוספה.\nכשסיימת שלח /done:")
 
     elif cb_data == "edit_video":
         draft["step"] = "edit_video_url"
