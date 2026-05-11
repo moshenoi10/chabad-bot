@@ -1170,6 +1170,8 @@ def handle_message(msg):
         })
         draft["step"] = "idle"
         return
+
+    if text == "📧 ניהול מייל" and is_senior_editor(user_id):
         send_message(chat_id, get_email_status(), {
             "inline_keyboard": [
                 [{"text": "⏸️ השהה" if email_system["active"] else "▶️ הפעל", "callback_data": "email_toggle"},
@@ -1181,7 +1183,7 @@ def handle_message(msg):
         })
         return
 
-    if step == "email_add_sender_input" and is_admin(user_id):
+    if step == "email_add_sender_input" and is_senior_editor(user_id):
         if "@" in text:
             email_system["allowed_senders"].append(text.strip().lower())
             send_message(chat_id, f"✅ כתובת {text} נוספה!", get_menu(user_id))
@@ -1190,7 +1192,7 @@ def handle_message(msg):
         draft["step"] = "idle"
         return
 
-    if step == "email_remove_sender_input" and is_admin(user_id):
+    if step == "email_remove_sender_input" and is_senior_editor(user_id):
         if text in email_system["allowed_senders"]:
             email_system["allowed_senders"].remove(text)
             send_message(chat_id, f"✅ כתובת {text} הוסרה!", get_menu(user_id))
@@ -1199,7 +1201,7 @@ def handle_message(msg):
         draft["step"] = "idle"
         return
 
-    if step == "email_interval_input" and is_admin(user_id):
+    if step == "email_interval_input" and is_senior_editor(user_id):
         try:
             minutes = int(text)
             email_system["interval"] = minutes * 60
@@ -1324,6 +1326,10 @@ def handle_message(msg):
     if text in ("/cancel", "❌ ביטול"):
         drafts[user_id] = {"step": "idle", "gallery": []}
         send_message(chat_id, "❌ הפעולה בוטלה.", get_menu(user_id))
+        return
+
+    # טיפול בעריכות חכמות
+    if handle_smart_edit_inputs(chat_id, user_id, step, text, draft, drafts):
         return
 
     if step == "title":
@@ -1525,45 +1531,58 @@ def handle_message(msg):
                 ]
             })
 
-    elif step == "smart_edit_subtitle_input":
+def show_smart_preview(chat_id, draft):
+    """מציג תצוגה מקדימה מלאה עם כל אפשרויות העריכה"""
+    import re
+    body_preview = re.sub(r'<[^>]+>', '', draft.get("body",""))[:300]
+    def esc(s): return str(s).replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+    preview = f"""🤖 <b>תצוגה מקדימה:</b>
+
+<b>כותרת:</b> {esc(draft.get('title',''))}
+<b>כותרת משנה:</b> {esc(draft.get('subtitle',''))}
+<b>כותרת אדומה:</b> {esc(draft.get('red_title',''))}
+<b>תגיות:</b> {esc(', '.join(draft.get('tags',[])))}
+<b>קטגוריות:</b> {esc(', '.join(draft.get('cat_names',[])) or 'טרם נבחרו')}"""
+    send_message(chat_id, preview, {
+        "inline_keyboard": [
+            [{"text": "✅ מאשר, המשך", "callback_data": "smart_approve"}],
+            [{"text": "✨ שפר כותרות", "callback_data": "smart_improve_titles"}],
+            [{"text": "✏️ ערוך כותרת", "callback_data": "smart_edit_title"},
+             {"text": "✏️ ערוך כותרת משנה", "callback_data": "smart_edit_subtitle"}],
+            [{"text": "✏️ ערוך כותרת אדומה", "callback_data": "smart_edit_red_title"},
+             {"text": "✏️ ערוך תגיות", "callback_data": "smart_edit_tags"}],
+            [{"text": "✏️ ערוך גוף", "callback_data": "smart_edit_body"},
+             {"text": "🔄 שנה קטגוריות", "callback_data": "change_categories"}],
+            [{"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+        ]
+    })
+
+def handle_smart_edit_inputs(chat_id, user_id, step, text, draft, drafts):
+    """מטפל בכניסות עריכה חכמה - נקרא מתוך handle_message"""
+    if step == "smart_edit_subtitle_input":
         draft["subtitle"] = text
         draft["step"] = "smart_preview"
-        send_message(chat_id, f"✅ כותרת משנה עודכנה!\n\n{text}\n\nהמשך?", {
-            "inline_keyboard": [[
-                {"text": "✅ מאשר, המשך", "callback_data": "smart_approve"},
-                {"text": "❌ ביטול", "callback_data": "publish_cancel"}
-            ]]
-        })
-
+        show_smart_preview(chat_id, draft)
+        return True
     elif step == "smart_edit_title_input":
         draft["title"] = text
         draft["step"] = "smart_preview"
-        send_message(chat_id, f"✅ כותרת עודכנה!\n\n<b>כותרת:</b> {text}\n\nהמשך?", {
-            "inline_keyboard": [[
-                {"text": "✅ מאשר, המשך", "callback_data": "smart_approve"},
-                {"text": "❌ ביטול", "callback_data": "publish_cancel"}
-            ]]
-        })
-
+        show_smart_preview(chat_id, draft)
+        return True
+    elif step == "smart_edit_red_title_input":
+        draft["red_title"] = text
+        draft["step"] = "smart_preview"
+        show_smart_preview(chat_id, draft)
+        return True
     elif step == "smart_edit_body_input":
         draft["body"] = text
         draft["step"] = "smart_preview"
-        send_message(chat_id, "✅ גוף עודכן!\n\nהמשך?", {
-            "inline_keyboard": [[
-                {"text": "✅ מאשר, המשך", "callback_data": "smart_approve"},
-                {"text": "❌ ביטול", "callback_data": "publish_cancel"}
-            ]]
-        })
-
+        show_smart_preview(chat_id, draft)
+        return True
     elif step == "smart_edit_tags_input":
         draft["tags"] = [t.strip() for t in text.split(",")]
         draft["step"] = "smart_preview"
-        send_message(chat_id, f"✅ תגיות עודכנו!\n\n{', '.join(draft['tags'])}\n\nהמשך?", {
-            "inline_keyboard": [[
-                {"text": "✅ מאשר, המשך", "callback_data": "smart_approve"},
-                {"text": "❌ ביטול", "callback_data": "publish_cancel"}
-            ]]
-        })
+        show_smart_preview(chat_id, draft)
 
     elif step == "schedule_time":
         try:
@@ -2203,6 +2222,10 @@ def handle_callback(cb):
         else:
             send_message(chat_id, "❌ שגיאה בשיפור כותרות. נסה שוב.")
 
+    elif cb_data == "smart_edit_red_title":
+        draft["step"] = "smart_edit_red_title_input"
+        send_message(chat_id, f"כותרת אדומה נוכחית:\n<b>{draft.get('red_title','')}</b>\n\nשלח כותרת אדומה חדשה (2-4 מילים):")
+
     elif cb_data == "smart_edit_subtitle":
         draft["step"] = "smart_edit_subtitle_input"
         send_message(chat_id, f"כותרת משנה נוכחית:\n{draft.get('subtitle','')}\n\nשלח כותרת משנה חדשה:")
@@ -2296,7 +2319,7 @@ def handle_callback(cb):
     elif cb_data.startswith("analytics_top_"):
         days = cb_data.replace("analytics_top_", "")
         period = f"{days}daysAgo"
-        period_name = {"1": "24 השעות האחרונות", "7": "השבוע האחרון", "30": "החודש האחרון"}.get(days, "")
+        period_name = {"1": "24 השעות האחרונות", "7": "7 הימים האחרונים", "30": "30 הימים האחרונים"}.get(days, "")
         send_message(chat_id, "⏳ מושך נתונים...")
         data = get_analytics_data(period)
         if data and data.get("rows"):
@@ -2304,26 +2327,25 @@ def handle_callback(cb):
             for i, row in enumerate(data["rows"][:5], 1):
                 title = row["dimensionValues"][0]["value"]
                 path = row["dimensionValues"][1]["value"]
-                views = row["metricValues"][0]["value"]
                 url = f"https://chabadupdates.com{path}"
-                msg += f"<b>{i}. {title}</b>\n{url}\n👁 {views} צפיות\n\n"
+                msg += f"<b>{i}. {title}</b>\n{url}\n\n"
             send_message(chat_id, msg)
         else:
-            send_message(chat_id, "❌ לא נמצאו נתונים. בדוק שה-Analytics מחובר.")
+            send_message(chat_id, "❌ לא נמצאו נתונים.")
 
     elif cb_data == "analytics_visits":
         send_message(chat_id, "לאיזה תקופה?", {
             "inline_keyboard": [
-                [{"text": "היום", "callback_data": "analytics_visits_1"},
-                 {"text": "שבוע", "callback_data": "analytics_visits_7"}],
-                [{"text": "חודש", "callback_data": "analytics_visits_30"}]
+                [{"text": "24 שעות אחרונות", "callback_data": "analytics_visits_1"}],
+                [{"text": "7 ימים אחרונים", "callback_data": "analytics_visits_7"}],
+                [{"text": "30 ימים אחרונים", "callback_data": "analytics_visits_30"}]
             ]
         })
 
     elif cb_data.startswith("analytics_visits_"):
         days = cb_data.replace("analytics_visits_", "")
         period = f"{days}daysAgo"
-        period_name = {"1": "היום", "7": "השבוע האחרון", "30": "החודש האחרון"}.get(days, "")
+        period_name = {"1": "24 השעות האחרונות", "7": "7 הימים האחרונים", "30": "30 הימים האחרונים"}.get(days, "")
         send_message(chat_id, "⏳ מושך נתונים...")
         data = get_analytics_totals(period)
         if data:
@@ -2383,7 +2405,8 @@ def handle_callback(cb):
         if not senders:
             send_message(chat_id, "אין כתובות מורשות.")
         else:
-            keyboard = {"inline_keyboard": [[{"text": s, "callback_data": f"email_rm_{s}"}] for s in senders]}
+            keyboard = {"inline_keyboard": [[{"text": f"🗑 {s}", "callback_data": f"email_rm_{s}"}] for s in senders]}
+            keyboard["inline_keyboard"].append([{"text": "❌ ביטול", "callback_data": "publish_cancel"}])
             send_message(chat_id, "בחר כתובת להסרה:", keyboard)
 
     elif cb_data.startswith("email_rm_"):
@@ -2867,10 +2890,12 @@ def auto_select_categories(title, body):
     """בוחר קטגוריות אוטומטית לפי תוכן הכתבה"""
     prompt = f"""בחר קטגוריות לכתבה הבאה לפי הכללים:
 
-כלל 1: אם מוזכרת מדינה או עיר מחוץ לישראל → חב"ד בעולם (id:26) + מדינה אם קיימת
-כלל 2: אם מוזכר יישוב בישראל → חב"ד בארץ (id:11) + יישוב אם קיים
-כלל 3: אחרת → חדשות (id:25)
-כלל 4: לא יותר מ-3 קטגוריות
+כלל 1: בחר קטגוריית על אחת בלבד (לא שתיים):
+  - אם מוזכרת מדינה/עיר מחוץ לישראל → חב"ד בעולם (id:26)
+  - אם מוזכר יישוב בישראל → חב"ד בארץ (id:11)  
+  - אחרת → חדשות (id:25)
+כלל 2: הוסף קטגוריית משנה אחת בלבד אם מתאימה
+כלל 3: סה"כ לא יותר מ-2 קטגוריות
 
 קטגוריות:
 חב"ד בארץ(11): ירושלים(52), כפר חב"ד(45), לוד(50), צפת(51), קריית מלאכי(49)
@@ -2880,7 +2905,7 @@ def auto_select_categories(title, body):
 כותרת: {title}
 תוכן: {body[:400]}
 
-החזר JSON בלבד ללא הסבר:
+החזר JSON בלבד:
 {{"categories":[id1,id2],"category_names":["שם1","שם2"]}}"""
 
     try:
