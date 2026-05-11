@@ -3134,4 +3134,4 @@ while True:
 ```
 
 if **name** == “**main**”:
-main()
+    main()
