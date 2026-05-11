@@ -812,16 +812,15 @@ JSON בלבד:
 טקסט: {text}"""
 
 def build_prompt(text):
-    return f"""אתה עורך ראשי של אתר חדשות חרדי. כתוב בסגנון עיתונאי מקצועי ומושך.
+    return f"""אתה עורך של אתר חדשות חרדי. כתוב בסגנון עיתונאי ענייני.
 
-כללים מחייבים:
-- כותרת ראשית: מושכת ומעניינת, עם נקודתיים (:). לפחות 8 מילים. אסור להזכיר שמות של אנשים – רק תאר את האירוע/תופעה. לדוגמה במקום "ר' לוי לבייב ביקר" כתוב "ביקור מרגש בחצרות קודשנו: זיכרונות ותנופה בדרך המלך".
-- כותרת משנה: פרטים מופרדים ב-•. לפחות 15 מילים. כאן כן אפשר להזכיר שמות.
-- כותרת אדומה: 2-4 מילים עוצמתיות מתוך הטקסט.
-- גוף הכתבה: העתק את הטקסט המקורי בדיוק מילה במילה ללא שינוי. חלק לפסקאות לפי הגיון התוכן – כל נושא/מחשבה = פסקה נפרדת. אם הטקסט גוש אחד – חלק ל-2-4 משפטים לפסקה. הפסק בין פסקאות עם שורה ריקה. אסור להוסיף, לשנות או להמציא אפילו מילה אחת. הסר * _ ~ אבל שמור גרשיים.
-- אם הטקסט קצר – הגוף יהיה קצר. אין להרחיב.
-- תגיות: 5-8 מילות מפתח מתוך הטקסט בלבד.
-- שמור על גרשיים עבריים: חב״ד, ל״ג, אדמו״ר, ת״ת (גרש עברי ״ ולא ")
+כללים:
+- כותרת ראשית: קצרה (עד 10 מילים), ענייניות, עם נקודתיים. אסור להזכיר שמות אנשים. אסור לנפח או להגזים. תאר את האירוע בפשטות.
+- כותרת משנה: פרטים עיקריים מופרדים ב-•. מקסימום 25 מילים. כאן מותר שמות.
+- כותרת אדומה: 2-4 מילים עוצמתיות.
+- גוף: העתק את הטקסט המקורי מילה במילה ללא שינוי. חלק לפסקאות (2-4 משפטים לפסקה). אסור להוסיף או להמציא.
+- תגיות: 5-8 מילות מפתח מהטקסט.
+- גרשיים: רק במילים שמקורית כוללות גרש כמו חב"ד→חב״ד, ל"ג→ל״ג, ת"ת→ת״ת. אסור להוסיף ״ לכל מקום.
 
 החזר JSON בלבד:
 {{"title":"...","subtitle":"...","red_title":"...","body":"...","tags":["...","...","...","...","..."]}}
@@ -1321,6 +1320,10 @@ def handle_message(msg):
     if text in ("/cancel", "❌ ביטול"):
         drafts[user_id] = {"step": "idle", "gallery": []}
         send_message(chat_id, "❌ הפעולה בוטלה.", get_menu(user_id))
+        return
+
+    # טיפול בעריכות חכמות
+    if handle_smart_edit_inputs(chat_id, user_id, step, text, draft, drafts):
         return
 
     # טיפול בשלבי העלאה
@@ -1895,6 +1898,130 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             drafts[user_id] = {"step": "idle", "gallery": []}
         else:
             send_message(chat_id, "שלח תמונות או /done לסיום:")
+        return True
+
+    elif step == "categories":
+        pass
+        return True
+
+    elif step == "smart_preview":
+        pass
+        return True
+
+    elif step == "delete_confirm":
+        pass
+        return True
+
+    elif step == "youtube_smart_confirm":
+        pass
+        return True
+
+    elif step == "drive_link_input":
+        if text and "drive.google.com" in text:
+            def _drive_thread():
+                drive_id, drive_type = extract_drive_id(text)
+                if not drive_id:
+                    send_message(chat_id, "❌ לינק Drive לא תקין.")
+                    return
+                if drive_type == "folder":
+                    send_message(chat_id, "⏳ סורק תיקייה ב-Drive...")
+                    images, _ = list_drive_folder(drive_id)
+                    if not images:
+                        send_message(chat_id, "❌ לא נמצאו תמונות.")
+                        return
+                    count = 0
+                    for i, img in enumerate(images):
+                        img_bytes = download_drive_file(img["id"])
+                        if img_bytes:
+                            draft.setdefault("gallery", []).append(img_bytes)
+                            count += 1
+                        if (i + 1) % 10 == 0:
+                            send_message(chat_id, f"⏳ {count}/{len(images)} תמונות...")
+                    draft["step"] = "gallery"
+                    send_message(chat_id, f"✅ {count} תמונות הורדו! שלח עוד או /done:")
+                elif drive_type == "file":
+                    img_bytes = download_drive_file(drive_id)
+                    if img_bytes:
+                        draft.setdefault("gallery", []).append(img_bytes)
+                        draft["step"] = "gallery"
+                        send_message(chat_id, "✅ קובץ הורד! שלח עוד או /done:")
+            threading.Thread(target=_drive_thread, daemon=True).start()
+        else:
+            send_message(chat_id, "⚠️ שלח לינק תקין מ-Google Drive:")
+        return True
+
+    elif step == "edit_gallery_upload":
+        if "photo" in msg:
+            media_group_id = msg.get("media_group_id")
+            file_id = msg["photo"][-1]["file_id"]
+            if "edit_gallery_pending" not in draft:
+                draft["edit_gallery_pending"] = []
+            if media_group_id:
+                if draft.get("edit_gallery_group") != media_group_id:
+                    draft["edit_gallery_group"] = media_group_id
+                if file_id not in draft["edit_gallery_pending"]:
+                    draft["edit_gallery_pending"].append(file_id)
+                if len(draft["edit_gallery_pending"]) == 1:
+                    send_message(chat_id, "📥 מקבל קבצים... שלח /done כשסיימת")
+            else:
+                draft["edit_gallery_pending"].append(file_id)
+                send_message(chat_id, f"📥 {len(draft['edit_gallery_pending'])} קבצים. שלח עוד או /done:")
+        elif "document" in msg:
+            doc = msg["document"]
+            mime = doc.get("mime_type", "")
+            file_id = doc["file_id"]
+            post_id = draft.get("edit_id")
+            content_bytes = get_file(file_id)
+            if content_bytes:
+                if mime == "application/pdf":
+                    url = f"{WP_URL}/media"
+                    fname = doc.get('file_name', 'doc.pdf')
+                    headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{requests.utils.quote(fname)}",
+                              "Content-Type": "application/pdf"}
+                    resp = requests.post(url, headers=headers, data=content_bytes,
+                                       auth=(WP_USER, WP_PASSWORD), timeout=30)
+                    if resp.status_code == 201:
+                        pdf_url = resp.json()["source_url"]
+                        r = requests.get(f"{WP_URL}/posts/{post_id}?context=edit", auth=(WP_USER, WP_PASSWORD), timeout=10)
+                        if r.status_code == 200:
+                            existing = r.json().get("content", {}).get("raw", "")
+                            new_content = existing + f'\n\n<div class="wp-block-file"><object data="{pdf_url}" type="application/pdf" width="100%" height="600px"><a href="{pdf_url}">{fname}</a></object></div>'
+                            requests.post(f"{WP_URL}/posts/{post_id}", json={"content": new_content}, auth=(WP_USER, WP_PASSWORD), timeout=10)
+                        send_message(chat_id, "✅ PDF נוסף! שלח עוד או /done:")
+                elif mime and mime.startswith("audio/"):
+                    url = f"{WP_URL}/media"
+                    fname = doc.get('file_name', 'audio.mp3')
+                    headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{requests.utils.quote(fname)}",
+                              "Content-Type": mime}
+                    resp = requests.post(url, headers=headers, data=content_bytes,
+                                       auth=(WP_USER, WP_PASSWORD), timeout=30)
+                    if resp.status_code == 201:
+                        audio_url = resp.json()["source_url"]
+                        r = requests.get(f"{WP_URL}/posts/{post_id}?context=edit", auth=(WP_USER, WP_PASSWORD), timeout=10)
+                        if r.status_code == 200:
+                            existing = r.json().get("content", {}).get("raw", "")
+                            new_content = existing + f'\n\n<figure class="wp-block-audio"><audio controls src="{audio_url}"></audio></figure>'
+                            requests.post(f"{WP_URL}/posts/{post_id}", json={"content": new_content}, auth=(WP_USER, WP_PASSWORD), timeout=10)
+                        send_message(chat_id, "✅ קובץ שמע נוסף! שלח עוד או /done:")
+        elif text == "/done":
+            post_id = draft.get("edit_id")
+            pending = draft.get("edit_gallery_pending", [])
+            if pending:
+                send_message(chat_id, f"⏳ מעלה {len(pending)} תמונות...")
+                image_urls = []
+                for fid in pending:
+                    img_bytes = get_file(fid)
+                    if img_bytes:
+                        img_id, img_url = upload_image_to_wp(img_bytes, "gallery_add.jpg")
+                        if img_url:
+                            image_urls.append(img_url)
+                if image_urls:
+                    add_images_to_post(post_id, image_urls)
+                    send_message(chat_id, f"✅ {len(image_urls)} תמונות נוספו!", get_menu(user_id))
+                draft["edit_gallery_pending"] = []
+            drafts[user_id] = {"step": "idle", "gallery": []}
+        else:
+            send_message(chat_id, "שלח תמונות, PDF, קובץ שמע, או /done:")
         return True
 
     return False
