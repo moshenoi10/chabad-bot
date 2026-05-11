@@ -794,11 +794,6 @@ def restore_geresh(text):
     for wrong, right in common.items():
         text = text.replace(wrong, right)
     return text
-    """מכין טקסט לשליחה ל-AI – מחליף גרשיים עבריים בתו בטוח"""
-    import re
-    # החלף " בין אותיות עבריות בגרש עברי ״
-    text = re.sub(r'(?<=[א-ת])"(?=[א-ת\s])', '״', text)
-    return text
 
 def build_groq_prompt(text):
     """פרומפט קצר יותר לGroq שמוגבל ב-tokens"""
@@ -1328,10 +1323,11 @@ def handle_message(msg):
         send_message(chat_id, "❌ הפעולה בוטלה.", get_menu(user_id))
         return
 
-    # טיפול בעריכות חכמות
-    if handle_smart_edit_inputs(chat_id, user_id, step, text, draft, drafts):
+    # טיפול בשלבי העלאה
+    if handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
         return
 
+    # טיפול בשלבי העלאת כתבה רגילה
     if step == "title":
         draft["title"] = text
         draft["step"] = "subtitle"
@@ -1584,6 +1580,323 @@ def handle_smart_edit_inputs(chat_id, user_id, step, text, draft, drafts):
         draft["step"] = "smart_preview"
         show_smart_preview(chat_id, draft)
         return True
+    return False
+
+def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
+    """מטפל בשלבי העלאת כתבה"""
+    step = draft.get("step", "idle")
+
+    if step == "schedule_time":
+        try:
+            from datetime import datetime
+            dt = datetime.strptime(text.strip(), "%d/%m/%Y %H:%M")
+            iso_date = dt.strftime("%Y-%m-%dT%H:%M:00")
+            draft["schedule_date"] = iso_date
+            send_message(chat_id, "⏳ מתזמן פרסום...")
+            resp = publish_to_wp(draft, "future", iso_date)
+            if resp.status_code == 201:
+                send_message(chat_id, f"✅ <b>הכתבה מתוזמנת לפרסום ב-{text}!</b>", get_menu(user_id))
+            else:
+                send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
+            drafts[user_id] = {"step": "idle", "gallery": []}
+        except ValueError:
+            send_message(chat_id, "⚠️ פורמט שגוי. נסה שוב:\n<code>DD/MM/YYYY HH:MM</code>")
+        return True
+
+    elif step == "main_image":
+        if "photo" in msg:
+            content = get_file(msg["photo"][-1]["file_id"])
+            if content:
+                draft["main_image"] = content
+                draft["step"] = "gallery"
+                send_message(chat_id, "✅ תמונה ראשית נשמרה!\n\nשלח תמונות, PDF, קובץ שמע, או לינק Google Drive. כשסיימת שלח /done:")
+        else:
+            send_message(chat_id, "⚠️ שלח תמונה:")
+        return True
+
+    elif step == "gallery":
+        if "photo" in msg:
+            content = get_file(msg["photo"][-1]["file_id"])
+            if content:
+                draft.setdefault("gallery", []).append(content)
+                if len(draft["gallery"]) == 1:
+                    send_message(chat_id, "📥 מקבל קבצים... שלח תמונות, PDF, קובץ שמע, או /done כשסיימת")
+        elif "document" in msg:
+            doc = msg["document"]
+            mime = doc.get("mime_type", "")
+            file_id = doc["file_id"]
+            if mime == "application/pdf":
+                content = get_file(file_id)
+                if content:
+                    draft.setdefault("pdf_files", []).append({"bytes": content, "name": doc.get("file_name", "document.pdf")})
+                    send_message(chat_id, f"✅ PDF נוסף! ({len(draft.get('pdf_files',[]))} קבצים)\n\nשלח עוד או /done:")
+            elif mime and mime.startswith("audio/"):
+                content = get_file(file_id)
+                if content:
+                    draft.setdefault("audio_files", []).append({"bytes": content, "name": doc.get("file_name", "audio.mp3")})
+                    send_message(chat_id, f"✅ קובץ שמע נוסף!\n\nשלח עוד או /done:")
+        elif "audio" in msg:
+            content = get_file(msg["audio"]["file_id"])
+            if content:
+                draft.setdefault("audio_files", []).append({"bytes": content, "name": msg["audio"].get("file_name", "audio.mp3")})
+                send_message(chat_id, f"✅ קובץ שמע נוסף!\n\nשלח עוד או /done:")
+        elif text and text.startswith("http") and "drive.google.com" in text:
+            drive_id, drive_type = extract_drive_id(text)
+            if drive_id:
+                send_message(chat_id, "⏳ מוריד תמונות מ-Drive...")
+                if drive_type == "folder":
+                    images, _ = list_drive_folder(drive_id)
+                    count = 0
+                    for i, img in enumerate(images):
+                        content = download_drive_file(img["id"])
+                        if content:
+                            draft.setdefault("gallery", []).append(content)
+                            count += 1
+                        if (i + 1) % 10 == 0:
+                            send_message(chat_id, f"⏳ הורדתי {count}/{len(images)} תמונות...")
+                    send_message(chat_id, f"✅ {count} תמונות הורדו!\n\nשלח עוד או /done:")
+                elif drive_type == "file":
+                    content = download_drive_file(drive_id)
+                    if content:
+                        draft.setdefault("gallery", []).append(content)
+                        send_message(chat_id, f"✅ תמונה הורדה! ({len(draft['gallery'])} סה\"כ)\n\nשלח עוד או /done:")
+            else:
+                send_message(chat_id, "❌ לינק Drive לא תקין.")
+        elif text == "/done":
+            draft["step"] = "video"
+            count = len(draft.get('gallery', []))
+            send_message(chat_id, f"✅ התקבלו {count} תמונות!\n\nשלח <b>קובץ סרטון</b> להעלאה ל-Vimeo, <b>לינק</b> ידני, או /skip:")
+        else:
+            send_message(chat_id, "שלח תמונות, PDF, קובץ שמע, לינק Drive, או /done:")
+        return True
+
+    elif step == "video":
+        if text == "/skip" or text == "/done":
+            draft["step"] = "confirm"
+            _show_summary(chat_id, draft)
+        elif "video" in msg or "document" in msg:
+            file_id = msg.get("video", msg.get("document", {})).get("file_id")
+            media_group_id = msg.get("media_group_id")
+            if media_group_id:
+                if draft.get("current_media_group") != media_group_id:
+                    draft["current_media_group"] = media_group_id
+                    draft["pending_group_files"] = []
+                if file_id not in draft.get("pending_group_files", []):
+                    draft.setdefault("pending_group_files", []).append(file_id)
+                if len(draft["pending_group_files"]) == 1:
+                    send_message(chat_id, f"📥 מקבל סרטונים... שלח /upload_all כשסיימת לשלוח הכל")
+            else:
+                draft["pending_video_file_id"] = file_id
+                send_message(chat_id, "לאן להעלות את הסרטון?", {
+                    "inline_keyboard": [
+                        [{"text": "🎬 YouTube", "callback_data": "upload_youtube"},
+                         {"text": "🎥 Vimeo", "callback_data": "upload_vimeo"}],
+                        [{"text": "🤖 YouTube חכם", "callback_data": "upload_youtube_smart"}]
+                    ]
+                })
+        elif text == "/upload_all":
+            files = draft.get("pending_group_files", [])
+            if files:
+                send_message(chat_id, f"📥 התקבלו {len(files)} סרטונים. לאן להעלות?", {
+                    "inline_keyboard": [
+                        [{"text": "🎬 YouTube", "callback_data": "upload_group_youtube"},
+                         {"text": "🎥 Vimeo", "callback_data": "upload_group_vimeo"}]
+                    ]
+                })
+        elif text and text.startswith("http"):
+            draft.setdefault("videos", []).append(text)
+            send_message(chat_id, f"✅ לינק {len(draft['videos'])} נוסף!\n\nשלח סרטון נוסף או /done לסיום:")
+        else:
+            send_message(chat_id, "שלח קובץ סרטון, לינק, /upload_all לכמה סרטונים, או /skip:")
+        return True
+
+    elif step == "confirm":
+        if text == "/publish":
+            send_message(chat_id, "⏳ מפרסם לוורדפרס...")
+            resp = publish_to_wp(draft)
+            if resp.status_code == 201:
+                post_url = resp.json().get("link", "")
+                send_message(chat_id, f"✅ <b>הכתבה פורסמה!</b>\n🔗 {post_url}", get_menu(user_id))
+                notify_channel(draft.get("title", ""), draft.get("subtitle", ""), post_url)
+                drafts[user_id] = {"step": "idle", "gallery": []}
+            else:
+                send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
+        else:
+            send_message(chat_id, "שלח /publish לפרסום או /cancel לביטול")
+        return True
+
+    elif step == "edit_url":
+        try:
+            part = text.rstrip("/").split("/")[-1]
+            if part.isdigit():
+                r = requests.get(f"{WP_URL}/posts/{part}", auth=(WP_USER, WP_PASSWORD), timeout=10)
+                post = r.json() if r.status_code == 200 else None
+            else:
+                r = requests.get(f"{WP_URL}/posts?slug={part}", auth=(WP_USER, WP_PASSWORD), timeout=10)
+                posts = r.json()
+                post = posts[0] if posts else None
+            if not post:
+                send_message(chat_id, "❌ כתבה לא נמצאה. נסה שוב:")
+                return True
+            draft["edit_id"] = post["id"]
+            draft["step"] = "edit_field"
+            send_message(chat_id, f"""✏️ <b>עורך כתבה:</b>
+<b>{post['title']['rendered']}</b>
+
+מה תרצה לערוך?""", {
+                "inline_keyboard": [
+                    [{"text": "כותרת", "callback_data": "edit_title"},
+                     {"text": "כותרת משנה", "callback_data": "edit_subtitle"}],
+                    [{"text": "כותרת אדומה", "callback_data": "edit_red_title"},
+                     {"text": "תמונה ראשית", "callback_data": "edit_image"}],
+                    [{"text": "הוספת תמונות", "callback_data": "edit_gallery"},
+                     {"text": "הוספת סרטון", "callback_data": "edit_video"}]
+                ]
+            })
+        except Exception as e:
+            send_message(chat_id, f"❌ שגיאה: {e}")
+        return True
+
+    elif step == "edit_field_value":
+        field = draft.get("edit_field")
+        post_id = draft.get("edit_id")
+        update_data = {}
+        if field == "title":
+            update_data["title"] = text
+        elif field == "subtitle":
+            update_data["excerpt"] = text
+        elif field == "red_title":
+            update_data["meta"] = {"tag_label": text}
+        r = requests.post(f"{WP_URL}/posts/{post_id}", json=update_data,
+                         auth=(WP_USER, WP_PASSWORD), timeout=10)
+        if r.status_code == 200:
+            send_message(chat_id, "✅ הכתבה עודכנה!", get_menu(user_id))
+        else:
+            send_message(chat_id, f"❌ שגיאה: {r.text[:200]}")
+        drafts[user_id] = {"step": "idle", "gallery": []}
+        return True
+
+    elif step == "edit_image_upload":
+        if "photo" in msg:
+            content = get_file(msg["photo"][-1]["file_id"])
+            if content:
+                post_id = draft.get("edit_id")
+                featured_id, _ = upload_image_to_wp(content, "edit_main.jpg")
+                if featured_id:
+                    r = requests.post(f"{WP_URL}/posts/{post_id}",
+                                     json={"featured_media": featured_id},
+                                     auth=(WP_USER, WP_PASSWORD), timeout=10)
+                    if r.status_code == 200:
+                        send_message(chat_id, "✅ תמונה ראשית עודכנה!", get_menu(user_id))
+                    else:
+                        send_message(chat_id, f"❌ שגיאה: {r.text[:200]}")
+                drafts[user_id] = {"step": "idle", "gallery": []}
+        else:
+            send_message(chat_id, "⚠️ שלח תמונה:")
+        return True
+
+    elif step == "edit_video_url":
+        post_id = draft.get("edit_id")
+        r = requests.get(f"{WP_URL}/posts/{post_id}?context=edit", auth=(WP_USER, WP_PASSWORD), timeout=10)
+        if r.status_code == 200:
+            existing_content = r.json().get("content", {}).get("raw", "") or r.json().get("content", {}).get("rendered", "")
+            video_id = text.split("/")[-1].split("?")[0]
+            new_video = f'\n\n<div style="padding:56.25% 0 0 0;position:relative;"><iframe src="https://player.vimeo.com/video/{video_id}" frameborder="0" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe></div><script src="https://player.vimeo.com/api/player.js"></script>\n'
+            new_content = existing_content + new_video
+            requests.post(f"{WP_URL}/posts/{post_id}", json={"content": new_content},
+                        auth=(WP_USER, WP_PASSWORD), timeout=10)
+            send_message(chat_id, "✅ סרטון נוסף לכתבה!", get_menu(user_id))
+        else:
+            send_message(chat_id, "❌ שגיאה בעדכון")
+        drafts[user_id] = {"step": "idle", "gallery": []}
+        return True
+
+    elif step == "delete_url":
+        try:
+            part = text.rstrip("/").split("/")[-1]
+            if part.isdigit():
+                r = requests.get(f"{WP_URL}/posts/{part}", auth=(WP_USER, WP_PASSWORD), timeout=10)
+                post = r.json() if r.status_code == 200 else None
+            else:
+                r = requests.get(f"{WP_URL}/posts?slug={part}", auth=(WP_USER, WP_PASSWORD), timeout=10)
+                posts = r.json()
+                post = posts[0] if posts else None
+            if not post:
+                send_message(chat_id, "❌ כתבה לא נמצאה. נסה שוב:")
+                return True
+            draft["delete_id"] = post["id"]
+            draft["delete_title"] = post["title"]["rendered"]
+            draft["step"] = "delete_confirm"
+            send_message(chat_id, f"⚠️ האם למחוק את הכתבה:\n<b>{post['title']['rendered']}</b>?", {
+                "inline_keyboard": [[
+                    {"text": "✅ כן, מחק", "callback_data": "delete_yes"},
+                    {"text": "❌ ביטול", "callback_data": "delete_no"}
+                ]]
+            })
+        except Exception as e:
+            send_message(chat_id, f"❌ שגיאה: {e}")
+        return True
+
+    elif step == "mazaltov_image":
+        if "photo" in msg:
+            content = get_file(msg["photo"][-1]["file_id"])
+            if content:
+                send_message(chat_id, "⏳ מעלה לאתר...")
+                featured_id, _ = upload_image_to_wp(content, "mazaltov.jpg")
+                post_data = {
+                    "title": "מזל טוב",
+                    "content": "",
+                    "status": "publish",
+                    "categories": [18, 103]
+                }
+                if featured_id:
+                    post_data["featured_media"] = featured_id
+                resp = requests.post(f"{WP_URL}/posts", json=post_data,
+                                    auth=(WP_USER, WP_PASSWORD), timeout=30)
+                if resp.status_code == 201:
+                    post_url = resp.json().get("link", "")
+                    send_message(chat_id, f"✅ <b>מזל טוב פורסם!</b>\n🔗 {post_url}")
+                else:
+                    send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
+                drafts[user_id] = {"step": "idle", "gallery": []}
+        else:
+            send_message(chat_id, "⚠️ שלח תמונה:")
+        return True
+
+    elif step == "mazaltov_multi":
+        if "photo" in msg:
+            content = get_file(msg["photo"][-1]["file_id"])
+            if content:
+                draft.setdefault("mazaltov_images", []).append(content)
+                if len(draft["mazaltov_images"]) == 1:
+                    send_message(chat_id, "📸 מקבל תמונות... שלח /done כשסיימת")
+        elif text == "/done":
+            images = draft.get("mazaltov_images", [])
+            if not images:
+                send_message(chat_id, "⚠️ לא התקבלו תמונות.")
+                return True
+            send_message(chat_id, f"⏳ מעלה {len(images)} כתבות מזל טוב...")
+            success = 0
+            for i, img in enumerate(images):
+                featured_id, _ = upload_image_to_wp(img, f"mazaltov_{i}.jpg")
+                post_data = {
+                    "title": "מזל טוב",
+                    "content": "",
+                    "status": "publish",
+                    "categories": [18, 103]
+                }
+                if featured_id:
+                    post_data["featured_media"] = featured_id
+                resp = requests.post(f"{WP_URL}/posts", json=post_data,
+                                    auth=(WP_USER, WP_PASSWORD), timeout=30)
+                if resp.status_code == 201:
+                    success += 1
+            send_message(chat_id, f"✅ פורסמו {success}/{len(images)} כתבות מזל טוב!", get_menu(user_id))
+            drafts[user_id] = {"step": "idle", "gallery": []}
+        else:
+            send_message(chat_id, "שלח תמונות או /done לסיום:")
+        return True
+
     return False
 
 def handle_callback(cb):
@@ -2329,6 +2642,20 @@ def get_analytics_page(url, period="7daysAgo"):
     status = "✅ פעילה" if email_system["active"] else "⏸️ מושהית"
     interval_min = email_system["interval"] // 60
     senders = "\n".join([f"• {s}" for s in email_system["allowed_senders"]])
+    last = time.strftime("%H:%M", time.localtime(email_system["last_check"])) if email_system["last_check"] else "טרם נבדק"
+    return f"""📧 <b>מערכת מייל</b>
+
+<b>סטטוס:</b> {status}
+<b>בדיקה כל:</b> {interval_min} דקות
+<b>בדיקה אחרונה:</b> {last}
+<b>כתובות מורשות:</b>
+{senders}"""
+
+def get_email_status():
+    """מחזיר סטטוס מערכת המייל"""
+    status = "✅ פעילה" if email_system["active"] else "⏸️ מושהית"
+    interval_min = email_system["interval"] // 60
+    senders = "\n".join([f"• {s}" for s in email_system["allowed_senders"]]) or "אין"
     last = time.strftime("%H:%M", time.localtime(email_system["last_check"])) if email_system["last_check"] else "טרם נבדק"
     return f"""📧 <b>מערכת מייל</b>
 
