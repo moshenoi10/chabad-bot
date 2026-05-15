@@ -307,20 +307,27 @@ def wait_for_vimeo(video_id, max_wait=300):
         time.sleep(10)
     return False
 
-def upload_to_vimeo(video_bytes, title="סרטון חדש"):
+def upload_to_vimeo(video_bytes, title="סרטון חדש", chat_id=None):
     if not VIMEO_TOKEN:
-        return None
+        return None, None
     try:
         headers = {
             "Authorization": f"bearer {VIMEO_TOKEN}",
             "Content-Type": "application/json",
             "Accept": "application/vnd.vimeo.*+json;version=3.4"
         }
+        size = len(video_bytes)
+        size_mb = size // 1024 // 1024
+        print(f"מתחיל העלאה ל-Vimeo: {size_mb}MB", flush=True)
+
+        if chat_id and size_mb > 10:
+            send_message(chat_id, f"⏳ מעלה סרטון ל-Vimeo ({size_mb}MB)...\nזה עשוי לקחת כמה דקות.")
+
         create_resp = requests.post(
             "https://api.vimeo.com/me/videos",
             headers=headers,
             json={
-                "upload": {"approach": "tus", "size": len(video_bytes)},
+                "upload": {"approach": "tus", "size": size},
                 "name": title,
                 "privacy": {"view": "anybody"}
             },
@@ -328,32 +335,63 @@ def upload_to_vimeo(video_bytes, title="סרטון חדש"):
         )
         if create_resp.status_code != 200:
             print(f"שגיאה יצירת Vimeo: {create_resp.text[:200]}", flush=True)
-            return None
+            return None, None
 
         upload_link = create_resp.json()["upload"]["upload_link"]
         video_uri = create_resp.json()["uri"]
         video_id = video_uri.split("/")[-1]
 
-        upload_resp = requests.patch(
-            upload_link,
-            headers={
-                "Tus-Resumable": "1.0.0",
-                "Upload-Offset": "0",
-                "Content-Type": "application/offset+octet-stream",
-                "Content-Length": str(len(video_bytes))
-            },
-            data=video_bytes,
-            timeout=120
-        )
-        if upload_resp.status_code in (204, 200):
-            print(f"Vimeo {video_id} הועלה, עיבוד ברקע...", flush=True)
-            return f"https://vimeo.com/{video_id}", video_id
-        else:
-            print(f"שגיאה העלאת Vimeo: {upload_resp.status_code}", flush=True)
-            return None, None
+        chunk_size = 5 * 1024 * 1024  # 5MB chunks
+        offset = 0
+        start_time = time.time()
+        last_update = 0
+
+        while offset < size:
+            chunk = video_bytes[offset:offset + chunk_size]
+            chunk_resp = requests.patch(
+                upload_link,
+                headers={
+                    "Tus-Resumable": "1.0.0",
+                    "Upload-Offset": str(offset),
+                    "Content-Type": "application/offset+octet-stream",
+                    "Content-Length": str(len(chunk))
+                },
+                data=chunk,
+                timeout=120
+            )
+            if chunk_resp.status_code not in (204, 200):
+                print(f"שגיאה chunk Vimeo: {chunk_resp.status_code}", flush=True)
+                return None, None
+
+            offset += len(chunk)
+            elapsed = time.time() - start_time
+            progress = offset / size
+            
+            # שלח עדכון כל 20% או כל 30 שניות
+            if chat_id and size_mb > 10:
+                should_update = (progress - last_update >= 0.2) or (elapsed - last_update * elapsed >= 30)
+                if progress - last_update >= 0.19:
+                    last_update = progress
+                    remaining = (elapsed / progress * (1 - progress)) if progress > 0 else 0
+                    mins = int(remaining // 60)
+                    secs = int(remaining % 60)
+                    time_str = f"{mins}:{secs:02d} דקות" if mins > 0 else f"{secs} שניות"
+                    pct = int(progress * 100)
+                    bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
+                    send_message(chat_id, f"📤 מעלה ל-Vimeo: {pct}%\n{bar}\n⏱ זמן משוער: {time_str}")
+
+            print(f"Vimeo: {offset//1024//1024}MB / {size_mb}MB ({int(progress*100)}%)", flush=True)
+
+        total_time = int(time.time() - start_time)
+        mins = total_time // 60
+        secs = total_time % 60
+        time_str = f"{mins}:{secs:02d}" if mins > 0 else f"{secs} שניות"
+        print(f"✅ Vimeo {video_id} הועלה ב-{time_str}!", flush=True)
+        return f"https://vimeo.com/{video_id}", video_id
+
     except Exception as e:
         print(f"שגיאה Vimeo: {e}", flush=True)
-        return None
+        return None, None
 
 def notify_channel(title, subtitle, url):
     text = f"*עדכוני חב״ד - {title}*\n{subtitle}\n\n*לכתבה המלאה לחצו ⬇️*\n{url}"
@@ -830,17 +868,17 @@ def build_prompt(text):
 כללים:
 
 כותרת ראשית:
-- עד 8 מילים, עם נקודתיים
-- היצמד בדיוק לאירוע המתואר בטקסט – אל תמציא, אל תפרש, אל תשנה מילים
-- שמות אנשים: מותר רק אם הם מרכז האירוע (חתונה, בר מצווה, פטירה וכו')
-- דוגמה טובה: "ספר חדש על מסכת קידושין: הופץ לרבנים ברחבי העולם"
-- דוגמה לאירוע אישי: "מזל טוב: שמחת החתונה של משפחות כהן ולוי"
+- פורמט: תיאור קצר + נקודתיים + פרט עיקרי. לדוגמה: "חגיגת רשב״י בירושלים: אלפים התכנסו לצעדה והדלקה"
+- עד 10 מילים סה״כ
+- נקודתיים מופיעות פעם אחת בלבד
+- אסור להתחיל בשם האתר או "עדכוני חב״ד"
+- שמות אנשים: מותר רק אם הם מרכז האירוע (חתונה, בר מצווה, פטירה)
 
 כותרת משנה:
-- עד 3 משפטים, כל משפט 7-9 מילים
-- בין כל משפט שים • 
-- כל משפט מספר פרט אחד חשוב מהכתבה
-- כאן מותר להזכיר שמות
+- חייב להיות 2-3 משפטים מופרדים ב-•
+- כל משפט 7-9 מילים
+- לא להתחיל ב-• ולא לסיים ב-•
+- דוגמה: "אלפי ילדים וסטודנטים הצטרפו לצעדה ההמונית • הדלקה מרגשת נערכה בהשתתפות הרב כאלב • ארוחת ברביקיו מיוחדת הוכנה לסטודנטים"
 
 כותרת אדומה:
 - 2-4 מילים תיאוריות
@@ -853,10 +891,10 @@ def build_prompt(text):
 תגיות:
 - 5-8 מילות מפתח מהטקסט
 
-גרשיים – חשוב מאוד:
-- השתמש בגרש עברי ״ רק במילים שבמקור כתובות עם גרש: חב"ד←חב״ד, ל"ג←ל״ג, ת"ת←ת״ת, ע"י←ע״י, שליט"א←שליט״א
-- אסור לשים ״ לפני ציטוטים, שמות ספרים, או כל מקום אחר
-- ציטוטים: כתוב בלי מרכאות בכלל
+גרשיים:
+- גרש עברי ״ רק במילים עם גרש במקור: חב"ד←חב״ד, ל"ג←ל״ג, ת"ת←ת״ת, ע"י←ע״י, שליט"א←שליט״א
+- אסור לשים ״ לפני ציטוטים, שמות ספרים, שמות מקומות
+- ציטוטים: בלי מרכאות בכלל
 
 החזר JSON בלבד:
 {{"title":"...","subtitle":"...","red_title":"...","body":"...","tags":["...","...","...","...","..."]}}
@@ -2125,7 +2163,7 @@ def handle_callback(cb):
         for i, fid in enumerate(files):
             video_bytes = get_file(fid)
             if video_bytes:
-                url, vid_id = upload_to_vimeo(video_bytes, f"{draft.get('title', 'סרטון')} {i+1}")
+                url, vid_id = upload_to_vimeo(video_bytes, f"{draft.get('title', 'סרטון')} {i+1}", chat_id)
                 if url:
                     draft.setdefault("videos", []).append(url)
                     draft.setdefault("vimeo_ids", []).append(vid_id)
@@ -2157,7 +2195,7 @@ def handle_callback(cb):
             send_message(chat_id, "⏳ מעלה ל-Vimeo...")
             video_bytes = get_file(file_id)
             if video_bytes:
-                vimeo_url, vid_id = upload_to_vimeo(video_bytes, draft.get("title", "סרטון"))
+                vimeo_url, vid_id = upload_to_vimeo(video_bytes, draft.get("title", "סרטון"), chat_id)
                 if vimeo_url:
                     draft.setdefault("videos", []).append(vimeo_url)
                     draft.setdefault("vimeo_ids", []).append(vid_id)
@@ -2524,7 +2562,7 @@ def handle_callback(cb):
                     vimeo_urls = []
                     vimeo_ids = []
                     for i, vid_bytes in enumerate(videos):
-                        result_v = upload_to_vimeo(vid_bytes, new_draft.get("title", f"סרטון {i+1}"))
+                        result_v = upload_to_vimeo(vid_bytes, new_draft.get("title", f"סרטון {i+1}"), chat_id)
                         if result_v and isinstance(result_v, tuple):
                             url, vid_id = result_v
                             if url:
