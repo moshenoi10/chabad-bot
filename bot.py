@@ -775,7 +775,20 @@ def prepare_text_for_ai(text):
     text = re.sub(r'(?<=[א-ת])"(?=[,\.!?\s\n])', '״', text)
     return text
 
-def restore_geresh(text):
+def fix_geresh(text):
+    """מנקה בעיות גרשיים בטקסט שהגיע מ-AI"""
+    import re
+    if not text:
+        return text
+    # תקן pattern של אות״אות"אות → אות״אות + רווח + אות
+    text = re.sub(r'([א-ת])״([א-ת])"([א-ת])', r'\1״\2 \3', text)
+    # תקן אות"אות → אות״אות
+    text = re.sub(r'([א-ת])"([א-ת])', r'\1״\2', text)
+    # תקן אות" סוף מילה → אות״
+    text = re.sub(r'([א-ת])"([\s,.\-:!?•]|$)', r'\1״\2', text)
+    # נקה כפילויות
+    text = text.replace('״״', '״')
+    return text
     """מחזיר גרשיים עבריים למילים שצריכות אותם"""
     import re
     # החלף ״ חזרה ל-" (אם AI השתמש בזה)
@@ -877,10 +890,9 @@ def process_with_gemini(text):
                 result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
                 parsed = clean_json_string(result)
                 if parsed:
-                    # שחזר גרשיים שה-AI הסיר
                     for field in ["title", "subtitle", "red_title", "body"]:
-                        if field in parsed:
-                            parsed[field] = restore_geresh(parsed[field])
+                        if field in parsed and parsed[field]:
+                            parsed[field] = fix_geresh(restore_geresh(parsed[field]))
                     return parsed
                 return None
             print(f"שגיאה Gemini: {resp.status_code} {resp.text[:100]}", flush=True)
