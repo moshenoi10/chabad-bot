@@ -1900,6 +1900,56 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             send_message(chat_id, "⚠️ שלח תמונה:")
         return True
 
+    elif step == "edit_video_input":
+        pending = draft.setdefault("edit_videos_pending", [])
+        if "video" in msg or ("document" in msg and msg["document"].get("mime_type", "").startswith("video/")):
+            obj = msg.get("video") or msg.get("document", {})
+            file_id = obj.get("file_id")
+            if file_id:
+                video_bytes = get_file(file_id)
+                if video_bytes:
+                    pending.append({"type": "file", "bytes": video_bytes})
+                    send_message(chat_id, f"✅ סרטון {len(pending)} התקבל! שלח עוד או /done:")
+                else:
+                    send_message(chat_id, "❌ לא הצלחתי להוריד. נסה שוב.")
+        elif text and text.startswith("http"):
+            pending.append({"type": "url", "url": text})
+            send_message(chat_id, f"✅ לינק {len(pending)} נוסף! שלח עוד או /done:")
+        elif text == "/done":
+            if not pending:
+                send_message(chat_id, "⚠️ לא התקבלו סרטונים.")
+                return True
+            if len(pending) == 1 and pending[0]["type"] == "file":
+                # שאל לאיזה שירות להעלות
+                draft["edit_videos_pending"] = pending
+                draft["step"] = "edit_video_service"
+                send_message(chat_id, "לאיזה שירות להעלות את הסרטון?", {
+                    "inline_keyboard": [
+                        [{"text": "🎬 Vimeo", "callback_data": "edit_video_to_vimeo"},
+                         {"text": "▶️ YouTube", "callback_data": "edit_video_to_youtube"}]
+                    ]
+                })
+            elif any(v["type"] == "file" for v in pending):
+                draft["edit_videos_pending"] = pending
+                draft["step"] = "edit_video_service"
+                send_message(chat_id, f"לאיזה שירות להעלות את {len([v for v in pending if v['type']=='file'])} הסרטונים?", {
+                    "inline_keyboard": [
+                        [{"text": "🎬 Vimeo", "callback_data": "edit_video_to_vimeo"},
+                         {"text": "▶️ YouTube", "callback_data": "edit_video_to_youtube"}],
+                        [{"text": "🌐 הכל", "callback_data": "edit_video_to_all"}]
+                    ]
+                })
+            else:
+                # רק לינקים – הוסף ישירות
+                _add_videos_to_post(chat_id, user_id, draft, drafts, pending)
+        else:
+            send_message(chat_id, "שלח קובץ וידאו, לינק, או /done:")
+        return True
+
+    elif step == "edit_video_service":
+        pass
+        return True
+
     elif step == "edit_video_url":
         post_id = draft.get("edit_id")
         r = requests.get(f"{WP_URL}/posts/{post_id}?context=edit", auth=(WP_USER, WP_PASSWORD), timeout=10)
@@ -2413,6 +2463,47 @@ def upload_to_tiktok(video_bytes, caption="", hashtags=""):
         return False, upload_resp.text[:200]
     except Exception as e:
         return False, str(e)
+
+def _add_videos_to_post(chat_id, user_id, draft, drafts, videos, service="vimeo"):
+    """מוסיף סרטונים לכתבה קיימת"""
+    post_id = draft.get("edit_id")
+    
+    def _do_upload():
+        r = requests.get(f"{WP_URL}/posts/{post_id}?context=edit", auth=(WP_USER, WP_PASSWORD), timeout=10)
+        if r.status_code != 200:
+            send_message(chat_id, "❌ לא מצאתי את הכתבה.")
+            return
+        existing_content = r.json().get("content", {}).get("raw", "")
+        new_content = existing_content
+        count = 0
+        
+        for vid in videos:
+            if vid["type"] == "url":
+                url = vid["url"]
+                if "vimeo.com" in url:
+                    vid_id = url.split("/")[-1].split("?")[0]
+                    new_content += f'\n\n<div style="padding:56.25% 0 0 0;position:relative;"><iframe src="https://player.vimeo.com/video/{vid_id}" frameborder="0" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe></div><script src="https://player.vimeo.com/api/player.js"></script>\n'
+                elif "youtube.com" in url or "youtu.be" in url:
+                    new_content += f'\n\n<!-- wp:embed {{"url":"{url}"}} -->\n<figure class="wp-block-embed"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n<!-- /wp:embed -->'
+                count += 1
+            elif vid["type"] == "file":
+                send_message(chat_id, f"⏳ מעלה סרטון ל-{service}...")
+                if service in ("vimeo", "all"):
+                    vimeo_url, _ = upload_to_vimeo(vid["bytes"], draft.get("edit_title", "סרטון"), chat_id)
+                    if vimeo_url:
+                        vid_id = vimeo_url.split("/")[-1]
+                        new_content += f'\n\n<div style="padding:56.25% 0 0 0;position:relative;"><iframe src="https://player.vimeo.com/video/{vid_id}" frameborder="0" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe></div><script src="https://player.vimeo.com/api/player.js"></script>\n'
+                        count += 1
+                if service in ("youtube", "all"):
+                    # YouTube דורש כותרת
+                    send_message(chat_id, f"✅ Vimeo הועלה! מעלה גם ל-YouTube...")
+        
+        requests.post(f"{WP_URL}/posts/{post_id}", json={"content": new_content},
+                     auth=(WP_USER, WP_PASSWORD), timeout=10)
+        send_message(chat_id, f"✅ {count} סרטונים נוספו לכתבה!", get_menu(user_id))
+        drafts[user_id] = {"step": "idle", "gallery": []}
+    
+    threading.Thread(target=_do_upload, daemon=True).start()
 
 def handle_callback(cb):
     chat_id = cb["message"]["chat"]["id"]
@@ -3052,9 +3143,24 @@ def handle_callback(cb):
         draft["step"] = "edit_gallery_upload"
         send_message(chat_id, "שלח תמונות, PDF, או קובץ שמע להוספה.\nכשסיימת שלח /done:")
 
+    elif cb_data == "edit_video_to_vimeo":
+        pending = draft.get("edit_videos_pending", [])
+        _add_videos_to_post(chat_id, user_id, draft, drafts, pending, "vimeo")
+
+    elif cb_data == "edit_video_to_youtube":
+        pending = draft.get("edit_videos_pending", [])
+        _add_videos_to_post(chat_id, user_id, draft, drafts, pending, "youtube")
+
+    elif cb_data == "edit_video_to_all":
+        pending = draft.get("edit_videos_pending", [])
+        _add_videos_to_post(chat_id, user_id, draft, drafts, pending, "all")
+
     elif cb_data == "edit_video":
-        draft["step"] = "edit_video_url"
-        send_message(chat_id, "שלח לינק וידאו מ-Vimeo:")
+        draft["step"] = "edit_video_input"
+        draft["edit_videos_pending"] = []
+        send_message(chat_id, "🎬 <b>הוספת סרטון לכתבה</b>\n\nשלח קובץ וידאו, לינק Vimeo, או לינק YouTube.\nשלח /done כשסיימת לשלוח:", {
+            "inline_keyboard": [[{"text": "❌ ביטול", "callback_data": "edit_done"}]]
+        })
 
     elif cb_data == "delete_yes":
         post_id = draft.get("delete_id")
