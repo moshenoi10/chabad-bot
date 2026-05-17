@@ -162,7 +162,8 @@ ADMIN_MENU = {
         [{"text": "✏️ עריכת כתבה"}, {"text": "🗑️ מחיקת כתבה"}],
         [{"text": "📋 כתבות אחרונות"}, {"text": "📝 טיוטות"}],
         [{"text": "👥 ניהול משתמשים"}, {"text": "📊 לוג פעולות"}],
-        [{"text": "📧 ניהול מייל"}, {"text": "📈 אנליטיקס"}]
+        [{"text": "📧 ניהול מייל"}, {"text": "📈 אנליטיקס"}],
+        [{"text": "📢 הפצת תוכן"}, {"text": "🎥 הפצת וידאו"}]
     ],
     "resize_keyboard": True,
     "persistent": True
@@ -174,7 +175,8 @@ SENIOR_EDITOR_MENU = {
         [{"text": "🎉 מזל טוב"}, {"text": "🎬 העלאה ליוטיוב"}],
         [{"text": "✏️ עריכת כתבה"}, {"text": "🗑️ מחיקת כתבה"}],
         [{"text": "📋 כתבות אחרונות"}, {"text": "📝 טיוטות"}],
-        [{"text": "📧 ניהול מייל"}, {"text": "📈 אנליטיקס"}]
+        [{"text": "📧 ניהול מייל"}, {"text": "📈 אנליטיקס"}],
+        [{"text": "📢 הפצת תוכן"}, {"text": "🎥 הפצת וידאו"}]
     ],
     "resize_keyboard": True,
     "persistent": True
@@ -183,7 +185,8 @@ SENIOR_EDITOR_MENU = {
 EDITOR_MENU = {
     "keyboard": [
         [{"text": "✍️ כתבה חדשה"}, {"text": "🎉 מזל טוב"}],
-        [{"text": "✏️ עריכת כתבה"}, {"text": "🎬 העלאה ליוטיוב"}]
+        [{"text": "✏️ עריכת כתבה"}, {"text": "🎬 העלאה ליוטיוב"}],
+        [{"text": "📢 הפצת תוכן"}, {"text": "🎥 הפצת וידאו"}]
     ],
     "resize_keyboard": True,
     "persistent": True
@@ -600,15 +603,19 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
     # העלאת PDF לוורדפרס
     for pdf in draft.get("pdf_files", []):
         try:
+            print(f"מעלה PDF: {pdf['name']} ({len(pdf['bytes'])} bytes)", flush=True)
             url = f"{WP_URL}/media"
             headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{requests.utils.quote(pdf['name'])}",
                       "Content-Type": "application/pdf"}
             resp = requests.post(url, headers=headers, data=pdf["bytes"],
-                               auth=(WP_USER, WP_PASSWORD), timeout=30)
+                               auth=(WP_USER, WP_PASSWORD), timeout=60)
+            print(f"PDF upload status: {resp.status_code}", flush=True)
             if resp.status_code == 201:
                 pdf_url = resp.json()["source_url"]
                 pdf_name = pdf["name"]
-                content += f'\n\n<!-- wp:file {{"url":"{pdf_url}","fileName":"{pdf_name}"}} -->\n<div class="wp-block-file"><a href="{pdf_url}">{pdf_name}</a></div>\n<!-- /wp:file -->'
+                content += f'\n\n<div class="wp-block-file"><object data="{pdf_url}" type="application/pdf" width="100%" height="600px"><a href="{pdf_url}">{pdf_name}</a></object></div>'
+            else:
+                print(f"PDF error: {resp.text[:200]}", flush=True)
         except Exception as e:
             print(f"שגיאה העלאת PDF: {e}", flush=True)
 
@@ -1252,19 +1259,23 @@ def handle_message(msg):
         draft["step"] = "idle"
         return
 
-    if text == "📧 ניהול מייל" and is_senior_editor(user_id):
-        send_message(chat_id, get_email_status(), {
-            "inline_keyboard": [
-                [{"text": "⏸️ השהה" if email_system["active"] else "▶️ הפעל", "callback_data": "email_toggle"},
-                 {"text": "🔄 בדוק עכשיו", "callback_data": "email_check_now"}],
-                [{"text": "⏱️ שנה תדירות", "callback_data": "email_change_interval"}],
-                [{"text": "➕ הוסף כתובת", "callback_data": "email_add_sender"},
-                 {"text": "➖ הסר כתובת", "callback_data": "email_remove_sender"}]
-            ]
+    if text == "📢 הפצת תוכן" and is_editor(user_id):
+        drafts[user_id]["step"] = "social_content"
+        drafts[user_id]["social_data"] = {}
+        send_message(chat_id, "📢 <b>הפצת תוכן</b>\n\nשלח את הטקסט שתרצה להפיץ:", {
+            "inline_keyboard": [[{"text": "❌ ביטול", "callback_data": "publish_cancel"}]]
         })
         return
 
-    if step == "email_add_sender_input" and is_senior_editor(user_id):
+    if text == "🎥 הפצת וידאו" and is_editor(user_id):
+        drafts[user_id]["step"] = "social_video"
+        drafts[user_id]["social_data"] = {}
+        send_message(chat_id, "🎥 <b>הפצת וידאו</b>\n\nשלח את קובץ הסרטון (עד 20MB) או לינק Drive:", {
+            "inline_keyboard": [[{"text": "❌ ביטול", "callback_data": "publish_cancel"}]]
+        })
+        return
+
+    if text == "📧 ניהול מייל" and is_senior_editor(user_id):
         if "@" in text:
             email_system["allowed_senders"].append(text.strip().lower())
             send_message(chat_id, f"✅ כתובת {text} נוספה!", get_menu(user_id))
@@ -2115,7 +2126,293 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             send_message(chat_id, "שלח תמונות, PDF, קובץ שמע, או /done:")
         return True
 
+    elif step == "social_content":
+        social = draft.get("social_data", {})
+        if "photo" in msg:
+            content = get_file(msg["photo"][-1]["file_id"])
+            social["image"] = content
+            draft["social_data"] = social
+            draft["step"] = "social_content_caption"
+            send_message(chat_id, "✅ תמונה התקבלה!\n\nשלח כיתוב/טקסט (או /skip לדלג):")
+        elif text and text != "/skip":
+            social["text_content"] = text
+            draft["social_data"] = social
+            draft["step"] = "social_content_platforms"
+            _show_social_platforms(chat_id, social, "content")
+        elif text == "/skip":
+            draft["step"] = "social_content_platforms"
+            _show_social_platforms(chat_id, social, "content")
+        return True
+
+    elif step == "social_content_caption":
+        social = draft.get("social_data", {})
+        if text != "/skip":
+            social["text_content"] = text
+        draft["social_data"] = social
+        draft["step"] = "social_content_platforms"
+        _show_social_platforms(chat_id, social, "content")
+        return True
+
+    elif step == "social_video":
+        social = draft.get("social_data", {})
+        if "video" in msg or "document" in msg:
+            obj = msg.get("video") or msg.get("document", {})
+            file_id = obj.get("file_id")
+            if file_id:
+                video_bytes = get_file(file_id)
+                if video_bytes:
+                    social["video_bytes"] = video_bytes
+                    draft["social_data"] = social
+                    draft["step"] = "social_video_platforms"
+                    _show_social_video_platforms(chat_id)
+                else:
+                    send_message(chat_id, "❌ לא הצלחתי להוריד את הסרטון.")
+        elif text and "drive.google.com" in text:
+            send_message(chat_id, "⏳ מוריד מ-Drive...")
+            def _dl_social():
+                drive_id, drive_type = extract_drive_id(text)
+                if drive_id and drive_type == "file":
+                    vb = download_drive_file(drive_id)
+                    if vb:
+                        social["video_bytes"] = vb
+                        draft["social_data"] = social
+                        draft["step"] = "social_video_platforms"
+                        _show_social_video_platforms(chat_id)
+                    else:
+                        send_message(chat_id, "❌ לא הצלחתי להוריד.")
+                else:
+                    send_message(chat_id, "❌ שלח לינק לקובץ בודד מ-Drive.")
+            threading.Thread(target=_dl_social, daemon=True).start()
+        else:
+            send_message(chat_id, "⚠️ שלח קובץ וידאו או לינק Drive:")
+        return True
+
+    elif step == "social_video_platforms":
+        pass
+        return True
+
+    elif step == "social_yt_title":
+        draft["social_data"]["yt_title"] = text
+        draft["step"] = "social_yt_desc"
+        send_message(chat_id, "✍️ שלח תיאור לYouTube (או /skip):")
+        return True
+
+    elif step == "social_yt_desc":
+        if text != "/skip":
+            draft["social_data"]["yt_desc"] = text
+        draft["step"] = "social_yt_tags"
+        send_message(chat_id, "🏷️ שלח תגיות מופרדות בפסיק (או /skip):")
+        return True
+
+    elif step == "social_yt_tags":
+        if text != "/skip":
+            draft["social_data"]["yt_tags"] = [t.strip() for t in text.split(",")]
+        _process_next_social_platform(chat_id, user_id, draft, drafts)
+        return True
+
+    elif step == "social_tiktok_caption":
+        if text != "/skip":
+            draft["social_data"]["tiktok_caption"] = text
+        _process_next_social_platform(chat_id, user_id, draft, drafts)
+        return True
+
     return False
+
+def _show_social_platforms(chat_id, social, mode="content"):
+    """מציג בחירת פלטפורמות להפצת תוכן"""
+    send_message(chat_id, "📢 <b>לאיזה פלטפורמות להפיץ?</b>", {
+        "inline_keyboard": [
+            [{"text": "📘 פייסבוק", "callback_data": "social_fb"},
+             {"text": "📸 אינסטגרם", "callback_data": "social_ig"}],
+            [{"text": "📱 טלגרם ערוץ", "callback_data": "social_tg"},
+             {"text": "🐦 טוויטר", "callback_data": "social_tw"}],
+            [{"text": "💬 וואטסאפ", "callback_data": "social_wa"}],
+            [{"text": "🌐 הכל", "callback_data": "social_all_content"}],
+            [{"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+        ]
+    })
+
+def _show_social_video_platforms(chat_id):
+    """מציג בחירת פלטפורמות לוידאו"""
+    send_message(chat_id, "🎥 <b>לאיזה פלטפורמות להעלות?</b>", {
+        "inline_keyboard": [
+            [{"text": "▶️ YouTube", "callback_data": "social_video_yt"},
+             {"text": "🎬 Vimeo", "callback_data": "social_video_vimeo"}],
+            [{"text": "🎵 TikTok", "callback_data": "social_video_tiktok"}],
+            [{"text": "🌐 הכל", "callback_data": "social_video_all"}],
+            [{"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+        ]
+    })
+
+def _process_next_social_platform(chat_id, user_id, draft, drafts):
+    """מעבד פלטפורמה הבאה בתור"""
+    social = draft.get("social_data", {})
+    queue = social.get("platforms_queue", [])
+
+    if not queue:
+        # סיים הכל
+        send_message(chat_id, "✅ <b>הפצה הושלמה!</b>", get_menu(user_id))
+        drafts[user_id] = {"step": "idle", "gallery": []}
+        return
+
+    platform = queue.pop(0)
+    social["platforms_queue"] = queue
+    draft["social_data"] = social
+
+    if platform == "youtube":
+        draft["step"] = "social_yt_title"
+        send_message(chat_id, "▶️ <b>YouTube</b>\n\nשלח כותרת לסרטון:")
+
+    elif platform == "vimeo":
+        send_message(chat_id, "⏳ מעלה ל-Vimeo...")
+        def _upload_vimeo():
+            vb = social.get("video_bytes")
+            if vb:
+                url, vid_id = upload_to_vimeo(vb, social.get("yt_title", "סרטון"), chat_id)
+                if url:
+                    send_message(chat_id, f"✅ Vimeo: {url}")
+                else:
+                    send_message(chat_id, "❌ שגיאה ב-Vimeo")
+            _process_next_social_platform(chat_id, user_id, draft, drafts)
+        threading.Thread(target=_upload_vimeo, daemon=True).start()
+
+    elif platform == "tiktok":
+        draft["step"] = "social_tiktok_caption"
+        send_message(chat_id, "🎵 <b>TikTok</b>\n\nשלח כותרת ו-hashtags (או /skip):")
+
+    elif platform == "facebook":
+        send_message(chat_id, "⏳ מפרסם לפייסבוק...")
+        text_content = social.get("text_content", "")
+        link = social.get("link", "")
+        msg_text = f"{text_content}\n{link}" if link else text_content
+        ok, result = post_to_facebook(msg_text, social.get("image"))
+        send_message(chat_id, f"✅ פורסם בפייסבוק!" if ok else f"❌ פייסבוק: {result}")
+        _process_next_social_platform(chat_id, user_id, draft, drafts)
+
+    elif platform == "instagram":
+        send_message(chat_id, "⏳ מפרסם לאינסטגרם...")
+        ok, result = post_to_instagram(social.get("text_content", ""), social.get("image"))
+        send_message(chat_id, f"✅ פורסם באינסטגרם!" if ok else f"❌ אינסטגרם: {result}")
+        _process_next_social_platform(chat_id, user_id, draft, drafts)
+
+    elif platform == "telegram":
+        send_message(chat_id, "⏳ שולח לערוץ...")
+        text_content = social.get("text_content", "")
+        link = social.get("link", "")
+        msg_text = f"{text_content}\n{link}" if link else text_content
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                json={"chat_id": CHANNEL_ID, "text": msg_text},
+                timeout=10
+            )
+            send_message(chat_id, "✅ נשלח לערוץ טלגרם!")
+        except:
+            send_message(chat_id, "❌ שגיאה בשליחה לערוץ")
+        _process_next_social_platform(chat_id, user_id, draft, drafts)
+
+    elif platform == "twitter":
+        send_message(chat_id, "⏳ מפרסם לטוויטר...")
+        text_content = social.get("text_content", "")
+        link = social.get("link", "")
+        ok, result = post_to_twitter(text_content, link)
+        send_message(chat_id, f"✅ פורסם בטוויטר!" if ok else f"❌ טוויטר: {result}")
+        _process_next_social_platform(chat_id, user_id, draft, drafts)
+
+def post_to_facebook(text, image_bytes=None):
+    """פרסום לדף פייסבוק"""
+    fb_token = os.environ.get("FB_PAGE_TOKEN", "")
+    fb_page_id = os.environ.get("FB_PAGE_ID", "")
+    if not fb_token or not fb_page_id:
+        return False, "❌ FB_PAGE_TOKEN או FB_PAGE_ID חסרים ב-Render"
+    try:
+        if image_bytes:
+            # העלה תמונה
+            photo_resp = requests.post(
+                f"https://graph.facebook.com/{fb_page_id}/photos",
+                data={"caption": text, "access_token": fb_token},
+                files={"source": ("image.jpg", image_bytes, "image/jpeg")},
+                timeout=30
+            )
+            if photo_resp.status_code == 200:
+                return True, photo_resp.json().get("id")
+            return False, photo_resp.text[:200]
+        else:
+            resp = requests.post(
+                f"https://graph.facebook.com/{fb_page_id}/feed",
+                data={"message": text, "access_token": fb_token},
+                timeout=15
+            )
+            if resp.status_code == 200:
+                return True, resp.json().get("id")
+            return False, resp.text[:200]
+    except Exception as e:
+        return False, str(e)
+
+def post_to_instagram(caption, image_bytes=None):
+    """פרסום לאינסטגרם"""
+    fb_token = os.environ.get("FB_PAGE_TOKEN", "")
+    ig_user_id = os.environ.get("IG_USER_ID", "")
+    if not fb_token or not ig_user_id:
+        return False, "❌ IG_USER_ID או FB_PAGE_TOKEN חסרים"
+    try:
+        if not image_bytes:
+            return False, "אינסטגרם דורש תמונה"
+        # העלה תמונה לאינסטגרם
+        container_resp = requests.post(
+            f"https://graph.facebook.com/{ig_user_id}/media",
+            data={
+                "caption": caption,
+                "image_url": "",
+                "access_token": fb_token
+            },
+            files={"image": ("image.jpg", image_bytes, "image/jpeg")},
+            timeout=30
+        )
+        if container_resp.status_code != 200:
+            return False, container_resp.text[:200]
+        container_id = container_resp.json().get("id")
+        publish_resp = requests.post(
+            f"https://graph.facebook.com/{ig_user_id}/media_publish",
+            data={"creation_id": container_id, "access_token": fb_token},
+            timeout=15
+        )
+        if publish_resp.status_code == 200:
+            return True, publish_resp.json().get("id")
+        return False, publish_resp.text[:200]
+    except Exception as e:
+        return False, str(e)
+
+def upload_to_tiktok(video_bytes, caption="", hashtags=""):
+    """העלאה לטיקטוק"""
+    tiktok_token = os.environ.get("TIKTOK_TOKEN", "")
+    if not tiktok_token:
+        return False, "❌ TIKTOK_TOKEN חסר ב-Render"
+    try:
+        full_caption = f"{caption} {hashtags}".strip()
+        init_resp = requests.post(
+            "https://open.tiktokapis.com/v2/post/publish/video/init/",
+            headers={"Authorization": f"Bearer {tiktok_token}", "Content-Type": "application/json"},
+            json={
+                "post_info": {"title": full_caption, "privacy_level": "PUBLIC_TO_EVERYONE", "disable_duet": False, "disable_comment": False, "disable_stitch": False},
+                "source_info": {"source": "FILE_UPLOAD", "video_size": len(video_bytes), "chunk_size": len(video_bytes), "total_chunk_count": 1}
+            },
+            timeout=30
+        )
+        if init_resp.status_code != 200:
+            return False, init_resp.text[:200]
+        upload_url = init_resp.json()["data"]["upload_url"]
+        upload_resp = requests.put(
+            upload_url,
+            headers={"Content-Type": "video/mp4", "Content-Range": f"bytes 0-{len(video_bytes)-1}/{len(video_bytes)}"},
+            data=video_bytes,
+            timeout=120
+        )
+        if upload_resp.status_code in (200, 201):
+            return True, "הועלה בהצלחה"
+        return False, upload_resp.text[:200]
+    except Exception as e:
+        return False, str(e)
 
 def handle_callback(cb):
     chat_id = cb["message"]["chat"]["id"]
@@ -2374,13 +2671,13 @@ def handle_callback(cb):
         if resp.status_code == 201:
             post_url = resp.json().get("link", "")
             post_title = draft.get("title", "")
-            # שליחה אוטומטית לערוץ טלגרם
             notify_channel(post_title, draft.get("subtitle", ""), post_url)
             draft["last_post_url"] = post_url
             draft["last_post_title"] = post_title
             send_message(chat_id, f"✅ <b>הכתבה פורסמה ונשלחה לערוץ!</b>\n🔗 {post_url}", {
                 "inline_keyboard": [
-                    [{"text": "🐦 פרסם גם בטוויטר", "callback_data": "share_twitter"}],
+                    [{"text": "📢 הפץ לרשתות חברתיות", "callback_data": "share_social_post"}],
+                    [{"text": "🐦 פרסם בטוויטר", "callback_data": "share_twitter"}],
                     [{"text": "✅ סיום", "callback_data": "publish_done"}]
                 ]
             })
@@ -2398,8 +2695,43 @@ def handle_callback(cb):
         drafts[user_id] = {"step": "idle", "gallery": []}
 
     elif cb_data == "publish_schedule":
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        times = [
+            ("בעוד שעה", now + timedelta(hours=1)),
+            ("מחר בבוקר 08:00", now.replace(hour=8, minute=0) + timedelta(days=1)),
+            ("מחר בצהריים 12:00", now.replace(hour=12, minute=0) + timedelta(days=1)),
+            ("מחר בערב 20:00", now.replace(hour=20, minute=0) + timedelta(days=1)),
+        ]
+        keyboard = {"inline_keyboard": [
+            [{"text": label, "callback_data": f"sched_{dt.strftime('%d/%m/%Y_%H:%M')}"}]
+            for label, dt in times
+        ] + [[{"text": "⌨️ הזן זמן ידנית", "callback_data": "schedule_manual"}]]}
+        send_message(chat_id, "⏰ <b>מתי לפרסם?</b>", keyboard)
+
+    elif cb_data == "schedule_manual":
         draft["step"] = "schedule_time"
-        send_message(chat_id, "⏰ שלח את מועד הפרסום בפורמט:\n<code>DD/MM/YYYY HH:MM</code>\n\nלדוגמה: <code>15/05/2026 09:00</code>")
+        send_message(chat_id, "⏰ שלח תאריך ושעה:\n<code>DD/MM/YYYY HH:MM</code>\n\nלדוגמה: <code>20/05/2026 09:00</code>")
+
+    elif cb_data.startswith("sched_"):
+        time_str = cb_data.replace("sched_", "").replace("_", " ")
+        try:
+            from datetime import datetime
+            dt = datetime.strptime(time_str, "%d/%m/%Y %H:%M")
+            iso_date = dt.strftime("%Y-%m-%dT%H:%M:00")
+            send_message(chat_id, "⏳ מתזמן פרסום...")
+            try:
+                resp = publish_to_wp(draft, "future", iso_date)
+            except Exception as e:
+                send_message(chat_id, f"❌ שגיאה: {e}", get_menu(user_id))
+                return
+            if resp.status_code == 201:
+                send_message(chat_id, f"✅ <b>הכתבה מתוזמנת לפרסום ב-{time_str}!</b>", get_menu(user_id))
+            else:
+                send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
+            drafts[user_id] = {"step": "idle", "gallery": []}
+        except Exception as e:
+            send_message(chat_id, f"❌ שגיאה: {e}")
 
     elif cb_data == "publish_cancel":
         drafts[user_id] = {"step": "idle", "gallery": []}
@@ -2620,6 +2952,58 @@ def handle_callback(cb):
         email_system["pending_email"] = {}
         drafts[user_id]["step"] = "idle"
         send_message(chat_id, "❌ בוטל.", get_menu(user_id))
+
+    elif cb_data == "social_fb":
+        draft["social_data"]["platforms_queue"] = ["facebook"]
+        _process_next_social_platform(chat_id, user_id, draft, drafts)
+
+    elif cb_data == "social_ig":
+        draft["social_data"]["platforms_queue"] = ["instagram"]
+        _process_next_social_platform(chat_id, user_id, draft, drafts)
+
+    elif cb_data == "social_tg":
+        draft["social_data"]["platforms_queue"] = ["telegram"]
+        _process_next_social_platform(chat_id, user_id, draft, drafts)
+
+    elif cb_data == "social_tw":
+        draft["social_data"]["platforms_queue"] = ["twitter"]
+        _process_next_social_platform(chat_id, user_id, draft, drafts)
+
+    elif cb_data == "social_wa":
+        send_message(chat_id, "⚠️ WhatsApp Business API דורש הגדרה נוספת.\n\nנוסיף בהמשך 🙂", get_menu(user_id))
+
+    elif cb_data == "social_all_content":
+        draft["social_data"]["platforms_queue"] = ["facebook", "instagram", "telegram", "twitter"]
+        _process_next_social_platform(chat_id, user_id, draft, drafts)
+
+    elif cb_data == "social_video_yt":
+        draft["social_data"]["platforms_queue"] = ["youtube"]
+        draft["step"] = "social_yt_title"
+        send_message(chat_id, "▶️ <b>YouTube</b>\n\nשלח כותרת לסרטון:")
+
+    elif cb_data == "social_video_vimeo":
+        draft["social_data"]["platforms_queue"] = ["vimeo"]
+        _process_next_social_platform(chat_id, user_id, draft, drafts)
+
+    elif cb_data == "social_video_tiktok":
+        draft["social_data"]["platforms_queue"] = ["tiktok"]
+        draft["step"] = "social_tiktok_caption"
+        send_message(chat_id, "🎵 <b>TikTok</b>\n\nשלח כותרת ו-hashtags (או /skip):")
+
+    elif cb_data == "social_video_all":
+        draft["social_data"]["platforms_queue"] = ["youtube", "vimeo", "tiktok"]
+        draft["step"] = "social_yt_title"
+        send_message(chat_id, "▶️ <b>YouTube ראשון</b>\n\nשלח כותרת לסרטון:")
+
+    elif cb_data == "share_social_post":
+        post_url = draft.get("last_post_url", "")
+        post_title = draft.get("last_post_title", "")
+        draft["social_data"] = {
+            "text_content": post_title,
+            "link": post_url
+        }
+        draft["step"] = "social_content_platforms"
+        _show_social_platforms(chat_id, draft["social_data"], "content")
 
     elif cb_data == "share_twitter":
         post_url = draft.get("last_post_url", "")
@@ -2877,7 +3261,155 @@ def get_analytics_page(url, period="7daysAgo"):
 <b>כתובות מורשות:</b>
 {senders}"""
 
-def get_email_status():
+def post_to_facebook(text, image_bytes=None, link=None):
+    """פרסום לפייסבוק – דורש FB_PAGE_TOKEN"""
+    fb_token = os.environ.get("FB_PAGE_TOKEN", "")
+    fb_page_id = os.environ.get("FB_PAGE_ID", "")
+    if not fb_token or not fb_page_id:
+        return False, "❌ FB_PAGE_TOKEN או FB_PAGE_ID חסרים ב-Render"
+    try:
+        msg = text
+        if link:
+            msg += f"\n\n{link}"
+        if image_bytes:
+            # העלה תמונה
+            resp = requests.post(
+                f"https://graph.facebook.com/{fb_page_id}/photos",
+                data={"caption": msg, "access_token": fb_token},
+                files={"source": ("image.jpg", image_bytes, "image/jpeg")},
+                timeout=30
+            )
+        else:
+            resp = requests.post(
+                f"https://graph.facebook.com/{fb_page_id}/feed",
+                data={"message": msg, "access_token": fb_token, "link": link or ""},
+                timeout=15
+            )
+        if resp.status_code == 200:
+            return True, resp.json().get("id", "")
+        return False, resp.text[:200]
+    except Exception as e:
+        return False, str(e)
+
+def post_to_instagram(text, image_bytes):
+    """פרסום לאינסטגרם – דורש IG_USER_ID ו-FB_PAGE_TOKEN"""
+    ig_user_id = os.environ.get("IG_USER_ID", "")
+    fb_token = os.environ.get("FB_PAGE_TOKEN", "")
+    if not ig_user_id or not fb_token:
+        return False, "❌ IG_USER_ID או FB_PAGE_TOKEN חסרים"
+    try:
+        # שלב 1: העלה תמונה
+        create_resp = requests.post(
+            f"https://graph.facebook.com/{ig_user_id}/media",
+            data={
+                "caption": text,
+                "access_token": fb_token
+            },
+            files={"image": ("img.jpg", image_bytes, "image/jpeg")},
+            timeout=30
+        )
+        if create_resp.status_code != 200:
+            return False, create_resp.text[:200]
+        media_id = create_resp.json().get("id")
+        # שלב 2: פרסם
+        pub_resp = requests.post(
+            f"https://graph.facebook.com/{ig_user_id}/media_publish",
+            data={"creation_id": media_id, "access_token": fb_token},
+            timeout=15
+        )
+        if pub_resp.status_code == 200:
+            return True, pub_resp.json().get("id", "")
+        return False, pub_resp.text[:200]
+    except Exception as e:
+        return False, str(e)
+
+def post_to_telegram_channel(text, image_bytes=None):
+    """שליחה לערוץ טלגרם"""
+    try:
+        if image_bytes:
+            resp = requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
+                data={"chat_id": CHANNEL_ID, "caption": text, "parse_mode": "HTML"},
+                files={"photo": ("img.jpg", image_bytes, "image/jpeg")},
+                timeout=15
+            )
+        else:
+            resp = requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                json={"chat_id": CHANNEL_ID, "text": text, "parse_mode": "HTML"},
+                timeout=10
+            )
+        return resp.status_code in (200, 201), ""
+    except Exception as e:
+        return False, str(e)
+
+def upload_to_tiktok(video_bytes, title, hashtags=""):
+    """העלאה לטיקטוק – דורש TIKTOK_TOKEN"""
+    tiktok_token = os.environ.get("TIKTOK_TOKEN", "")
+    if not tiktok_token:
+        return False, "❌ TIKTOK_TOKEN חסר ב-Render"
+    # TikTok API v2 - Content Posting
+    try:
+        # שלב 1: init upload
+        init_resp = requests.post(
+            "https://open.tiktokapis.com/v2/post/publish/video/init/",
+            headers={"Authorization": f"Bearer {tiktok_token}", "Content-Type": "application/json"},
+            json={
+                "post_info": {
+                    "title": title,
+                    "privacy_level": "PUBLIC_TO_EVERYONE",
+                    "disable_duet": False,
+                    "disable_comment": False,
+                    "disable_stitch": False,
+                },
+                "source_info": {
+                    "source": "FILE_UPLOAD",
+                    "video_size": len(video_bytes),
+                    "chunk_size": len(video_bytes),
+                    "total_chunk_count": 1
+                }
+            },
+            timeout=30
+        )
+        if init_resp.status_code != 200:
+            return False, init_resp.text[:200]
+        data = init_resp.json().get("data", {})
+        publish_id = data.get("publish_id")
+        upload_url = data.get("upload_url")
+        # שלב 2: העלה
+        up_resp = requests.put(
+            upload_url,
+            headers={
+                "Content-Type": "video/mp4",
+                "Content-Length": str(len(video_bytes)),
+                "Content-Range": f"bytes 0-{len(video_bytes)-1}/{len(video_bytes)}"
+            },
+            data=video_bytes,
+            timeout=120
+        )
+        if up_resp.status_code in (200, 201, 204):
+            return True, publish_id
+        return False, up_resp.text[:200]
+    except Exception as e:
+        return False, str(e)
+
+def show_distribution_menu(chat_id, draft, post_url="", post_title=""):
+    """מציג תפריט הפצה לרשתות חברתיות אחרי פרסום"""
+    msg = f"📢 <b>הפצה לרשתות חברתיות</b>"
+    if post_title:
+        msg += f"\n<b>{post_title}</b>"
+    send_message(chat_id, msg, {
+        "inline_keyboard": [
+            [{"text": "📤 הכל ביחד", "callback_data": "dist_all"}],
+            [{"text": "📘 פייסבוק", "callback_data": "dist_facebook"},
+             {"text": "📸 אינסטגרם", "callback_data": "dist_instagram"}],
+            [{"text": "📱 טלגרם", "callback_data": "dist_telegram"},
+             {"text": "🐦 טוויטר", "callback_data": "dist_twitter"}],
+            [{"text": "✅ סיום", "callback_data": "publish_done"}]
+        ]
+    })
+
+
     """מחזיר סטטוס מערכת המייל"""
     status = "✅ פעילה" if email_system["active"] else "⏸️ מושהית"
     interval_min = email_system["interval"] // 60
