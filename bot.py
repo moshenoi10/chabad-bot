@@ -1745,16 +1745,17 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                 content = get_file(file_id)
                 print(f"📄 הורדה: {'הצלחה ' + str(len(content)) + ' bytes' if content else 'נכשל'}", flush=True)
                 if content:
-                    # העלה מיד לוורדפרס ושמור רק URL
                     send_message(chat_id, "⏳ מעלה PDF לאתר...")
                     fname = file_name if file_name.endswith('.pdf') else file_name + '.pdf'
+                    import base64
+                    credentials = base64.b64encode(f"{WP_USER}:{WP_PASSWORD}".encode()).decode()
                     headers_wp = {
-                        "Content-Disposition": f"attachment; filename*=UTF-8''{requests.utils.quote(fname)}",
-                        "Content-Type": "application/pdf"
+                        "Content-Disposition": f"attachment; filename=\"{fname}\"",
+                        "Content-Type": "application/pdf",
+                        "Authorization": f"Basic {credentials}"
                     }
-                    resp = requests.post(f"{WP_URL}/media", headers=headers_wp, data=content,
-                                       auth=(WP_USER, WP_PASSWORD), timeout=60)
-                    print(f"📄 WordPress upload: {resp.status_code}", flush=True)
+                    resp = requests.post(f"{WP_URL}/media", headers=headers_wp, data=content, timeout=60)
+                    print(f"📄 WordPress upload: {resp.status_code} | {resp.text[:300]}", flush=True)
                     if resp.status_code == 201:
                         pdf_url = resp.json()["source_url"]
                         draft.setdefault("pdf_embeds", []).append({"url": pdf_url, "name": fname})
