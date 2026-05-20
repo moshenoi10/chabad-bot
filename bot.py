@@ -601,6 +601,13 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
             content += f'\n\n<!-- wp:embed {{"url":"{url}","type":"video","providerNameSlug":"youtube","responsive":true}} -->\n<figure class="wp-block-embed is-type-video is-provider-youtube"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n<!-- /wp:embed -->'
 
     # העלאת PDF לוורדפרס
+    # הוספת PDF שכבר הועלו לאתר
+    for pdf in draft.get("pdf_embeds", []):
+        pdf_url = pdf["url"]
+        pdf_name = pdf["name"]
+        content += f'\n\n<div class="wp-block-file"><object data="{pdf_url}" type="application/pdf" width="100%" height="600px"><a href="{pdf_url}">{pdf_name}</a></object></div>'
+
+    # העלאת PDF ישן (גיבוי)
     for pdf in draft.get("pdf_files", []):
         try:
             print(f"מעלה PDF: {pdf['name']} ({len(pdf['bytes'])} bytes)", flush=True)
@@ -1730,11 +1737,33 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             doc = msg["document"]
             mime = doc.get("mime_type", "")
             file_id = doc["file_id"]
+            file_size = doc.get("file_size", 0)
+            file_name = doc.get("file_name", "document")
+            print(f"📄 קובץ התקבל: {file_name} | mime: {mime} | size: {file_size} bytes", flush=True)
             if mime == "application/pdf":
+                print(f"📄 מנסה להוריד PDF: {file_id}", flush=True)
                 content = get_file(file_id)
+                print(f"📄 הורדה: {'הצלחה ' + str(len(content)) + ' bytes' if content else 'נכשל'}", flush=True)
                 if content:
-                    draft.setdefault("pdf_files", []).append({"bytes": content, "name": doc.get("file_name", "document.pdf")})
-                    send_message(chat_id, f"✅ PDF נוסף! ({len(draft.get('pdf_files',[]))} קבצים)\n\nשלח עוד או /done:")
+                    # העלה מיד לוורדפרס ושמור רק URL
+                    send_message(chat_id, "⏳ מעלה PDF לאתר...")
+                    fname = file_name if file_name.endswith('.pdf') else file_name + '.pdf'
+                    headers_wp = {
+                        "Content-Disposition": f"attachment; filename*=UTF-8''{requests.utils.quote(fname)}",
+                        "Content-Type": "application/pdf"
+                    }
+                    resp = requests.post(f"{WP_URL}/media", headers=headers_wp, data=content,
+                                       auth=(WP_USER, WP_PASSWORD), timeout=60)
+                    print(f"📄 WordPress upload: {resp.status_code}", flush=True)
+                    if resp.status_code == 201:
+                        pdf_url = resp.json()["source_url"]
+                        draft.setdefault("pdf_embeds", []).append({"url": pdf_url, "name": fname})
+                        send_message(chat_id, f"✅ PDF הועלה לאתר! ({len(draft.get('pdf_embeds',[]))} קבצים)\n\nשלח עוד או /done:")
+                    else:
+                        print(f"📄 שגיאה: {resp.text[:200]}", flush=True)
+                        send_message(chat_id, f"❌ שגיאה בהעלאת PDF: {resp.status_code}\nנסה שוב.")
+                else:
+                    send_message(chat_id, "❌ לא הצלחתי להוריד את ה-PDF. נסה שוב.")
             elif mime and mime.startswith("audio/"):
                 content = get_file(file_id)
                 if content:
