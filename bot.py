@@ -1747,15 +1747,30 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                 if content:
                     send_message(chat_id, "⏳ מעלה PDF לאתר...")
                     fname = file_name if file_name.endswith('.pdf') else file_name + '.pdf'
+                    # שם בטוח לוורדפרס (ASCII בלבד)
+                    safe_fname = f"doc_{int(time.time())}.pdf"
                     import base64
                     credentials = base64.b64encode(f"{WP_USER}:{WP_PASSWORD}".encode()).decode()
                     headers_wp = {
-                        "Content-Disposition": f"attachment; filename=\"{fname}\"",
+                        "Content-Disposition": f'attachment; filename="{safe_fname}"',
                         "Content-Type": "application/pdf",
                         "Authorization": f"Basic {credentials}"
                     }
                     resp = requests.post(f"{WP_URL}/media", headers=headers_wp, data=content, timeout=60)
-                    print(f"📄 WordPress upload: {resp.status_code} | {resp.text[:300]}", flush=True)
+                    print(f"📄 WordPress upload: {resp.status_code}", flush=True)
+                    if resp.status_code == 201:
+                        pdf_url = resp.json()["source_url"]
+                        # עדכן את השם המוצג לשם העברי המקורי
+                        media_id = resp.json()["id"]
+                        requests.post(f"{WP_URL}/media/{media_id}",
+                                     json={"title": fname.replace('.pdf',''), "caption": fname},
+                                     headers={"Authorization": f"Basic {credentials}"},
+                                     timeout=10)
+                        draft.setdefault("pdf_embeds", []).append({"url": pdf_url, "name": fname})
+                        send_message(chat_id, f"✅ PDF הועלה! ({len(draft.get('pdf_embeds',[]))} קבצים)\n\nשלח עוד או /done:")
+                    else:
+                        print(f"📄 שגיאה: {resp.text[:300]}", flush=True)
+                        send_message(chat_id, f"❌ שגיאה בהעלאת PDF ({resp.status_code}). נסה שוב.")
                     if resp.status_code == 201:
                         pdf_url = resp.json()["source_url"]
                         draft.setdefault("pdf_embeds", []).append({"url": pdf_url, "name": fname})
