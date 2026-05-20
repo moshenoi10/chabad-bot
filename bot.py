@@ -163,7 +163,8 @@ ADMIN_MENU = {
         [{"text": "📋 כתבות אחרונות"}, {"text": "📝 טיוטות"}],
         [{"text": "👥 ניהול משתמשים"}, {"text": "📊 לוג פעולות"}],
         [{"text": "📧 ניהול מייל"}, {"text": "📈 אנליטיקס"}],
-        [{"text": "📢 הפצת תוכן"}, {"text": "🎥 הפצת וידאו"}]
+        [{"text": "📢 הפצת תוכן"}, {"text": "🎥 הפצת וידאו"}],
+        [{"text": "🌐 ניהול רשתות"}]
     ],
     "resize_keyboard": True,
     "persistent": True
@@ -176,7 +177,8 @@ SENIOR_EDITOR_MENU = {
         [{"text": "✏️ עריכת כתבה"}, {"text": "🗑️ מחיקת כתבה"}],
         [{"text": "📋 כתבות אחרונות"}, {"text": "📝 טיוטות"}],
         [{"text": "📧 ניהול מייל"}, {"text": "📈 אנליטיקס"}],
-        [{"text": "📢 הפצת תוכן"}, {"text": "🎥 הפצת וידאו"}]
+        [{"text": "📢 הפצת תוכן"}, {"text": "🎥 הפצת וידאו"}],
+        [{"text": "🌐 ניהול רשתות"}]
     ],
     "resize_keyboard": True,
     "persistent": True
@@ -1266,6 +1268,23 @@ def handle_message(msg):
         draft["step"] = "idle"
         return
 
+    if text == "🌐 ניהול רשתות" and is_senior_editor(user_id):
+        fb_ok = "✅" if os.environ.get("FB_PAGE_TOKEN") else "❌"
+        ig_ok = "✅" if os.environ.get("IG_USER_ID") else "❌"
+        send_message(chat_id, f"""🌐 <b>ניהול רשתות חברתיות</b>
+
+{fb_ok} פייסבוק
+{ig_ok} אינסטגרם""", {
+            "inline_keyboard": [
+                [{"text": "📊 סטטיסטיקות פייסבוק", "callback_data": "social_stats_fb"},
+                 {"text": "📊 סטטיסטיקות אינסטגרם", "callback_data": "social_stats_ig"}],
+                [{"text": "🗑️ מחק פוסט פייסבוק", "callback_data": "social_delete_fb"},
+                 {"text": "🗑️ מחק פוסט אינסטגרם", "callback_data": "social_delete_ig"}],
+                [{"text": "📋 פוסטים אחרונים", "callback_data": "social_recent_posts"}]
+            ]
+        })
+        return
+
     if text == "📢 הפצת תוכן" and is_editor(user_id):
         drafts[user_id]["step"] = "social_content"
         drafts[user_id]["social_data"] = {}
@@ -2287,6 +2306,41 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             send_message(chat_id, "⚠️ שלח קובץ וידאו או לינק Drive:")
         return True
 
+    elif step == "social_delete_fb_input":
+        fb_token = os.environ.get("FB_PAGE_TOKEN","")
+        try:
+            resp = requests.delete(
+                f"https://graph.facebook.com/{text}",
+                params={"access_token": fb_token},
+                timeout=15
+            )
+            if resp.status_code == 200:
+                send_message(chat_id, "✅ פוסט נמחק מפייסבוק!", get_menu(user_id))
+            else:
+                send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
+        except Exception as e:
+            send_message(chat_id, f"❌ {e}")
+        draft["step"] = "idle"
+        return True
+
+    elif step == "social_delete_ig_input":
+        ig_user_id = os.environ.get("IG_USER_ID","")
+        fb_token = os.environ.get("FB_PAGE_TOKEN","")
+        try:
+            resp = requests.delete(
+                f"https://graph.facebook.com/{text}",
+                params={"access_token": fb_token},
+                timeout=15
+            )
+            if resp.status_code == 200:
+                send_message(chat_id, "✅ פוסט נמחק מאינסטגרם!", get_menu(user_id))
+            else:
+                send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
+        except Exception as e:
+            send_message(chat_id, f"❌ {e}")
+        draft["step"] = "idle"
+        return True
+
     elif step == "social_video_platforms":
         pass
         return True
@@ -2418,101 +2472,6 @@ def _process_next_social_platform(chat_id, user_id, draft, drafts):
         ok, result = post_to_twitter(text_content, link)
         send_message(chat_id, f"✅ פורסם בטוויטר!" if ok else f"❌ טוויטר: {result}")
         _process_next_social_platform(chat_id, user_id, draft, drafts)
-
-def post_to_facebook(text, image_bytes=None):
-    """פרסום לדף פייסבוק"""
-    fb_token = os.environ.get("FB_PAGE_TOKEN", "")
-    fb_page_id = os.environ.get("FB_PAGE_ID", "")
-    if not fb_token or not fb_page_id:
-        return False, "❌ FB_PAGE_TOKEN או FB_PAGE_ID חסרים ב-Render"
-    try:
-        if image_bytes:
-            # העלה תמונה
-            photo_resp = requests.post(
-                f"https://graph.facebook.com/{fb_page_id}/photos",
-                data={"caption": text, "access_token": fb_token},
-                files={"source": ("image.jpg", image_bytes, "image/jpeg")},
-                timeout=30
-            )
-            if photo_resp.status_code == 200:
-                return True, photo_resp.json().get("id")
-            return False, photo_resp.text[:200]
-        else:
-            resp = requests.post(
-                f"https://graph.facebook.com/{fb_page_id}/feed",
-                data={"message": text, "access_token": fb_token},
-                timeout=15
-            )
-            if resp.status_code == 200:
-                return True, resp.json().get("id")
-            return False, resp.text[:200]
-    except Exception as e:
-        return False, str(e)
-
-def post_to_instagram(caption, image_bytes=None):
-    """פרסום לאינסטגרם"""
-    fb_token = os.environ.get("FB_PAGE_TOKEN", "")
-    ig_user_id = os.environ.get("IG_USER_ID", "")
-    if not fb_token or not ig_user_id:
-        return False, "❌ IG_USER_ID או FB_PAGE_TOKEN חסרים"
-    try:
-        if not image_bytes:
-            return False, "אינסטגרם דורש תמונה"
-        # העלה תמונה לאינסטגרם
-        container_resp = requests.post(
-            f"https://graph.facebook.com/{ig_user_id}/media",
-            data={
-                "caption": caption,
-                "image_url": "",
-                "access_token": fb_token
-            },
-            files={"image": ("image.jpg", image_bytes, "image/jpeg")},
-            timeout=30
-        )
-        if container_resp.status_code != 200:
-            return False, container_resp.text[:200]
-        container_id = container_resp.json().get("id")
-        publish_resp = requests.post(
-            f"https://graph.facebook.com/{ig_user_id}/media_publish",
-            data={"creation_id": container_id, "access_token": fb_token},
-            timeout=15
-        )
-        if publish_resp.status_code == 200:
-            return True, publish_resp.json().get("id")
-        return False, publish_resp.text[:200]
-    except Exception as e:
-        return False, str(e)
-
-def upload_to_tiktok(video_bytes, caption="", hashtags=""):
-    """העלאה לטיקטוק"""
-    tiktok_token = os.environ.get("TIKTOK_TOKEN", "")
-    if not tiktok_token:
-        return False, "❌ TIKTOK_TOKEN חסר ב-Render"
-    try:
-        full_caption = f"{caption} {hashtags}".strip()
-        init_resp = requests.post(
-            "https://open.tiktokapis.com/v2/post/publish/video/init/",
-            headers={"Authorization": f"Bearer {tiktok_token}", "Content-Type": "application/json"},
-            json={
-                "post_info": {"title": full_caption, "privacy_level": "PUBLIC_TO_EVERYONE", "disable_duet": False, "disable_comment": False, "disable_stitch": False},
-                "source_info": {"source": "FILE_UPLOAD", "video_size": len(video_bytes), "chunk_size": len(video_bytes), "total_chunk_count": 1}
-            },
-            timeout=30
-        )
-        if init_resp.status_code != 200:
-            return False, init_resp.text[:200]
-        upload_url = init_resp.json()["data"]["upload_url"]
-        upload_resp = requests.put(
-            upload_url,
-            headers={"Content-Type": "video/mp4", "Content-Range": f"bytes 0-{len(video_bytes)-1}/{len(video_bytes)}"},
-            data=video_bytes,
-            timeout=120
-        )
-        if upload_resp.status_code in (200, 201):
-            return True, "הועלה בהצלחה"
-        return False, upload_resp.text[:200]
-    except Exception as e:
-        return False, str(e)
 
 def _add_videos_to_post(chat_id, user_id, draft, drafts, videos, service="vimeo"):
     """מוסיף סרטונים לכתבה קיימת"""
@@ -2817,9 +2776,11 @@ def handle_callback(cb):
             draft["last_post_title"] = post_title
             send_message(chat_id, f"✅ <b>הכתבה פורסמה ונשלחה לערוץ!</b>\n🔗 {post_url}", {
                 "inline_keyboard": [
-                    [{"text": "📢 הפץ לרשתות חברתיות", "callback_data": "share_social_post"}],
-                    [{"text": "🐦 פרסם בטוויטר", "callback_data": "share_twitter"}],
-                    [{"text": "✅ סיום", "callback_data": "publish_done"}]
+                    [{"text": "📘 פרסם בפייסבוק", "callback_data": "auto_share_fb"},
+                     {"text": "📸 פרסם באינסטגרם", "callback_data": "auto_share_ig"}],
+                    [{"text": "🌐 פרסם בכולם", "callback_data": "auto_share_all"}],
+                    [{"text": "🐦 טוויטר", "callback_data": "share_twitter"},
+                     {"text": "✅ סיום", "callback_data": "publish_done"}]
                 ]
             })
         else:
@@ -3136,6 +3097,172 @@ def handle_callback(cb):
         draft["step"] = "social_yt_title"
         send_message(chat_id, "▶️ <b>YouTube ראשון</b>\n\nשלח כותרת לסרטון:")
 
+    elif cb_data == "social_stats_fb":
+        fb_token = os.environ.get("FB_PAGE_TOKEN","")
+        fb_page_id = os.environ.get("FB_PAGE_ID","")
+        if not fb_token:
+            send_message(chat_id, "❌ FB_PAGE_TOKEN חסר")
+            return
+        send_message(chat_id, "⏳ מושך נתונים...")
+        try:
+            resp = requests.get(
+                f"https://graph.facebook.com/{fb_page_id}/insights",
+                params={"metric": "page_impressions,page_engaged_users,page_fans", "period": "day", "access_token": fb_token},
+                timeout=15
+            )
+            if resp.status_code == 200:
+                data = resp.json().get("data", [])
+                msg = "📊 <b>סטטיסטיקות פייסבוק:</b>\n\n"
+                for item in data:
+                    msg += f"<b>{item['name']}:</b> {item['values'][-1]['value'] if item['values'] else 'N/A'}\n"
+                send_message(chat_id, msg)
+            else:
+                send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
+        except Exception as e:
+            send_message(chat_id, f"❌ שגיאה: {e}")
+
+    elif cb_data == "social_stats_ig":
+        ig_user_id = os.environ.get("IG_USER_ID","")
+        fb_token = os.environ.get("FB_PAGE_TOKEN","")
+        if not ig_user_id:
+            send_message(chat_id, "❌ IG_USER_ID חסר")
+            return
+        send_message(chat_id, "⏳ מושך נתונים...")
+        try:
+            resp = requests.get(
+                f"https://graph.facebook.com/{ig_user_id}",
+                params={"fields": "followers_count,media_count,profile_views", "access_token": fb_token},
+                timeout=15
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                msg = f"""📊 <b>סטטיסטיקות אינסטגרם:</b>
+
+👥 עוקבים: <b>{data.get('followers_count', 'N/A')}</b>
+📸 פוסטים: <b>{data.get('media_count', 'N/A')}</b>
+👁 צפיות בפרופיל: <b>{data.get('profile_views', 'N/A')}</b>"""
+                send_message(chat_id, msg)
+            else:
+                send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
+        except Exception as e:
+            send_message(chat_id, f"❌ שגיאה: {e}")
+
+    elif cb_data == "social_delete_fb":
+        draft["step"] = "social_delete_fb_input"
+        send_message(chat_id, "🗑️ שלח את ה-ID של הפוסט למחיקה\n(מתוך הלינק לפוסט):")
+
+    elif cb_data == "social_delete_ig":
+        draft["step"] = "social_delete_ig_input"
+        send_message(chat_id, "🗑️ שלח את ה-ID של הפוסט באינסטגרם למחיקה:")
+
+    elif cb_data == "social_recent_posts":
+        fb_token = os.environ.get("FB_PAGE_TOKEN","")
+        fb_page_id = os.environ.get("FB_PAGE_ID","")
+        send_message(chat_id, "⏳ מושך פוסטים אחרונים...")
+        try:
+            resp = requests.get(
+                f"https://graph.facebook.com/{fb_page_id}/posts",
+                params={"fields": "id,message,created_time", "limit": 5, "access_token": fb_token},
+                timeout=15
+            )
+            if resp.status_code == 200:
+                posts = resp.json().get("data", [])
+                if posts:
+                    msg = "📋 <b>5 פוסטים אחרונים בפייסבוק:</b>\n\n"
+                    for p in posts:
+                        msg += f"🆔 {p['id']}\n{p.get('message','')[:50]}...\n{p.get('created_time','')}\n\n"
+                    send_message(chat_id, msg)
+                else:
+                    send_message(chat_id, "אין פוסטים.")
+            else:
+                send_message(chat_id, f"❌ {resp.text[:200]}")
+        except Exception as e:
+            send_message(chat_id, f"❌ {e}")
+
+    elif cb_data in ("auto_share_fb", "auto_share_ig", "auto_share_all"):
+        post_url = draft.get("last_post_url", "")
+        post_title = draft.get("last_post_title", "")
+        post_body = draft.get("body", "")
+        post_images = [draft.get("main_image")] + draft.get("gallery", [])
+        post_images = [img for img in post_images if img]  # הסר None
+        
+        import re
+        # נקה HTML tags מהגוף
+        clean_body = re.sub(r'<[^>]+>', '', post_body).strip()
+        
+        # פורמט: שורה ראשונה מודגשת (בפייסבוק) + גוף
+        fb_text = f"{post_title}\n\n{clean_body}"
+        ig_text = f"{post_title}\n\n{clean_body}"
+        
+        def _auto_share():
+            if cb_data in ("auto_share_fb", "auto_share_all"):
+                send_message(chat_id, "⏳ מעלה לפייסבוק...")
+                if len(post_images) > 1:
+                    # העלה כמה תמונות
+                    photo_ids = []
+                    for img in post_images[:10]:
+                        resp = requests.post(
+                            f"https://graph.facebook.com/{os.environ.get('FB_PAGE_ID')}/photos",
+                            data={"published": "false", "access_token": os.environ.get("FB_PAGE_TOKEN")},
+                            files={"source": ("image.jpg", img, "image/jpeg")},
+                            timeout=30
+                        )
+                        if resp.status_code == 200:
+                            photo_ids.append({"media_fbid": resp.json()["id"]})
+                    if photo_ids:
+                        # פרסם פוסט עם כל התמונות
+                        resp = requests.post(
+                            f"https://graph.facebook.com/{os.environ.get('FB_PAGE_ID')}/feed",
+                            data={
+                                "message": fb_text,
+                                "access_token": os.environ.get("FB_PAGE_TOKEN"),
+                                **{f"attached_media[{i}]": f'{{"media_fbid":"{pid["media_fbid"]}"}}' for i, pid in enumerate(photo_ids)}
+                            },
+                            timeout=30
+                        )
+                        ok = resp.status_code == 200
+                        result = resp.json().get("id","") if ok else resp.text[:200]
+                    else:
+                        ok, result = post_to_facebook(fb_text)
+                elif post_images:
+                    ok, result = post_to_facebook(fb_text, post_images[0])
+                else:
+                    ok, result = post_to_facebook(fb_text)
+                
+                if ok:
+                    draft["last_fb_post_id"] = result
+                    send_message(chat_id, "✅ פורסם בפייסבוק!")
+                else:
+                    send_message(chat_id, f"❌ פייסבוק נכשל: {result}", {
+                        "inline_keyboard": [[{"text": "🔄 נסה שוב", "callback_data": "auto_share_fb"}]]
+                    })
+
+            if cb_data in ("auto_share_ig", "auto_share_all"):
+                send_message(chat_id, "⏳ מעלה לאינסטגרם...")
+                if not post_images:
+                    send_message(chat_id, "⚠️ אינסטגרם דורש תמונה – לא פורסם")
+                elif len(post_images) > 1:
+                    # קרוסלה – עד 10 תמונות
+                    ok, result = post_to_instagram_carousel(ig_text, post_images[:10])
+                    if ok:
+                        draft["last_ig_post_id"] = result
+                        send_message(chat_id, "✅ פורסם באינסטגרם!")
+                    else:
+                        send_message(chat_id, f"❌ אינסטגרם נכשל: {result}", {
+                            "inline_keyboard": [[{"text": "🔄 נסה שוב", "callback_data": "auto_share_ig"}]]
+                        })
+                else:
+                    ok, result = post_to_instagram(ig_text, post_images[0])
+                    if ok:
+                        draft["last_ig_post_id"] = result
+                        send_message(chat_id, "✅ פורסם באינסטגרם!")
+                    else:
+                        send_message(chat_id, f"❌ אינסטגרם נכשל: {result}", {
+                            "inline_keyboard": [[{"text": "🔄 נסה שוב", "callback_data": "auto_share_ig"}]]
+                        })
+
+        threading.Thread(target=_auto_share, daemon=True).start()
+
     elif cb_data == "share_social_post":
         post_url = draft.get("last_post_url", "")
         post_title = draft.get("last_post_title", "")
@@ -3444,6 +3571,49 @@ def post_to_facebook(text, image_bytes=None, link=None):
         if resp.status_code == 200:
             return True, resp.json().get("id", "")
         return False, resp.text[:200]
+    except Exception as e:
+        return False, str(e)
+
+def post_to_instagram_carousel(caption, images_list):
+    """פרסום קרוסלה לאינסטגרם עם מספר תמונות"""
+    ig_user_id = os.environ.get("IG_USER_ID", "")
+    fb_token = os.environ.get("FB_PAGE_TOKEN", "")
+    if not ig_user_id or not fb_token:
+        return False, "IG_USER_ID או FB_PAGE_TOKEN חסרים"
+    try:
+        children = []
+        for img in images_list[:10]:
+            resp = requests.post(
+                f"https://graph.facebook.com/v18.0/{ig_user_id}/media",
+                data={"is_carousel_item": "true", "access_token": fb_token},
+                files={"image": ("image.jpg", img, "image/jpeg")},
+                timeout=30
+            )
+            if resp.status_code == 200:
+                children.append(resp.json().get("id"))
+        if not children:
+            return False, "לא הצלחתי להעלות תמונות"
+        carousel_resp = requests.post(
+            f"https://graph.facebook.com/v18.0/{ig_user_id}/media",
+            data={
+                "media_type": "CAROUSEL",
+                "caption": caption,
+                "children": ",".join(children),
+                "access_token": fb_token
+            },
+            timeout=30
+        )
+        if carousel_resp.status_code != 200:
+            return False, carousel_resp.text[:200]
+        carousel_id = carousel_resp.json().get("id")
+        publish_resp = requests.post(
+            f"https://graph.facebook.com/v18.0/{ig_user_id}/media_publish",
+            data={"creation_id": carousel_id, "access_token": fb_token},
+            timeout=15
+        )
+        if publish_resp.status_code == 200:
+            return True, publish_resp.json().get("id")
+        return False, publish_resp.text[:200]
     except Exception as e:
         return False, str(e)
 
