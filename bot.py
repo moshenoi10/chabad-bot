@@ -1742,6 +1742,11 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             print(f"📄 קובץ התקבל: {file_name} | mime: {mime} | size: {file_size} bytes", flush=True)
             if mime == "application/pdf":
                 print(f"📄 מנסה להוריד PDF: {file_id}", flush=True)
+                # בדוק אם כבר העלינו את הקובץ הזה
+                uploaded_ids = draft.get("uploaded_file_ids", set())
+                if file_id in uploaded_ids:
+                    print(f"📄 כפול - מדלג", flush=True)
+                    return True
                 content = get_file(file_id)
                 print(f"📄 הורדה: {'הצלחה ' + str(len(content)) + ' bytes' if content else 'נכשל'}", flush=True)
                 if content:
@@ -1760,13 +1765,13 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                     print(f"📄 WordPress upload: {resp.status_code}", flush=True)
                     if resp.status_code == 201:
                         pdf_url = resp.json()["source_url"]
-                        # עדכן את השם המוצג לשם העברי המקורי
                         media_id = resp.json()["id"]
                         requests.post(f"{WP_URL}/media/{media_id}",
                                      json={"title": fname.replace('.pdf',''), "caption": fname},
                                      headers={"Authorization": f"Basic {credentials}"},
                                      timeout=10)
                         draft.setdefault("pdf_embeds", []).append({"url": pdf_url, "name": fname})
+                        draft.setdefault("uploaded_file_ids", set()).add(file_id)
                         send_message(chat_id, f"✅ PDF הועלה! ({len(draft.get('pdf_embeds',[]))} קבצים)\n\nשלח עוד או /done:")
                     else:
                         print(f"📄 שגיאה: {resp.text[:300]}", flush=True)
