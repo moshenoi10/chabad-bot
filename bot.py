@@ -46,11 +46,15 @@ GERESH_WORDS = ['חב״ד', 'ל״ג', 'ת״ת', 'ע״י', 'ע״ה', 'ז״ל', '�
 watermark_settings = {
     "enabled": True,
     "text": "עדכוני חב״ד",
-    "font_size": "medium",
-    "text_color": "white",
-    "bg_color": "black",
-    "bg_opacity": 140,
-    "position": "bottom_right"
+    "font_size": 40,           # גודל פיקסלים
+    "text_color": "#FFFFFF",   # hex color
+    "bg_color": "#000000",     # hex color
+    "bg_opacity": 140,         # 0-255
+    "pos_x": 95,               # אחוז מרוחב (0-100), מימין
+    "pos_y": 95,               # אחוז מגובה (0-100), מלמטה
+    "font": "default",         # default / bold / serif
+    "logo_bytes": None,        # תמונת לוגו במקום טקסט
+    "mode": "text"             # text / logo
 }
 
 # ─── מערכת הרשאות ────────────────────────────────────────
@@ -2385,7 +2389,96 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
 
     elif step == "wm_text_input":
         watermark_settings["text"] = text.strip()
-        send_message(chat_id, f"✅ טקסט ווטרמארק עודכן: <b>{text.strip()}</b>")
+        send_message(chat_id, f"✅ טקסט עודכן: <b>{text.strip()}</b>")
+        draft["step"] = "idle"
+        return True
+
+    elif step == "wm_fontsize_input":
+        try:
+            size = int(text.strip())
+            if 10 <= size <= 200:
+                watermark_settings["font_size"] = size
+                send_message(chat_id, f"✅ גודל עודכן: {size}px")
+            else:
+                send_message(chat_id, "⚠️ הכנס מספר בין 10 ל-200")
+        except:
+            send_message(chat_id, "⚠️ הכנס מספר תקין")
+        draft["step"] = "idle"
+        return True
+
+    elif step == "wm_textcolor_input":
+        color = text.strip()
+        if not color.startswith("#"):
+            color = "#" + color
+        if len(color) in (4, 7):
+            watermark_settings["text_color"] = color
+            send_message(chat_id, f"✅ צבע טקסט עודכן: {color}")
+        else:
+            send_message(chat_id, "⚠️ פורמט לא תקין. דוגמה: #FFFFFF")
+        draft["step"] = "idle"
+        return True
+
+    elif step == "wm_bgcolor_input":
+        color = text.strip()
+        if not color.startswith("#"):
+            color = "#" + color
+        if len(color) in (4, 7):
+            watermark_settings["bg_color"] = color
+            send_message(chat_id, f"✅ צבע רקע עודכן: {color}")
+        else:
+            send_message(chat_id, "⚠️ פורמט לא תקין. דוגמה: #000000")
+        draft["step"] = "idle"
+        return True
+
+    elif step == "wm_opacity_input":
+        try:
+            opacity = int(text.strip())
+            if 0 <= opacity <= 255:
+                watermark_settings["bg_opacity"] = opacity
+                send_message(chat_id, f"✅ שקיפות עודכנה: {opacity}")
+            else:
+                send_message(chat_id, "⚠️ הכנס מספר בין 0 ל-255")
+        except:
+            send_message(chat_id, "⚠️ הכנס מספר תקין")
+        draft["step"] = "idle"
+        return True
+
+    elif step == "wm_posx_input":
+        try:
+            val = int(text.strip())
+            if 0 <= val <= 100:
+                watermark_settings["pos_x"] = val
+                send_message(chat_id, f"✅ מיקום X עודכן: {val}%")
+            else:
+                send_message(chat_id, "⚠️ הכנס מספר בין 0 ל-100")
+        except:
+            send_message(chat_id, "⚠️ הכנס מספר תקין")
+        draft["step"] = "idle"
+        return True
+
+    elif step == "wm_posy_input":
+        try:
+            val = int(text.strip())
+            if 0 <= val <= 100:
+                watermark_settings["pos_y"] = val
+                send_message(chat_id, f"✅ מיקום Y עודכן: {val}%")
+            else:
+                send_message(chat_id, "⚠️ הכנס מספר בין 0 ל-100")
+        except:
+            send_message(chat_id, "⚠️ הכנס מספר תקין")
+        draft["step"] = "idle"
+        return True
+
+    elif step == "wm_logo_input":
+        if "photo" in msg or "document" in msg:
+            obj = msg.get("photo", [])
+            file_id = obj[-1]["file_id"] if obj else msg.get("document", {}).get("file_id")
+            if file_id:
+                logo_bytes = get_file(file_id)
+                if logo_bytes:
+                    watermark_settings["logo_bytes"] = logo_bytes
+                    watermark_settings["mode"] = "logo"
+                    send_message(chat_id, "✅ לוגו הועלה! מצב לוגו פעיל.")
         draft["step"] = "idle"
         return True
 
@@ -2394,11 +2487,11 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             content = get_file(msg["photo"][-1]["file_id"])
             if content:
                 watermarked = add_watermark(content)
-                send_image(chat_id, watermarked, "תצוגה מקדימה ווטרמארק")
+                send_image(chat_id, watermarked, "🖼 תצוגה מקדימה ווטרמארק")
         draft["step"] = "idle"
         return True
 
-    elif step == "email_add_sender_input":
+    elif step == "wm_text_input":
         email = text.strip().lower()
         import re
         if re.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
@@ -2462,6 +2555,7 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
         return True
 
     elif step == "social_delete_ig_input":
+        print(f"מחיקת IG: קיבלתי '{text[:50]}'", flush=True)
         import re
         fb_token = os.environ.get("FB_PAGE_TOKEN","")
         ig_user_id = os.environ.get("IG_USER_ID","")
@@ -3277,63 +3371,86 @@ def handle_callback(cb):
         send_message(chat_id, f"""🖼 <b>הגדרות ווטרמארק</b>
 
 <b>סטטוס:</b> {'✅ פעיל' if wm['enabled'] else '❌ כבוי'}
+<b>מצב:</b> {'🖼 לוגו' if wm['mode']=='logo' else '✏️ טקסט'}
 <b>טקסט:</b> {wm['text']}
-<b>גודל:</b> {wm['font_size']}
+<b>גופן:</b> {wm.get('font','bold')}
+<b>גודל:</b> {wm['font_size']}px
 <b>צבע טקסט:</b> {wm['text_color']}
-<b>רקע:</b> {wm['bg_color']}
-<b>מיקום:</b> {wm['position']}""", {
+<b>צבע רקע:</b> {wm['bg_color']}
+<b>שקיפות רקע:</b> {wm['bg_opacity']}/255
+<b>מיקום X:</b> {wm['pos_x']}% (מימין)
+<b>מיקום Y:</b> {wm['pos_y']}% (מלמטה)""", {
             "inline_keyboard": [
                 [{"text": "✅ הפעל" if not wm['enabled'] else "❌ כבה", "callback_data": "wm_toggle"}],
-                [{"text": "✏️ שנה טקסט", "callback_data": "wm_text"}],
-                [{"text": "📏 גודל: קטן", "callback_data": "wm_size_small"},
-                 {"text": "📏 בינוני", "callback_data": "wm_size_medium"},
-                 {"text": "📏 גדול", "callback_data": "wm_size_large"}],
-                [{"text": "⬜ טקסט לבן", "callback_data": "wm_color_white"},
-                 {"text": "⬛ שחור", "callback_data": "wm_color_black"},
-                 {"text": "🟡 צהוב", "callback_data": "wm_color_yellow"}],
-                [{"text": "🔲 רקע שחור", "callback_data": "wm_bg_black"},
-                 {"text": "🔳 רקע לבן", "callback_data": "wm_bg_white"},
+                [{"text": "✏️ מצב טקסט", "callback_data": "wm_mode_text"},
+                 {"text": "🖼 מצב לוגו", "callback_data": "wm_mode_logo"}],
+                [{"text": "📝 שנה טקסט", "callback_data": "wm_text"}],
+                [{"text": "🔤 גופן רגיל", "callback_data": "wm_font_default"},
+                 {"text": "🔤 גופן מודגש", "callback_data": "wm_font_bold"},
+                 {"text": "🔤 גופן קלאסי", "callback_data": "wm_font_serif"}],
+                [{"text": "📏 שנה גודל (px)", "callback_data": "wm_fontsize"}],
+                [{"text": "🎨 צבע טקסט (hex)", "callback_data": "wm_textcolor"}],
+                [{"text": "🎨 צבע רקע (hex)", "callback_data": "wm_bgcolor"},
                  {"text": "🚫 ללא רקע", "callback_data": "wm_bg_none"}],
-                [{"text": "↙️ ימין למטה", "callback_data": "wm_pos_bottom_right"},
-                 {"text": "↘️ שמאל למטה", "callback_data": "wm_pos_bottom_left"}],
-                [{"text": "↗️ ימין למעלה", "callback_data": "wm_pos_top_right"},
-                 {"text": "↖️ שמאל למעלה", "callback_data": "wm_pos_top_left"}],
+                [{"text": "💧 שקיפות רקע", "callback_data": "wm_opacity"}],
+                [{"text": "↔️ מיקום X%", "callback_data": "wm_posx"},
+                 {"text": "↕️ מיקום Y%", "callback_data": "wm_posy"}],
                 [{"text": "🖼 תצוגה מקדימה", "callback_data": "wm_preview"}]
             ]
         })
 
     elif cb_data == "wm_toggle":
         watermark_settings["enabled"] = not watermark_settings["enabled"]
-        status = "הופעל" if watermark_settings["enabled"] else "כובה"
-        send_message(chat_id, f"✅ ווטרמארק {status}!")
+        send_message(chat_id, f"✅ ווטרמארק {'הופעל' if watermark_settings['enabled'] else 'כובה'}!")
+
+    elif cb_data == "wm_mode_text":
+        watermark_settings["mode"] = "text"
+        send_message(chat_id, "✅ מצב טקסט פעיל")
+
+    elif cb_data == "wm_mode_logo":
+        draft["step"] = "wm_logo_input"
+        send_message(chat_id, "🖼 שלח תמונת לוגו (PNG עם רקע שקוף מומלץ):")
 
     elif cb_data == "wm_text":
         draft["step"] = "wm_text_input"
-        send_message(chat_id, f"✏️ שלח טקסט חדש לווטרמארק:\n(נוכחי: {watermark_settings['text']})")
+        send_message(chat_id, f"✏️ שלח טקסט חדש:\n(נוכחי: {watermark_settings['text']})")
 
-    elif cb_data.startswith("wm_size_"):
-        size = cb_data.replace("wm_size_", "")
-        watermark_settings["font_size"] = size
-        send_message(chat_id, f"✅ גודל עודכן: {size}")
+    elif cb_data.startswith("wm_font_"):
+        font = cb_data.replace("wm_font_", "")
+        watermark_settings["font"] = font
+        send_message(chat_id, f"✅ גופן עודכן: {font}")
 
-    elif cb_data.startswith("wm_color_"):
-        color = cb_data.replace("wm_color_", "")
-        watermark_settings["text_color"] = color
-        send_message(chat_id, f"✅ צבע טקסט עודכן: {color}")
+    elif cb_data == "wm_fontsize":
+        draft["step"] = "wm_fontsize_input"
+        send_message(chat_id, f"📏 שלח גודל גופן בפיקסלים (10-200):\n(נוכחי: {watermark_settings['font_size']})")
 
-    elif cb_data.startswith("wm_bg_"):
-        bg = cb_data.replace("wm_bg_", "")
-        watermark_settings["bg_color"] = bg
-        send_message(chat_id, f"✅ רקע עודכן: {bg}")
+    elif cb_data == "wm_textcolor":
+        draft["step"] = "wm_textcolor_input"
+        send_message(chat_id, f"🎨 שלח צבע טקסט בפורמט hex:\nלדוגמה: #FFFFFF (לבן), #000000 (שחור), #FFD700 (זהב), #FF0000 (אדום)\n(נוכחי: {watermark_settings['text_color']})")
 
-    elif cb_data.startswith("wm_pos_"):
-        pos = cb_data.replace("wm_pos_", "")
-        watermark_settings["position"] = pos
-        send_message(chat_id, f"✅ מיקום עודכן!")
+    elif cb_data == "wm_bgcolor":
+        draft["step"] = "wm_bgcolor_input"
+        send_message(chat_id, f"🎨 שלח צבע רקע בפורמט hex:\n(נוכחי: {watermark_settings['bg_color']})")
+
+    elif cb_data == "wm_bg_none":
+        watermark_settings["bg_color"] = "none"
+        send_message(chat_id, "✅ רקע הוסר!")
+
+    elif cb_data == "wm_opacity":
+        draft["step"] = "wm_opacity_input"
+        send_message(chat_id, f"💧 שלח שקיפות רקע (0=שקוף לגמרי, 255=אטום לגמרי):\n(נוכחי: {watermark_settings['bg_opacity']})")
+
+    elif cb_data == "wm_posx":
+        draft["step"] = "wm_posx_input"
+        send_message(chat_id, f"↔️ שלח מיקום אופקי (0=שמאל קצה, 100=ימין קצה):\n(נוכחי: {watermark_settings['pos_x']}%)")
+
+    elif cb_data == "wm_posy":
+        draft["step"] = "wm_posy_input"
+        send_message(chat_id, f"↕️ שלח מיקום אנכי (0=עליון קצה, 100=תחתון קצה):\n(נוכחי: {watermark_settings['pos_y']}%)")
 
     elif cb_data == "wm_preview":
-        send_message(chat_id, "📸 שלח תמונה לבדיקת הווטרמארק:")
         draft["step"] = "wm_preview_input"
+        send_message(chat_id, "📸 שלח תמונה לבדיקת הווטרמארק:")
 
     elif cb_data == "social_stats_fb":
         fb_token = os.environ.get("FB_PAGE_TOKEN","")
@@ -3375,16 +3492,16 @@ def handle_callback(cb):
         try:
             resp = requests.get(
                 f"https://graph.facebook.com/v18.0/{ig_user_id}",
-                params={"fields": "followers_count,media_count,profile_views", "access_token": fb_token},
+                params={"fields": "followers_count,media_count,name", "access_token": fb_token},
                 timeout=15
             )
             if resp.status_code == 200:
                 data = resp.json()
                 msg = f"""📊 <b>סטטיסטיקות אינסטגרם:</b>
 
+👤 חשבון: <b>{data.get('name','')}</b>
 👥 עוקבים: <b>{data.get('followers_count', 'N/A')}</b>
-📸 פוסטים: <b>{data.get('media_count', 'N/A')}</b>
-👁 צפיות בפרופיל: <b>{data.get('profile_views', 'N/A')}</b>"""
+📸 פוסטים: <b>{data.get('media_count', 'N/A')}</b>"""
                 send_message(chat_id, msg)
             else:
                 send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
@@ -3895,55 +4012,70 @@ def add_watermark(image_bytes):
         overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
 
-        # גודל פונט
-        size_map = {"small": 0.025, "medium": 0.04, "large": 0.06}
-        ratio = size_map.get(watermark_settings.get("font_size", "medium"), 0.04)
-        font_size = max(16, int(img.width * ratio))
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
-        except:
-            font = ImageFont.load_default()
+        mode = watermark_settings.get("mode", "text")
 
-        text = watermark_settings.get("text", "עדכוני חב״ד")
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_w = bbox[2] - bbox[0]
-        text_h = bbox[3] - bbox[1]
-
-        # מיקום
-        margin = int(img.width * 0.02)
-        pos = watermark_settings.get("position", "bottom_right")
-        if pos == "bottom_right":
-            x = img.width - text_w - margin
-            y = img.height - text_h - margin
-        elif pos == "bottom_left":
-            x = margin
-            y = img.height - text_h - margin
-        elif pos == "top_right":
-            x = img.width - text_w - margin
-            y = margin
-        elif pos == "top_left":
-            x = margin
-            y = margin
+        if mode == "logo" and watermark_settings.get("logo_bytes"):
+            # מצב לוגו
+            logo = Image.open(io.BytesIO(watermark_settings["logo_bytes"])).convert("RGBA")
+            logo_w = int(img.width * 0.15)
+            logo_h = int(logo.height * logo_w / logo.width)
+            logo = logo.resize((logo_w, logo_h), Image.LANCZOS)
+            px = int(img.width * watermark_settings.get("pos_x", 95) / 100) - logo_w
+            py = int(img.height * watermark_settings.get("pos_y", 95) / 100) - logo_h
+            overlay.paste(logo, (max(0,px), max(0,py)), logo)
         else:
-            x = img.width - text_w - margin
-            y = img.height - text_h - margin
+            # מצב טקסט
+            font_size = watermark_settings.get("font_size", 40)
+            font_paths = {
+                "default": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "bold": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "serif": "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"
+            }
+            font_path = font_paths.get(watermark_settings.get("font", "bold"), font_paths["bold"])
+            try:
+                font = ImageFont.truetype(font_path, font_size)
+            except:
+                font = ImageFont.load_default()
 
-        # צבע טקסט
-        color_map = {"white": (255,255,255,255), "black": (0,0,0,255), "yellow": (255,220,0,255)}
-        text_color = color_map.get(watermark_settings.get("text_color","white"), (255,255,255,255))
+            text = watermark_settings.get("text", "עדכוני חב״ד")
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
 
-        # רקע
-        bg = watermark_settings.get("bg_color", "black")
-        opacity = watermark_settings.get("bg_opacity", 140)
-        padding = 8
-        if bg != "none":
-            bg_rgb = (0,0,0) if bg == "black" else (255,255,255)
-            draw.rectangle(
-                [x-padding, y-padding, x+text_w+padding, y+text_h+padding],
-                fill=(*bg_rgb, opacity)
-            )
+            # מיקום לפי אחוזים
+            px = int(img.width * watermark_settings.get("pos_x", 95) / 100) - text_w
+            py = int(img.height * watermark_settings.get("pos_y", 95) / 100) - text_h
+            px = max(0, min(px, img.width - text_w))
+            py = max(0, min(py, img.height - text_h))
 
-        draw.text((x, y), text, font=font, fill=text_color)
+            # המר hex לRGB
+            def hex_to_rgb(hex_color, alpha=255):
+                hex_color = hex_color.lstrip('#')
+                r, g, b = int(hex_color[0:2],16), int(hex_color[2:4],16), int(hex_color[4:6],16)
+                return (r, g, b, alpha)
+
+            # רקע
+            bg_color = watermark_settings.get("bg_color", "#000000")
+            bg_opacity = watermark_settings.get("bg_opacity", 140)
+            if bg_color != "none":
+                padding = 8
+                try:
+                    bg_rgba = hex_to_rgb(bg_color, bg_opacity)
+                except:
+                    bg_rgba = (0, 0, 0, bg_opacity)
+                draw.rectangle(
+                    [px-padding, py-padding, px+text_w+padding, py+text_h+padding],
+                    fill=bg_rgba
+                )
+
+            # טקסט
+            text_color = watermark_settings.get("text_color", "#FFFFFF")
+            try:
+                text_rgba = hex_to_rgb(text_color)
+            except:
+                text_rgba = (255, 255, 255, 255)
+            draw.text((px, py), text, font=font, fill=text_rgba)
+
         result = Image.alpha_composite(img, overlay)
         output = io.BytesIO()
         result.convert("RGB").save(output, format="JPEG", quality=90)
