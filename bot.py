@@ -3388,12 +3388,13 @@ def handle_callback(cb):
         media_id = cb_data.replace("ig_story_", "")
         ig_user_id = os.environ.get("IG_USER_ID","")
         fb_token = os.environ.get("FB_PAGE_TOKEN","")
-        # קח כותרת מה-draft או מהמשתנה הגלובלי
         import builtins
-        post_title = (draft.get("last_post_title") or 
-                     draft.get("title") or 
-                     getattr(builtins, 'LAST_POST_TITLE', "") or
-                     draft.get("social_data", {}).get("text_content", ""))
+        post_title = (draft.get("last_post_title") or
+                     draft.get("title") or
+                     getattr(builtins, 'LAST_POST_TITLE', ""))
+        # קח תמונה מה-draft
+        post_image = (draft.get("main_image") or
+                     (draft.get("gallery") or [None])[0])
 
         status_resp = requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
@@ -3404,35 +3405,16 @@ def handle_callback(cb):
 
         def _post_story():
             try:
-                # מצא URL של התמונה מהפוסט
-                edit_message(chat_id, msg_id, "⏳ מושך תמונה מהפוסט...")
-                media_resp = requests.get(
-                    f"https://graph.facebook.com/v18.0/{media_id}",
-                    params={"fields": "media_url,thumbnail_url", "access_token": fb_token},
-                    timeout=15
-                )
-                img_url = None
-                if media_resp.status_code == 200:
-                    data = media_resp.json()
-                    img_url = data.get("media_url") or data.get("thumbnail_url")
-                print(f"Story image URL: {img_url}", flush=True)
-
-                if not img_url:
-                    edit_message(chat_id, msg_id, "❌ לא מצאתי תמונה בפוסט")
+                if not post_image:
+                    edit_message(chat_id, msg_id, "❌ לא נמצאה תמונה – נסה מיד אחרי הפרסום")
                     return
 
-                # הורד את התמונה
-                img_resp = requests.get(img_url, timeout=30)
-                if img_resp.status_code != 200:
-                    edit_message(chat_id, msg_id, "❌ לא הצלחתי להוריד תמונה")
-                    return
-
-                # בנה תמונת סטורי עם תבנית
-                edit_message(chat_id, msg_id, "⏳ בונה תבנית סטורי...")
-                story_img = create_story_template(img_resp.content, post_title)
+                # בנה תמונת סטורי
+                edit_message(chat_id, msg_id, "⏳ בונה תמונת סטורי...")
+                story_img = create_story_template(post_image, post_title)
 
                 # העלה לוורדפרס
-                edit_message(chat_id, msg_id, "⏳ מעלה סטורי...")
+                edit_message(chat_id, msg_id, "⏳ מעלה...")
                 _, story_url = upload_image_to_wp(story_img, "story.jpg")
                 if not story_url:
                     edit_message(chat_id, msg_id, "❌ שגיאה בהעלאת תמונה")
@@ -3444,7 +3426,7 @@ def handle_callback(cb):
                     data={"image_url": story_url, "media_type": "STORIES", "access_token": fb_token},
                     timeout=30
                 )
-                print(f"Story container: {resp.status_code} {resp.text[:150]}", flush=True)
+                print(f"Story: {resp.status_code} {resp.text[:150]}", flush=True)
                 if resp.status_code != 200:
                     edit_message(chat_id, msg_id, f"❌ שגיאה: {resp.text[:200]}")
                     return
@@ -3456,7 +3438,6 @@ def handle_callback(cb):
                     data={"creation_id": container_id, "access_token": fb_token},
                     timeout=15
                 )
-                print(f"Story publish: {pub.status_code} {pub.text[:100]}", flush=True)
                 if pub.status_code == 200:
                     edit_message(chat_id, msg_id, "✅ סטורי פורסם!")
                 else:
@@ -3699,7 +3680,7 @@ https://business.facebook.com/creatorstudio
                 wm_images = [add_watermark(img) for img in post_images] if post_images else []
                 if len(wm_images) > 1:
                     photo_ids = []
-                    for img in wm_images[:10]:
+                    for img in wm_images[:30]:  # פייסבוק מאפשר עד 30
                         resp = requests.post(
                             f"https://graph.facebook.com/v18.0/{os.environ.get('FB_PAGE_ID')}/photos",
                             data={"published": "false", "access_token": os.environ.get("FB_PAGE_TOKEN")},
