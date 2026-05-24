@@ -3378,54 +3378,47 @@ def handle_callback(cb):
 
     elif cb_data.startswith("ig_story_"):
         media_id = cb_data.replace("ig_story_", "")
-        post_image = draft.get("main_image")
-        post_title = draft.get("last_post_title", draft.get("title", ""))
-        if post_image:
-            story_img = create_story_template(post_image, post_title)
-        else:
-            story_img = None
+        ig_user_id = os.environ.get("IG_USER_ID","")
+        fb_token = os.environ.get("FB_PAGE_TOKEN","")
 
-        # שלח הודעה אחת ועדכן אותה
         status_resp = requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            json={"chat_id": chat_id, "text": "⏳ מכין סטורי...", "parse_mode": "HTML"},
+            json={"chat_id": chat_id, "text": "⏳ מפרסם סטורי...", "parse_mode": "HTML"},
             timeout=10
         )
         msg_id = status_resp.json().get("result", {}).get("message_id") if status_resp.ok else None
 
         def _post_story():
-            ig_user_id = os.environ.get("IG_USER_ID","")
-            fb_token = os.environ.get("FB_PAGE_TOKEN","")
-            if story_img:
-                edit_message(chat_id, msg_id, "⏳ מעלה תמונת סטורי...")
-                _, img_url = upload_image_to_wp(story_img, "story.jpg")
-                if img_url:
-                    edit_message(chat_id, msg_id, "⏳ יוצר סטורי...")
-                    resp = requests.post(
-                        f"https://graph.facebook.com/v18.0/{ig_user_id}/media",
-                        data={"image_url": img_url, "media_type": "STORIES", "access_token": fb_token},
-                        timeout=30
+            try:
+                # שתף את הפוסט הקיים לסטורי לפי media_id
+                resp = requests.post(
+                    f"https://graph.facebook.com/v18.0/{ig_user_id}/media",
+                    data={
+                        "media_type": "STORIES",
+                        "source_type": "post",
+                        "source_media_id": media_id,
+                        "access_token": fb_token
+                    },
+                    timeout=30
+                )
+                print(f"Story reshare: {resp.status_code} {resp.text[:150]}", flush=True)
+                if resp.status_code == 200:
+                    container_id = resp.json().get("id")
+                    time.sleep(3)
+                    pub = requests.post(
+                        f"https://graph.facebook.com/v18.0/{ig_user_id}/media_publish",
+                        data={"creation_id": container_id, "access_token": fb_token},
+                        timeout=15
                     )
-                    print(f"Story container: {resp.status_code} {resp.text[:100]}", flush=True)
-                    if resp.status_code == 200:
-                        container_id = resp.json().get("id")
-                        time.sleep(5)
-                        pub = requests.post(
-                            f"https://graph.facebook.com/v18.0/{ig_user_id}/media_publish",
-                            data={"creation_id": container_id, "access_token": fb_token},
-                            timeout=15
-                        )
-                        print(f"Story publish: {pub.status_code} {pub.text[:100]}", flush=True)
-                        if pub.status_code == 200:
-                            edit_message(chat_id, msg_id, "✅ סטורי פורסם!")
-                        else:
-                            edit_message(chat_id, msg_id, f"❌ שגיאה: {pub.text[:200]}")
+                    print(f"Story publish: {pub.status_code} {pub.text[:100]}", flush=True)
+                    if pub.status_code == 200:
+                        edit_message(chat_id, msg_id, "✅ סטורי פורסם!")
                     else:
-                        edit_message(chat_id, msg_id, f"❌ שגיאה: {resp.text[:200]}")
+                        edit_message(chat_id, msg_id, f"❌ שגיאה: {pub.text[:200]}")
                 else:
-                    edit_message(chat_id, msg_id, "❌ לא הצלחתי להעלות תמונה")
-            else:
-                edit_message(chat_id, msg_id, "❌ אין תמונה לסטורי")
+                    edit_message(chat_id, msg_id, f"❌ שגיאה: {resp.text[:200]}")
+            except Exception as e:
+                edit_message(chat_id, msg_id, f"❌ שגיאה: {e}")
 
         threading.Thread(target=_post_story, daemon=True).start()
 
@@ -3696,6 +3689,9 @@ https://business.facebook.com/creatorstudio
                 else:
                     status_lines.append(f"❌ פייסבוק נכשל")
                 update("\n".join(status_lines) or "⏳")
+
+                if cb_data == "auto_share_fb":
+                    return
 
             if cb_data in ("auto_share_ig", "auto_share_all"):
                 update(("\n".join(status_lines) + "\n" if status_lines else "") + "⏳ מעלה לאינסטגרם...")
