@@ -34,6 +34,10 @@ email_system = {
 }
 youtube_tokens = {}
 
+# ─── מילים עם גרש ─────────────────────────────────────────
+GERESH_WORDS = ['חב״ד', 'ל״ג', 'ת״ת', 'ע״י', 'ע״ה', 'ז״ל', 'ב״ה',
+                'כ״ק', 'רשב״י', 'שליט״א', 'אדמו״ר', 'נשיא״נו']
+
 # ─── מערכת הרשאות ────────────────────────────────────────
 SUPER_ADMIN_ID = "1798097090"
 
@@ -86,14 +90,34 @@ def is_editor(user_id):
     return perm in ("admin", "editor")
 
 def notify_admin_error(error_msg):
+    # סנן שגיאות רשת זמניות – לא צריך להודיע על ניתוקים רגילים
+    ignore_patterns = [
+        "Connection aborted",
+        "Connection reset by peer",
+        "Network is unreachable",
+        "Failed to establish a new connection",
+        "Max retries exceeded",
+        "Read timed out",
+        "Connection refused",
+        "RemoteDisconnected",
+        "ConnectionResetError",
+        "NewConnectionError",
+        "TimeoutError",
+        "HTTPSConnectionPool",
+    ]
+    for pattern in ignore_patterns:
+        if pattern in str(error_msg):
+            print(f"ניתוק רגיל – לא מודיע: {error_msg[:100]}", flush=True)
+            return
+    # שגיאה אמיתית – שלח הודעה בעברית
     try:
         requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            json={"chat_id": SUPER_ADMIN_ID, "text": f"⚠️ <b>שגיאה בבוט:</b>\n\n{error_msg}", "parse_mode": "HTML"},
+            json={"chat_id": SUPER_ADMIN_ID, "text": f"⚠️ <b>שגיאה בבוט:</b>\n\n{error_msg[:500]}", "parse_mode": "HTML"},
             timeout=10
         )
     except Exception as _e:
-        print(f"שגיאה: {_e}", flush=True)
+        print(f"שגיאה בשליחת התראה: {_e}", flush=True)
 
 class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self):
@@ -164,7 +188,7 @@ ADMIN_MENU = {
         [{"text": "👥 ניהול משתמשים"}, {"text": "📊 לוג פעולות"}],
         [{"text": "📧 ניהול מייל"}, {"text": "📈 אנליטיקס"}],
         [{"text": "📢 הפצת תוכן"}, {"text": "🎥 הפצת וידאו"}],
-        [{"text": "🌐 ניהול רשתות"}]
+        [{"text": "🌐 ניהול רשתות"}, {"text": "⚙️ הגדרות מערכת"}]
     ],
     "resize_keyboard": True,
     "persistent": True
@@ -854,17 +878,33 @@ def fix_geresh(text):
     import re
     if not text:
         return text
-    # תקן pattern של אות״אות"אות → אות״אות + רווח + אות
-    text = re.sub(r'([א-ת])״([א-ת])"([א-ת])', r'\1״\2 \3', text)
-    # תקן אות"אות → אות״אות
+
+    # שלב 1: תקן ״" לפני אות → רווח
+    text = re.sub(r'״"([א-ת])', r'״ \1', text)
+
+    # שלב 2: החלף " רגיל בין אותיות עבריות ב-״
     text = re.sub(r'([א-ת])"([א-ת])', r'\1״\2', text)
-    # תקן אות" סוף מילה → אות״
     text = re.sub(r'([א-ת])"([\s,.\-:!?•]|$)', r'\1״\2', text)
-    # נקה כפילויות
+
+    # שלב 3: נקה ״״ כפול
     text = text.replace('״״', '״')
-    # הסר ״ שנדבק לסוף מילה שלא צריכה גרש
-    # (מילה שמסתיימת ב-א ה ו י מ נ ס פ ק ר ש ת רגילות)
-    text = re.sub(r'([בגדהוזחטילמנסעפצקרשת])״(?=[\s,.\-:!?•\n]|$)', r'\1', text)
+
+    # שלב 4: שמור מילים מוכרות עם placeholder (כמילים שלמות בלבד)
+    pre_placeholders = {}
+    for i, word in enumerate(GERESH_WORDS):
+        pattern = r'(?<![א-ת])' + re.escape(word) + r'(?![א-ת])'
+        if re.search(pattern, text):
+            ph = f"__PRE{i}__"
+            pre_placeholders[ph] = word
+            text = re.sub(pattern, ph, text)
+
+    # שלב 5: כל ״ שדבוק לאות הבאה – הוסף רווח
+    text = re.sub(r'(״)([א-ת])', r'״ \2', text)
+
+    # שלב 6: שחזר מילים מוכרות
+    for ph, word in pre_placeholders.items():
+        text = text.replace(ph, word)
+
     return text
 
 def build_groq_prompt(text):
@@ -907,10 +947,10 @@ def build_prompt(text):
 - 5-8 מילות מפתח מהטקסט
 
 גרשיים – כלל ברזל:
-- גרש עברי ״ מופיע אך ורק במילים אלו בלבד: חב״ד, ל״ג, ת״ת, ע״י, שליט״א, אדמו״ר, כ״ק, ע״ה, ז״ל, ב״ה, רשב״י
-- אסור בהחלט לשים ״ בכל מקום אחר – לא לפני עיר, לא לפני שם, לא לפני ציטוט
-- ציטוטים: בלי מרכאות בכלל, פשוט כתוב את הטקסט
-- אם אתה לא בטוח – אל תשים ״
+- גרש עברי ״ מותר אך ורק במילים אלו: חב״ד, ל״ג, ת״ת, ע״י, ע״ה, ז״ל, ב״ה, כ״ק, רשב״י, שליט״א, אדמו״ר, ונשיאנו
+- אסור לשים ״ בשום מקום אחר – לא בכותרות, לא בגוף, לא בשמות, לא בציטוטים
+- ציטוטים: כתוב בלי מרכאות בכלל
+- אם ספק – אל תשים ״
 
 החזר JSON בלבד:
 {{"title":"...","subtitle":"...","red_title":"...","body":"...","tags":["...","...","...","...","..."]}}
@@ -1267,6 +1307,17 @@ def handle_message(msg):
                 [{"text": "🗑️ מחק פוסט פייסבוק", "callback_data": "social_delete_fb"},
                  {"text": "🗑️ מחק פוסט אינסטגרם", "callback_data": "social_delete_ig"}],
                 [{"text": "📋 פוסטים אחרונים", "callback_data": "social_recent_posts"}]
+            ]
+        })
+        return
+
+    if text == "⚙️ הגדרות מערכת" and is_admin(user_id):
+        words_list = "\n".join([f"• {w}" for w in GERESH_WORDS])
+        send_message(chat_id, f"⚙️ <b>הגדרות מערכת</b>\n\n<b>מילים עם גרש:</b>\n{words_list}", {
+            "inline_keyboard": [
+                [{"text": "➕ הוסף מילה", "callback_data": "geresh_add"},
+                 {"text": "➖ הסר מילה", "callback_data": "geresh_remove"}],
+                [{"text": "✏️ ערוך פרומפט Gemini", "callback_data": "edit_prompt"}]
             ]
         })
         return
@@ -1641,17 +1692,28 @@ def handle_message(msg):
             })
 
 def show_smart_preview(chat_id, draft):
-    """מציג תצוגה מקדימה מלאה עם כל אפשרויות העריכה"""
-    import re
-    body_preview = re.sub(r'<[^>]+>', '', draft.get("body",""))[:300]
+    """מציג תצוגה מקדימה מלאה עם קטגוריות שכבר נבחרו"""
+    import re as _re
+    body_preview = _re.sub(r'<[^>]+>', '', draft.get("body",""))[:300]
     def esc(s): return str(s).replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+
+    # בחר קטגוריות אוטומטית אם עדיין לא נבחרו
+    if not draft.get("categories"):
+        cats, cat_names = auto_select_categories(draft.get("title",""), draft.get("body",""))
+        draft["categories"] = cats
+        draft["cat_names"] = cat_names
+
+    cat_display = esc(', '.join(draft.get('cat_names',[])) or 'טרם נבחרו')
     preview = f"""🤖 <b>תצוגה מקדימה:</b>
 
 <b>כותרת:</b> {esc(draft.get('title',''))}
 <b>כותרת משנה:</b> {esc(draft.get('subtitle',''))}
 <b>כותרת אדומה:</b> {esc(draft.get('red_title',''))}
 <b>תגיות:</b> {esc(', '.join(draft.get('tags',[])))}
-<b>קטגוריות:</b> {esc(', '.join(draft.get('cat_names',[])) or 'טרם נבחרו')}"""
+<b>קטגוריות:</b> {cat_display}
+
+<b>גוף:</b>
+{esc(body_preview)}{'...' if len(draft.get('body','')) > 300 else ''}"""
     send_message(chat_id, preview, {
         "inline_keyboard": [
             [{"text": "✅ מאשר, המשך", "callback_data": "smart_approve"}],
@@ -1747,10 +1809,11 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             print(f"📄 קובץ התקבל: {file_name} | mime: {mime} | size: {file_size} bytes", flush=True)
             if mime == "application/pdf":
                 print(f"📄 מנסה להוריד PDF: {file_id}", flush=True)
-                # בדוק אם כבר העלינו את הקובץ הזה
+                # בדוק כפילות לפי file_id וגם לפי שם+גודל
                 uploaded_ids = draft.get("uploaded_file_ids", set())
-                if file_id in uploaded_ids:
-                    print(f"📄 כפול - מדלג", flush=True)
+                file_key = f"{file_id}_{file_size}_{file_name}"
+                if file_id in uploaded_ids or file_key in uploaded_ids:
+                    print(f"📄 כפול – מדלג", flush=True)
                     return True
                 content = get_file(file_id)
                 print(f"📄 הורדה: {'הצלחה ' + str(len(content)) + ' bytes' if content else 'נכשל'}", flush=True)
@@ -1777,6 +1840,7 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                                      timeout=10)
                         draft.setdefault("pdf_embeds", []).append({"url": pdf_url, "name": fname})
                         draft.setdefault("uploaded_file_ids", set()).add(file_id)
+                        draft["uploaded_file_ids"].add(file_key)
                         send_message(chat_id, f"✅ PDF הועלה! ({len(draft.get('pdf_embeds',[]))} קבצים)\n\nשלח עוד או /done:")
                     else:
                         print(f"📄 שגיאה: {resp.text[:300]}", flush=True)
@@ -2292,6 +2356,32 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             send_message(chat_id, "⚠️ שלח קובץ וידאו או לינק Drive:")
         return True
 
+    elif step == "geresh_add_input":
+        word = text.strip()
+        if word and '״' in word:
+            if word not in GERESH_WORDS:
+                GERESH_WORDS.append(word)
+                send_message(chat_id, f"✅ המילה <b>{word}</b> נוספה לרשימה!")
+            else:
+                send_message(chat_id, "המילה כבר קיימת ברשימה.")
+        else:
+            send_message(chat_id, "⚠️ המילה חייבת לכלול ״ (גרש עברי). נסה שוב.")
+        draft["step"] = "idle"
+        return True
+
+    elif step == "edit_prompt_input":
+        if "{text}" in text:
+            # שמור פרומפט מותאם אישית
+            draft["custom_prompt"] = text
+            # שמור גלובלית
+            import builtins
+            builtins.CUSTOM_PROMPT = text
+            send_message(chat_id, "✅ פרומפט עודכן! ישפיע על ההעלאה הבאה.")
+        else:
+            send_message(chat_id, "❌ הפרומפט חייב לכלול {text} בסוף כדי לקבל את הטקסט.")
+        draft["step"] = "idle"
+        return True
+
     elif step == "social_delete_fb_input":
         fb_token = os.environ.get("FB_PAGE_TOKEN","")
         try:
@@ -2622,21 +2712,19 @@ def handle_callback(cb):
                         send_message(chat_id, f"❌ שגיאה: {error}")
 
     elif cb_data == "smart_approve":
-        send_message(chat_id, "⏳ בוחר קטגוריות אוטומטית...")
-        cats, cat_names = auto_select_categories(draft.get("title",""), draft.get("body",""))
-        draft["categories"] = cats
-        draft["cat_names"] = cat_names
-        # אם מגיע ממייל – דלג ישר לסיכום
+        # קטגוריות כבר נבחרו בתצוגה המקדימה
+        if not draft.get("categories"):
+            cats, cat_names = auto_select_categories(draft.get("title",""), draft.get("body",""))
+            draft["categories"] = cats
+            draft["cat_names"] = cat_names
         if draft.get("from_email"):
             draft["step"] = "confirm"
             _show_summary(chat_id, draft)
         else:
             draft["step"] = "main_image"
-            send_message(chat_id,
-                f"✅ קטגוריות נבחרו: <b>{', '.join(cat_names)}</b>\n\nשלח את <b>התמונה הראשית</b>:", {
-                "inline_keyboard": [[
-                    {"text": "🔄 שנה קטגוריות", "callback_data": "change_categories"}
-                ]]
+            send_message(chat_id, "שלח את <b>התמונה הראשית</b>:", {
+                "inline_keyboard": [[{"text": "🔄 שנה קטגוריות", "callback_data": "change_categories"},
+                                     {"text": "⏭️ דלג", "callback_data": "skip_main_image"}]]
             })
 
     elif cb_data == "smart_retry":
@@ -3259,6 +3347,28 @@ def handle_callback(cb):
         draft["step"] = "social_content_platforms"
         _show_social_platforms(chat_id, draft["social_data"], "content")
 
+    elif cb_data == "geresh_add":
+        draft["step"] = "geresh_add_input"
+        send_message(chat_id, f"➕ שלח מילה חדשה להוספה לרשימת הגרשיים\n(לדוגמה: נ״ך)")
+
+    elif cb_data == "geresh_remove":
+        keyboard = {"inline_keyboard": [[{"text": w, "callback_data": f"geresh_rm_{w}"}] for w in GERESH_WORDS]}
+        keyboard["inline_keyboard"].append([{"text": "❌ ביטול", "callback_data": "publish_cancel"}])
+        send_message(chat_id, "➖ בחר מילה להסרה:", keyboard)
+
+    elif cb_data.startswith("geresh_rm_"):
+        word = cb_data.replace("geresh_rm_", "")
+        if word in GERESH_WORDS:
+            GERESH_WORDS.remove(word)
+            send_message(chat_id, f"✅ המילה <b>{word}</b> הוסרה!")
+        else:
+            send_message(chat_id, "❌ מילה לא נמצאה.")
+
+    elif cb_data == "edit_prompt":
+        from bot import build_prompt
+        send_message(chat_id, "✏️ <b>עריכת פרומפט Gemini</b>\n\nשלח את הפרומפט החדש (טקסט ארוך).\n\n⚠️ שים לב: הפרומפט חייב לכלול {text} בסוף!\n\nהפרומפט הנוכחי מוגדר בקוד.")
+        draft["step"] = "edit_prompt_input"
+
     elif cb_data == "share_twitter":
         post_url = draft.get("last_post_url", "")
         post_title = draft.get("last_post_title", "")
@@ -3561,7 +3671,42 @@ def post_to_facebook(text, image_bytes=None, link=None):
     except Exception as e:
         return False, str(e)
 
-def post_to_instagram_carousel(caption, images_list):
+def resize_for_instagram(image_bytes):
+    """מכין תמונה לאינסטגרם – JPEG, יחס 4:5, מקסימום 1440px"""
+    try:
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(image_bytes))
+        # המר ל-RGB אם צריך
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        w, h = img.size
+        # חתוך ליחס 4:5 אם צריך
+        target_ratio = 4 / 5
+        current_ratio = w / h
+        if current_ratio > 1.91:
+            # רחב מדי – חתוך
+            new_w = int(h * 1.91)
+            left = (w - new_w) // 2
+            img = img.crop((left, 0, left + new_w, h))
+        elif current_ratio < 0.8:
+            # גבוה מדי – חתוך
+            new_h = int(w / 0.8)
+            top = (h - new_h) // 2
+            img = img.crop((0, top, w, top + new_h))
+        # הגדל אם קטן מדי
+        w, h = img.size
+        if w < 320:
+            img = img.resize((320, int(320 * h / w)), Image.LANCZOS)
+        # הקטן אם גדול מדי
+        if w > 1440:
+            img = img.resize((1440, int(1440 * h / w)), Image.LANCZOS)
+        output = io.BytesIO()
+        img.save(output, format='JPEG', quality=90)
+        return output.getvalue()
+    except Exception as e:
+        print(f"שגיאה resize: {e}", flush=True)
+        return image_bytes
     """פרסום קרוסלה לאינסטגרם עם מספר תמונות"""
     ig_user_id = os.environ.get("IG_USER_ID", "")
     fb_token = os.environ.get("FB_PAGE_TOKEN", "")
@@ -3570,16 +3715,26 @@ def post_to_instagram_carousel(caption, images_list):
     try:
         children = []
         for img in images_list[:10]:
+            # התאם לאינסטגרם
+            img = resize_for_instagram(img)
+            # העלה לוורדפרס קודם כדי לקבל URL ציבורי
+            _, img_url = upload_image_to_wp(img, "ig_post.jpg")
+            if not img_url:
+                continue
             resp = requests.post(
                 f"https://graph.facebook.com/v18.0/{ig_user_id}/media",
-                data={"is_carousel_item": "true", "access_token": fb_token},
-                files={"image": ("image.jpg", img, "image/jpeg")},
+                data={
+                    "image_url": img_url,
+                    "is_carousel_item": "true",
+                    "access_token": fb_token
+                },
                 timeout=30
             )
+            print(f"IG carousel item: {resp.status_code} {resp.text[:100]}", flush=True)
             if resp.status_code == 200:
                 children.append(resp.json().get("id"))
         if not children:
-            return False, "לא הצלחתי להעלות תמונות"
+            return False, "לא הצלחתי להעלות תמונות לאינסטגרם"
         carousel_resp = requests.post(
             f"https://graph.facebook.com/v18.0/{ig_user_id}/media",
             data={
@@ -3609,22 +3764,27 @@ def post_to_instagram(text, image_bytes):
     ig_user_id = os.environ.get("IG_USER_ID", "")
     fb_token = os.environ.get("FB_PAGE_TOKEN", "")
     if not ig_user_id or not fb_token:
-        return False, "❌ IG_USER_ID או FB_PAGE_TOKEN חסרים"
+        return False, "IG_USER_ID או FB_PAGE_TOKEN חסרים"
     try:
-        # שלב 1: העלה תמונה
+        # התאם לאינסטגרם
+        image_bytes = resize_for_instagram(image_bytes)
+        # העלה לוורדפרס קודם כדי לקבל URL ציבורי
+        _, img_url = upload_image_to_wp(image_bytes, "ig_post.jpg")
+        if not img_url:
+            return False, "לא הצלחתי להעלות תמונה"
         create_resp = requests.post(
             f"https://graph.facebook.com/v18.0/{ig_user_id}/media",
             data={
+                "image_url": img_url,
                 "caption": text,
                 "access_token": fb_token
             },
-            files={"image": ("img.jpg", image_bytes, "image/jpeg")},
             timeout=30
         )
+        print(f"IG media: {create_resp.status_code} {create_resp.text[:100]}", flush=True)
         if create_resp.status_code != 200:
             return False, create_resp.text[:200]
         media_id = create_resp.json().get("id")
-        # שלב 2: פרסם
         pub_resp = requests.post(
             f"https://graph.facebook.com/v18.0/{ig_user_id}/media_publish",
             data={"creation_id": media_id, "access_token": fb_token},
