@@ -239,6 +239,17 @@ EDITOR_MENU = {
 # לשמור תאימות אחורה
 MAIN_MENU = SENIOR_EDITOR_MENU
 
+def edit_message(chat_id, message_id, text, reply_markup=None):
+    """עורך הודעה קיימת במקום לשלוח חדשה"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText"
+    data = {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML"}
+    if reply_markup:
+        data["reply_markup"] = json.dumps(reply_markup)
+    try:
+        requests.post(url, json=data, timeout=10)
+    except Exception as e:
+        print(f"שגיאה edit_message: {e}", flush=True)
+
 def send_message(chat_id, text, reply_markup=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
@@ -3610,9 +3621,24 @@ def handle_callback(cb):
         ig_text = f"{post_title}\n\n{clean_body}"
         
         def _auto_share():
+            # שלח הודעה אחת ועדכן אותה
+            status_resp = requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                json={"chat_id": chat_id, "text": "⏳ מפרסם ברשתות...", "parse_mode": "HTML"},
+                timeout=10
+            )
+            msg_id = status_resp.json().get("result", {}).get("message_id") if status_resp.ok else None
+
+            def update(text, markup=None):
+                if msg_id:
+                    edit_message(chat_id, msg_id, text, markup)
+                else:
+                    send_message(chat_id, text, markup)
+
+            status_lines = []
+
             if cb_data in ("auto_share_fb", "auto_share_all"):
-                send_message(chat_id, "⏳ מעלה לפייסבוק...")
-                # הוסף ווטרמארק לתמונות
+                update("⏳ מעלה לפייסבוק...")
                 wm_images = [add_watermark(img) for img in post_images] if post_images else []
                 if len(wm_images) > 1:
                     photo_ids = []
@@ -3626,7 +3652,6 @@ def handle_callback(cb):
                         if resp.status_code == 200:
                             photo_ids.append({"media_fbid": resp.json()["id"]})
                     if photo_ids:
-                        # פרסם פוסט עם כל התמונות
                         resp = requests.post(
                             f"https://graph.facebook.com/v18.0/{os.environ.get('FB_PAGE_ID')}/feed",
                             data={
@@ -3644,42 +3669,38 @@ def handle_callback(cb):
                     ok, result = post_to_facebook(fb_text, wm_images[0] if wm_images else None)
                 else:
                     ok, result = post_to_facebook(fb_text)
-                
+
                 if ok:
                     draft["last_fb_post_id"] = result
-                    send_message(chat_id, "✅ פורסם בפייסבוק!")
+                    status_lines.append("✅ פייסבוק")
                 else:
-                    send_message(chat_id, f"❌ פייסבוק נכשל: {result}", {
-                        "inline_keyboard": [[{"text": "🔄 נסה שוב", "callback_data": "auto_share_fb"}]]
-                    })
+                    status_lines.append(f"❌ פייסבוק נכשל")
+                update("\n".join(status_lines) or "⏳")
 
             if cb_data in ("auto_share_ig", "auto_share_all"):
-                send_message(chat_id, "⏳ מעלה לאינסטגרם...")
+                update(("\n".join(status_lines) + "\n" if status_lines else "") + "⏳ מעלה לאינסטגרם...")
                 if not post_images:
-                    send_message(chat_id, "⚠️ אינסטגרם דורש תמונה – לא פורסם")
+                    status_lines.append("⚠️ אינסטגרם – אין תמונה")
                 elif len(post_images) > 1:
-                    # קרוסלה – עד 10 תמונות
                     ok, result = post_to_instagram_carousel(ig_text, [add_watermark(img) for img in post_images[:10]])
-                    if ok:
-                        draft["last_ig_post_id"] = result
-                        send_message(chat_id, "✅ פורסם באינסטגרם!", {
-                            "inline_keyboard": [[{"text": "📱 שתף לסטורי", "callback_data": f"ig_story_{result}"}]]
-                        })
-                    else:
-                        send_message(chat_id, f"❌ אינסטגרם נכשל: {result}", {
-                            "inline_keyboard": [[{"text": "🔄 נסה שוב", "callback_data": "auto_share_ig"}]]
-                        })
                 else:
                     ok, result = post_to_instagram(ig_text, add_watermark(post_images[0]))
+
+                if post_images:
                     if ok:
                         draft["last_ig_post_id"] = result
-                        send_message(chat_id, "✅ פורסם באינסטגרם!", {
+                        status_lines.append("✅ אינסטגרם")
+                        update("\n".join(status_lines), {
                             "inline_keyboard": [[{"text": "📱 שתף לסטורי", "callback_data": f"ig_story_{result}"}]]
                         })
                     else:
-                        send_message(chat_id, f"❌ אינסטגרם נכשל: {result}", {
+                        status_lines.append(f"❌ אינסטגרם נכשל")
+                        update("\n".join(status_lines), {
                             "inline_keyboard": [[{"text": "🔄 נסה שוב", "callback_data": "auto_share_ig"}]]
                         })
+                    return
+
+            update("\n".join(status_lines) if status_lines else "✅ הושלם")
 
         threading.Thread(target=_auto_share, daemon=True).start()
 
@@ -4016,6 +4037,92 @@ def post_to_facebook(text, image_bytes=None, link=None):
         return False, resp.text[:200]
     except Exception as e:
         return False, str(e)
+
+def resize_for_instagram(image_bytes):
+    """מכין תמונה לאינסטגרם"""
+    try:
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(image_bytes))
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        w, h = img.size
+        ratio = w / h
+        if ratio > 1.91:
+            new_w = int(h * 1.91)
+            img = img.crop(((w-new_w)//2, 0, (w+new_w)//2, h))
+        elif ratio < 0.8:
+            new_h = int(w / 0.8)
+            img = img.crop((0, (h-new_h)//2, w, (h+new_h)//2))
+        w, h = img.size
+        if w < 320:
+            img = img.resize((320, int(320*h/w)), Image.LANCZOS)
+        if w > 1440:
+            img = img.resize((1440, int(1440*h/w)), Image.LANCZOS)
+        out = io.BytesIO()
+        img.save(out, format='JPEG', quality=90)
+        return out.getvalue()
+    except Exception as e:
+        print(f"שגיאה resize: {e}", flush=True)
+        return image_bytes
+
+def add_watermark(image_bytes):
+    """מוסיף ווטרמארק לתמונה"""
+    if not watermark_settings.get("enabled"):
+        return image_bytes
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        import io
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+        overlay = Image.new("RGBA", img.size, (0,0,0,0))
+        draw = ImageDraw.Draw(overlay)
+        mode = watermark_settings.get("mode","text")
+        if mode == "logo" and watermark_settings.get("logo_bytes"):
+            logo = Image.open(io.BytesIO(watermark_settings["logo_bytes"])).convert("RGBA")
+            logo_w = int(img.width * 0.15)
+            logo_h = int(logo.height * logo_w / logo.width)
+            logo = logo.resize((logo_w, logo_h), Image.LANCZOS)
+            px = int(img.width * watermark_settings.get("pos_x",95)/100) - logo_w
+            py = int(img.height * watermark_settings.get("pos_y",95)/100) - logo_h
+            overlay.paste(logo, (max(0,px), max(0,py)), logo)
+        else:
+            font_size = watermark_settings.get("font_size", 40)
+            font_paths = {
+                "default": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "bold": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "serif": "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"
+            }
+            try:
+                font = ImageFont.truetype(font_paths.get(watermark_settings.get("font","bold"), font_paths["bold"]), font_size)
+            except:
+                font = ImageFont.load_default()
+            text = watermark_settings.get("text","עדכוני חב״ד")
+            bbox = draw.textbbox((0,0), text, font=font)
+            tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
+            px = max(0, int(img.width * watermark_settings.get("pos_x",95)/100) - tw)
+            py = max(0, int(img.height * watermark_settings.get("pos_y",95)/100) - th)
+            def hex_to_rgba(h, a=255):
+                h = h.lstrip('#')
+                return (int(h[0:2],16), int(h[2:4],16), int(h[4:6],16), a)
+            bg = watermark_settings.get("bg_color","#000000")
+            if bg != "none":
+                try:
+                    bg_rgba = hex_to_rgba(bg, watermark_settings.get("bg_opacity",140))
+                except:
+                    bg_rgba = (0,0,0,140)
+                draw.rectangle([px-8, py-8, px+tw+8, py+th+8], fill=bg_rgba)
+            try:
+                text_rgba = hex_to_rgba(watermark_settings.get("text_color","#FFFFFF"))
+            except:
+                text_rgba = (255,255,255,255)
+            draw.text((px,py), text, font=font, fill=text_rgba)
+        result = Image.alpha_composite(img, overlay)
+        out = io.BytesIO()
+        result.convert("RGB").save(out, format="JPEG", quality=90)
+        return out.getvalue()
+    except Exception as e:
+        print(f"שגיאה watermark: {e}", flush=True)
+        return image_bytes
 
 def create_story_template(post_image_bytes, title="", subtitle=""):
     """בונה תבנית סטורי 1080x1920 עם מסגרת כחול-לבן"""
