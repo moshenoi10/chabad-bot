@@ -1337,12 +1337,15 @@ def handle_message(msg):
         return
 
     if text == "📧 ניהול מייל" and is_senior_editor(user_id):
-        if "@" in text:
-            email_system["allowed_senders"].append(text.strip().lower())
-            send_message(chat_id, f"✅ כתובת {text} נוספה!", get_menu(user_id))
-        else:
-            send_message(chat_id, "⚠️ כתובת מייל לא תקינה.")
-        draft["step"] = "idle"
+        send_message(chat_id, get_email_status(), {
+            "inline_keyboard": [
+                [{"text": "⏸️ השהה" if email_system["active"] else "▶️ הפעל", "callback_data": "email_toggle"},
+                 {"text": "🔄 בדוק עכשיו", "callback_data": "email_check_now"}],
+                [{"text": "⏱️ שנה תדירות", "callback_data": "email_change_interval"}],
+                [{"text": "➕ הוסף כתובת", "callback_data": "email_add_sender"},
+                 {"text": "➖ הסר כתובת", "callback_data": "email_remove_sender"}]
+            ]
+        })
         return
 
     if step == "email_remove_sender_input" and is_senior_editor(user_id):
@@ -3845,25 +3848,34 @@ def post_to_instagram(text, image_bytes):
     if not ig_user_id or not fb_token:
         return False, "IG_USER_ID או FB_PAGE_TOKEN חסרים"
     try:
-        # התאם לאינסטגרם
         image_bytes = resize_for_instagram(image_bytes)
-        # העלה לוורדפרס קודם כדי לקבל URL ציבורי
         _, img_url = upload_image_to_wp(image_bytes, "ig_post.jpg")
         if not img_url:
             return False, "לא הצלחתי להעלות תמונה"
         create_resp = requests.post(
             f"https://graph.facebook.com/v18.0/{ig_user_id}/media",
-            data={
-                "image_url": img_url,
-                "caption": text,
-                "access_token": fb_token
-            },
+            data={"image_url": img_url, "caption": text, "access_token": fb_token},
             timeout=30
         )
         print(f"IG media: {create_resp.status_code} {create_resp.text[:100]}", flush=True)
         if create_resp.status_code != 200:
             return False, create_resp.text[:200]
         media_id = create_resp.json().get("id")
+        # המתן עד שהעיבוד מסתיים
+        for attempt in range(10):
+            time.sleep(3)
+            status_resp = requests.get(
+                f"https://graph.facebook.com/v18.0/{media_id}",
+                params={"fields": "status_code", "access_token": fb_token},
+                timeout=10
+            )
+            if status_resp.status_code == 200:
+                status = status_resp.json().get("status_code", "")
+                print(f"IG status: {status}", flush=True)
+                if status == "FINISHED":
+                    break
+                elif status == "ERROR":
+                    return False, "שגיאה בעיבוד התמונה"
         pub_resp = requests.post(
             f"https://graph.facebook.com/v18.0/{ig_user_id}/media_publish",
             data={"creation_id": media_id, "access_token": fb_token},
