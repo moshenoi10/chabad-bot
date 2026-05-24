@@ -36,7 +36,11 @@ youtube_tokens = {}
 
 # ─── מילים עם גרש ─────────────────────────────────────────
 GERESH_WORDS = ['חב״ד', 'ל״ג', 'ת״ת', 'ע״י', 'ע״ה', 'ז״ל', 'ב״ה',
-                'כ״ק', 'רשב״י', 'שליט״א', 'אדמו״ר', 'נשיא״נו']
+                'כ״ק', 'רשב״י', 'שליט״א', 'אדמו״ר', 'נשיא״נו',
+                'יבלחט״א', 'משב״ק', 'לנצ״נ', 'נ״ע', 'ז״י', 'הי״ד',
+                'בל״נ', 'כ״ה', 'י״ב', 'י״ג', 'י״ד', 'ט״ו', 'ט״ז',
+                'נ״י', 'ב״ב', 'ת״ח', 'ר״מ', 'ר״י', 'ר״ח', 'ר״ת',
+                'ד״ת', 'ב״ד', 'כ״ד', 'ט״ז', 'מ״מ', 'א״א', 'ל״ע']
 
 # ─── מערכת הרשאות ────────────────────────────────────────
 SUPER_ADMIN_ID = "1798097090"
@@ -873,7 +877,19 @@ def restore_geresh(text):
         text = text.replace(wrong, right)
     return text
 
-def fix_geresh(text):
+def auto_detect_geresh(text):
+    """סורק טקסט גולמי ומוסיף מילים עם גרש לרשימה אוטומטית"""
+    import re
+    if not text:
+        return
+    # מצא כל מילה עברית שמכילה " בתוכה (כמו משב"ק, יבלחט"א)
+    found = re.findall(r'[א-ת]+"[א-ת]+', text)
+    for word in found:
+        # המר ל-״ עברי
+        normalized = word.replace('"', '״')
+        if normalized not in GERESH_WORDS:
+            GERESH_WORDS.append(normalized)
+            print(f"📝 נוסף לרשימת גרשיים: {normalized}", flush=True)
     """מנקה בעיות גרשיים בטקסט שהגיע מ-AI"""
     import re
     if not text:
@@ -963,6 +979,8 @@ def build_prompt(text):
 def process_with_gemini(text):
     if not GEMINI_API_KEY:
         return None
+    # סרוק את הטקסט הגולמי ומצא מילים עם גרש
+    auto_detect_geresh(text)
     text = prepare_text_for_ai(text)
     prompt = build_prompt(text)
     try:
