@@ -2549,13 +2549,45 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
         return True
 
     elif step == "social_delete_fb_input":
+        import re
         fb_token = os.environ.get("FB_PAGE_TOKEN","")
+        fb_page_id = os.environ.get("FB_PAGE_ID","")
+        # נסה לחלץ post ID מלינק
+        post_id = text.strip()
+        # פורמט: facebook.com/permalink/123 או /posts/123
+        for pattern in [
+            r'permalink/(\d+)',
+            r'/posts/(\d+)',
+            r'story_fbid=(\d+)',
+            r'pfbid[\w]+',
+        ]:
+            match = re.search(pattern, text)
+            if match:
+                post_id = match.group(1) if '(' in pattern else match.group(0)
+                break
+        # אם זה pfbid צריך לחפש ב-feed
+        if post_id.startswith("pfbid") or "facebook.com" in text:
+            try:
+                resp = requests.get(
+                    f"https://graph.facebook.com/v18.0/{fb_page_id}/posts",
+                    params={"fields": "id,permalink_url", "limit": 20, "access_token": fb_token},
+                    timeout=15
+                )
+                if resp.status_code == 200:
+                    for post in resp.json().get("data", []):
+                        if post.get("permalink_url", "") in text or text in post.get("permalink_url", ""):
+                            post_id = post["id"]
+                            break
+            except Exception as e:
+                print(f"שגיאה חיפוש פוסט: {e}", flush=True)
+        print(f"מוחק FB post_id: {post_id}", flush=True)
         try:
             resp = requests.delete(
-                f"https://graph.facebook.com/v18.0/{text}",
+                f"https://graph.facebook.com/v18.0/{post_id}",
                 params={"access_token": fb_token},
                 timeout=15
             )
+            print(f"FB delete: {resp.status_code} {resp.text[:100]}", flush=True)
             if resp.status_code == 200:
                 send_message(chat_id, "✅ פוסט נמחק מפייסבוק!", get_menu(user_id))
             else:
@@ -2566,60 +2598,16 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
         return True
 
     elif step == "social_delete_ig_input":
-        print(f"מחיקת IG: קיבלתי '{text[:50]}'", flush=True)
-        import re
-        fb_token = os.environ.get("FB_PAGE_TOKEN","")
-        ig_user_id = os.environ.get("IG_USER_ID","")
-        # חלץ shortcode מלינק אינסטגרם
-        shortcode = None
-        match = re.search(r'instagram\.com/p/([A-Za-z0-9_-]+)', text)
-        if match:
-            shortcode = match.group(1)
-        if shortcode:
-            # מצא את ה-ID לפי shortcode
-            try:
-                resp = requests.get(
-                    f"https://graph.facebook.com/v18.0/{ig_user_id}/media",
-                    params={"fields": "id,shortcode", "limit": 50, "access_token": fb_token},
-                    timeout=15
-                )
-                post_id = None
-                if resp.status_code == 200:
-                    for post in resp.json().get("data", []):
-                        if post.get("shortcode") == shortcode:
-                            post_id = post["id"]
-                            break
-                if post_id:
-                    del_resp = requests.delete(
-                        f"https://graph.facebook.com/v18.0/{post_id}",
-                        params={"access_token": fb_token},
-                        timeout=15
-                    )
-                    if del_resp.status_code == 200:
-                        send_message(chat_id, "✅ הפוסט נמחק מאינסטגרם!")
-                    else:
-                        send_message(chat_id, f"❌ שגיאה: {del_resp.text[:200]}")
-                else:
-                    send_message(chat_id, "❌ לא מצאתי את הפוסט. בדוק שהלינק נכון.")
-            except Exception as e:
-                send_message(chat_id, f"❌ שגיאה: {e}")
-        elif text.strip().isdigit() or "_" in text:
-            # שלחו ID ישיר
-            try:
-                del_resp = requests.delete(
-                    f"https://graph.facebook.com/v18.0/{text.strip()}",
-                    params={"access_token": fb_token},
-                    timeout=15
-                )
-                if del_resp.status_code == 200:
-                    send_message(chat_id, "✅ הפוסט נמחק!")
-                else:
-                    send_message(chat_id, f"❌ שגיאה: {del_resp.text[:200]}")
-            except Exception as e:
-                send_message(chat_id, f"❌ שגיאה: {e}")
-        else:
-            send_message(chat_id, "⚠️ שלח לינק לפוסט באינסטגרם:")
-            return True
+        send_message(chat_id, """⚠️ <b>אינסטגרם לא מאפשר מחיקה דרך API</b>
+
+למחיקת הפוסט:
+1. כנס ל-Creator Studio:
+https://business.facebook.com/creatorstudio
+
+2. בחר את חשבון האינסטגרם
+3. מצא את הפוסט ומחק
+
+או ישירות באפליקציית אינסטגרם → הפוסט → ⋯ → מחק""", get_menu(user_id))
         draft["step"] = "idle"
         return True
 
@@ -2721,14 +2709,25 @@ def _process_next_social_platform(chat_id, user_id, draft, drafts):
         text_content = social.get("text_content", "")
         link = social.get("link", "")
         msg_text = f"{text_content}\n{link}" if link else text_content
-        ok, result = post_to_facebook(msg_text, social.get("image"))
+        img = social.get("image")
+        if img:
+            img = add_watermark(img)
+        ok, result = post_to_facebook(msg_text, img)
         send_message(chat_id, f"✅ פורסם בפייסבוק!" if ok else f"❌ פייסבוק: {result}")
         _process_next_social_platform(chat_id, user_id, draft, drafts)
 
     elif platform == "instagram":
         send_message(chat_id, "⏳ מפרסם לאינסטגרם...")
-        ok, result = post_to_instagram(social.get("text_content", ""), social.get("image"))
-        send_message(chat_id, f"✅ פורסם באינסטגרם!" if ok else f"❌ אינסטגרם: {result}")
+        img = social.get("image")
+        if img:
+            img = add_watermark(resize_for_instagram(img))
+        ok, result = post_to_instagram(social.get("text_content", ""), img)
+        if ok:
+            send_message(chat_id, "✅ פורסם באינסטגרם!", {
+                "inline_keyboard": [[{"text": "📱 שתף לסטורי", "callback_data": f"ig_story_{result}"}]]
+            })
+        else:
+            send_message(chat_id, f"❌ אינסטגרם: {result}")
         _process_next_social_platform(chat_id, user_id, draft, drafts)
 
     elif platform == "telegram":
@@ -3564,8 +3563,16 @@ def handle_callback(cb):
         send_message(chat_id, "🗑️ שלח לינק לפוסט בפייסבוק למחיקה:")
 
     elif cb_data == "social_delete_ig":
-        draft["step"] = "social_delete_ig_input"
-        send_message(chat_id, "🗑️ שלח לינק לפוסט באינסטגרם למחיקה:")
+        send_message(chat_id, """⚠️ <b>אינסטגרם לא מאפשר מחיקה דרך API</b>
+
+למחיקת הפוסט:
+1. כנס ל-Creator Studio:
+https://business.facebook.com/creatorstudio
+
+2. בחר את חשבון האינסטגרם
+3. מצא את הפוסט ומחק
+
+או ישירות באפליקציית אינסטגרם → הפוסט → ⋯ → מחק""")
 
     elif cb_data == "social_recent_posts":
         fb_token = os.environ.get("FB_PAGE_TOKEN","")
@@ -3681,12 +3688,14 @@ def handle_callback(cb):
                 update(("\n".join(status_lines) + "\n" if status_lines else "") + "⏳ מעלה לאינסטגרם...")
                 if not post_images:
                     status_lines.append("⚠️ אינסטגרם – אין תמונה")
+                    update("\n".join(status_lines))
                 elif len(post_images) > 1:
                     ok, result = post_to_instagram_carousel(ig_text, [add_watermark(img) for img in post_images[:10]])
                 else:
                     ok, result = post_to_instagram(ig_text, add_watermark(post_images[0]))
 
                 if post_images:
+                    print(f"IG ok={ok}, result={result}", flush=True)
                     if ok:
                         draft["last_ig_post_id"] = result
                         status_lines.append("✅ אינסטגרם")
@@ -4068,6 +4077,7 @@ def resize_for_instagram(image_bytes):
 
 def add_watermark(image_bytes):
     """מוסיף ווטרמארק לתמונה"""
+    print(f"🖼 add_watermark: enabled={watermark_settings.get('enabled')}, mode={watermark_settings.get('mode')}", flush=True)
     if not watermark_settings.get("enabled"):
         return image_bytes
     try:
