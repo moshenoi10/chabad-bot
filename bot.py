@@ -862,24 +862,9 @@ def fix_geresh(text):
     text = re.sub(r'([א-ת])"([\s,.\-:!?•]|$)', r'\1״\2', text)
     # נקה כפילויות
     text = text.replace('״״', '״')
-    return text
-    """מחזיר גרשיים עבריים למילים שצריכות אותם"""
-    import re
-    # החלף ״ חזרה ל-" (אם AI השתמש בזה)
-    # מילים נפוצות עם גרש
-    common = {
-        "חב ד": 'חב"ד',
-        "ל ג": 'ל"ג',
-        "י ב": 'י"ב',
-        "אדמו ר": 'אדמו"ר',
-        "כ ק": 'כ"ק',
-        "ע ה": 'ע"ה',
-        "ז ל": 'ז"ל',
-        "שליט א": 'שליט"א',
-        "לנצ נר": 'לנצ"נר',
-    }
-    for wrong, right in common.items():
-        text = text.replace(wrong, right)
+    # הסר ״ שנדבק לסוף מילה שלא צריכה גרש
+    # (מילה שמסתיימת ב-א ה ו י מ נ ס פ ק ר ש ת רגילות)
+    text = re.sub(r'([בגדהוזחטילמנסעפצקרשת])״(?=[\s,.\-:!?•\n]|$)', r'\1', text)
     return text
 
 def build_groq_prompt(text):
@@ -921,10 +906,11 @@ def build_prompt(text):
 תגיות:
 - 5-8 מילות מפתח מהטקסט
 
-גרשיים:
-- גרש עברי ״ רק במילים עם גרש במקור: חב"ד←חב״ד, ל"ג←ל״ג, ת"ת←ת״ת, ע"י←ע״י, שליט"א←שליט״א
-- אסור לשים ״ לפני ציטוטים, שמות ספרים, שמות מקומות
-- ציטוטים: בלי מרכאות בכלל
+גרשיים – כלל ברזל:
+- גרש עברי ״ מופיע אך ורק במילים אלו בלבד: חב״ד, ל״ג, ת״ת, ע״י, שליט״א, אדמו״ר, כ״ק, ע״ה, ז״ל, ב״ה, רשב״י
+- אסור בהחלט לשים ״ בכל מקום אחר – לא לפני עיר, לא לפני שם, לא לפני ציטוט
+- ציטוטים: בלי מרכאות בכלל, פשוט כתוב את הטקסט
+- אם אתה לא בטוח – אל תשים ״
 
 החזר JSON בלבד:
 {{"title":"...","subtitle":"...","red_title":"...","body":"...","tags":["...","...","...","...","..."]}}
@@ -2310,7 +2296,7 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
         fb_token = os.environ.get("FB_PAGE_TOKEN","")
         try:
             resp = requests.delete(
-                f"https://graph.facebook.com/{text}",
+                f"https://graph.facebook.com/v18.0/{text}",
                 params={"access_token": fb_token},
                 timeout=15
             )
@@ -2328,7 +2314,7 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
         fb_token = os.environ.get("FB_PAGE_TOKEN","")
         try:
             resp = requests.delete(
-                f"https://graph.facebook.com/{text}",
+                f"https://graph.facebook.com/v18.0/{text}",
                 params={"access_token": fb_token},
                 timeout=15
             )
@@ -3106,7 +3092,7 @@ def handle_callback(cb):
         send_message(chat_id, "⏳ מושך נתונים...")
         try:
             resp = requests.get(
-                f"https://graph.facebook.com/{fb_page_id}/insights",
+                f"https://graph.facebook.com/v18.0/{fb_page_id}/insights",
                 params={"metric": "page_impressions,page_engaged_users,page_fans", "period": "day", "access_token": fb_token},
                 timeout=15
             )
@@ -3130,7 +3116,7 @@ def handle_callback(cb):
         send_message(chat_id, "⏳ מושך נתונים...")
         try:
             resp = requests.get(
-                f"https://graph.facebook.com/{ig_user_id}",
+                f"https://graph.facebook.com/v18.0/{ig_user_id}",
                 params={"fields": "followers_count,media_count,profile_views", "access_token": fb_token},
                 timeout=15
             )
@@ -3161,7 +3147,7 @@ def handle_callback(cb):
         send_message(chat_id, "⏳ מושך פוסטים אחרונים...")
         try:
             resp = requests.get(
-                f"https://graph.facebook.com/{fb_page_id}/posts",
+                f"https://graph.facebook.com/v18.0/{fb_page_id}/posts",
                 params={"fields": "id,message,created_time", "limit": 5, "access_token": fb_token},
                 timeout=15
             )
@@ -3202,7 +3188,7 @@ def handle_callback(cb):
                     photo_ids = []
                     for img in post_images[:10]:
                         resp = requests.post(
-                            f"https://graph.facebook.com/{os.environ.get('FB_PAGE_ID')}/photos",
+                            f"https://graph.facebook.com/v18.0/{os.environ.get('FB_PAGE_ID')}/photos",
                             data={"published": "false", "access_token": os.environ.get("FB_PAGE_TOKEN")},
                             files={"source": ("image.jpg", img, "image/jpeg")},
                             timeout=30
@@ -3212,7 +3198,7 @@ def handle_callback(cb):
                     if photo_ids:
                         # פרסם פוסט עם כל התמונות
                         resp = requests.post(
-                            f"https://graph.facebook.com/{os.environ.get('FB_PAGE_ID')}/feed",
+                            f"https://graph.facebook.com/v18.0/{os.environ.get('FB_PAGE_ID')}/feed",
                             data={
                                 "message": fb_text,
                                 "access_token": os.environ.get("FB_PAGE_TOKEN"),
@@ -3552,24 +3538,25 @@ def post_to_facebook(text, image_bytes=None, link=None):
         return False, "❌ FB_PAGE_TOKEN או FB_PAGE_ID חסרים ב-Render"
     try:
         msg = text
-        if link:
-            msg += f"\n\n{link}"
         if image_bytes:
-            # העלה תמונה
             resp = requests.post(
-                f"https://graph.facebook.com/{fb_page_id}/photos",
+                f"https://graph.facebook.com/v18.0/{fb_page_id}/photos",
                 data={"caption": msg, "access_token": fb_token},
                 files={"source": ("image.jpg", image_bytes, "image/jpeg")},
                 timeout=30
             )
         else:
+            post_data = {"message": msg, "access_token": fb_token}
+            if link:
+                post_data["link"] = link
             resp = requests.post(
-                f"https://graph.facebook.com/{fb_page_id}/feed",
-                data={"message": msg, "access_token": fb_token, "link": link or ""},
+                f"https://graph.facebook.com/v18.0/{fb_page_id}/feed",
+                data=post_data,
                 timeout=15
             )
         if resp.status_code == 200:
             return True, resp.json().get("id", "")
+        print(f"FB error: {resp.text[:300]}", flush=True)
         return False, resp.text[:200]
     except Exception as e:
         return False, str(e)
@@ -3626,7 +3613,7 @@ def post_to_instagram(text, image_bytes):
     try:
         # שלב 1: העלה תמונה
         create_resp = requests.post(
-            f"https://graph.facebook.com/{ig_user_id}/media",
+            f"https://graph.facebook.com/v18.0/{ig_user_id}/media",
             data={
                 "caption": text,
                 "access_token": fb_token
@@ -3639,7 +3626,7 @@ def post_to_instagram(text, image_bytes):
         media_id = create_resp.json().get("id")
         # שלב 2: פרסם
         pub_resp = requests.post(
-            f"https://graph.facebook.com/{ig_user_id}/media_publish",
+            f"https://graph.facebook.com/v18.0/{ig_user_id}/media_publish",
             data={"creation_id": media_id, "access_token": fb_token},
             timeout=15
         )
