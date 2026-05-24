@@ -80,19 +80,6 @@ def log_action(user_id, username, action):
         activity_log.pop(0)
     print(f"📋 לוג: {entry['time']} | {username} | {action}", flush=True)
 
-def get_permission(user_id):
-    uid = str(user_id)
-    if uid == SUPER_ADMIN_ID:
-        return "admin"
-    return users_permissions.get(uid, None)
-
-def is_admin(user_id):
-    return get_permission(user_id) == "admin"
-
-def is_editor(user_id):
-    perm = get_permission(user_id)
-    return perm in ("admin", "editor")
-
 def notify_admin_error(error_msg):
     # סנן שגיאות רשת זמניות – לא צריך להודיע על ניתוקים רגילים
     ignore_patterns = [
@@ -882,30 +869,26 @@ def auto_detect_geresh(text):
     import re
     if not text:
         return
-    # מצא כל מילה עברית שמכילה " בתוכה (כמו משב"ק, יבלחט"א)
     found = re.findall(r'[א-ת]+"[א-ת]+', text)
     for word in found:
-        # המר ל-״ עברי
         normalized = word.replace('"', '״')
         if normalized not in GERESH_WORDS:
             GERESH_WORDS.append(normalized)
             print(f"📝 נוסף לרשימת גרשיים: {normalized}", flush=True)
+
+def fix_geresh(text):
     """מנקה בעיות גרשיים בטקסט שהגיע מ-AI"""
     import re
     if not text:
         return text
-
     # שלב 1: תקן ״" לפני אות → רווח
     text = re.sub(r'״"([א-ת])', r'״ \1', text)
-
     # שלב 2: החלף " רגיל בין אותיות עבריות ב-״
     text = re.sub(r'([א-ת])"([א-ת])', r'\1״\2', text)
     text = re.sub(r'([א-ת])"([\s,.\-:!?•]|$)', r'\1״\2', text)
-
     # שלב 3: נקה ״״ כפול
     text = text.replace('״״', '״')
-
-    # שלב 4: שמור מילים מוכרות עם placeholder (כמילים שלמות בלבד)
+    # שלב 4: שמור מילים מוכרות עם placeholder
     pre_placeholders = {}
     for i, word in enumerate(GERESH_WORDS):
         pattern = r'(?<![א-ת])' + re.escape(word) + r'(?![א-ת])'
@@ -913,14 +896,11 @@ def auto_detect_geresh(text):
             ph = f"__PRE{i}__"
             pre_placeholders[ph] = word
             text = re.sub(pattern, ph, text)
-
     # שלב 5: כל ״ שדבוק לאות הבאה – הוסף רווח
     text = re.sub(r'(״)([א-ת])', r'״ \2', text)
-
     # שלב 6: שחזר מילים מוכרות
     for ph, word in pre_placeholders.items():
         text = text.replace(ph, word)
-
     return text
 
 def build_groq_prompt(text):
@@ -2374,6 +2354,26 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             send_message(chat_id, "⚠️ שלח קובץ וידאו או לינק Drive:")
         return True
 
+    elif step == "email_add_sender_input":
+        email = text.strip().lower()
+        import re
+        if re.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', email):
+            if email not in email_system["allowed_senders"]:
+                email_system["allowed_senders"].append(email)
+                send_message(chat_id, f"✅ הכתובת <b>{email}</b> נוספה!", get_menu(user_id))
+            else:
+                send_message(chat_id, "הכתובת כבר קיימת ברשימה.")
+        else:
+            send_message(chat_id, "❌ כתובת מייל לא תקינה. נסה שוב:")
+            return True
+        draft["step"] = "idle"
+        return True
+
+    elif step == "social_content_platforms":
+        # מטופל דרך callbacks
+        pass
+        return True
+
     elif step == "geresh_add_input":
         word = text.strip()
         if word and '״' in word:
@@ -3197,16 +3197,22 @@ def handle_callback(cb):
             return
         send_message(chat_id, "⏳ מושך נתונים...")
         try:
+            # משוך נתוני דף בסיסיים
             resp = requests.get(
-                f"https://graph.facebook.com/v18.0/{fb_page_id}/insights",
-                params={"metric": "page_impressions,page_engaged_users,page_fans", "period": "day", "access_token": fb_token},
+                f"https://graph.facebook.com/v18.0/{fb_page_id}",
+                params={
+                    "fields": "name,fan_count,followers_count",
+                    "access_token": fb_token
+                },
                 timeout=15
             )
             if resp.status_code == 200:
-                data = resp.json().get("data", [])
-                msg = "📊 <b>סטטיסטיקות פייסבוק:</b>\n\n"
-                for item in data:
-                    msg += f"<b>{item['name']}:</b> {item['values'][-1]['value'] if item['values'] else 'N/A'}\n"
+                data = resp.json()
+                msg = f"""📊 <b>סטטיסטיקות פייסבוק:</b>
+
+📄 דף: <b>{data.get('name','')}</b>
+👍 לייקים: <b>{data.get('fan_count', 'N/A')}</b>
+👥 עוקבים: <b>{data.get('followers_count', 'N/A')}</b>"""
                 send_message(chat_id, msg)
             else:
                 send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
@@ -3774,6 +3780,61 @@ def resize_for_instagram(image_bytes):
         if publish_resp.status_code == 200:
             return True, publish_resp.json().get("id")
         return False, publish_resp.text[:200]
+    except Exception as e:
+        return False, str(e)
+
+def get_email_status():
+    """מחזיר סטטוס מערכת המייל"""
+    status = "✅ פעילה" if email_system["active"] else "⏸️ מושהית"
+    interval_min = email_system["interval"] // 60
+    senders = "\n".join([f"• {s}" for s in email_system["allowed_senders"]]) or "אין"
+    last = time.strftime("%H:%M", time.localtime(email_system["last_check"])) if email_system["last_check"] else "טרם נבדק"
+    return f"""📧 <b>מערכת מייל</b>
+
+<b>סטטוס:</b> {status}
+<b>בדיקה כל:</b> {interval_min} דקות
+<b>בדיקה אחרונה:</b> {last}
+<b>כתובות מורשות:</b>
+{senders}"""
+
+def post_to_instagram_carousel(caption, images_list):
+    """פרסום קרוסלה לאינסטגרם עם מספר תמונות"""
+    ig_user_id = os.environ.get("IG_USER_ID", "")
+    fb_token = os.environ.get("FB_PAGE_TOKEN", "")
+    if not ig_user_id or not fb_token:
+        return False, "IG_USER_ID או FB_PAGE_TOKEN חסרים"
+    try:
+        children = []
+        for img in images_list[:10]:
+            img = resize_for_instagram(img)
+            _, img_url = upload_image_to_wp(img, "ig_post.jpg")
+            if not img_url:
+                continue
+            resp = requests.post(
+                f"https://graph.facebook.com/v18.0/{ig_user_id}/media",
+                data={"image_url": img_url, "is_carousel_item": "true", "access_token": fb_token},
+                timeout=30
+            )
+            if resp.status_code == 200:
+                children.append(resp.json().get("id"))
+        if not children:
+            return False, "לא הצלחתי להעלות תמונות"
+        carousel_resp = requests.post(
+            f"https://graph.facebook.com/v18.0/{ig_user_id}/media",
+            data={"media_type": "CAROUSEL", "caption": caption, "children": ",".join(children), "access_token": fb_token},
+            timeout=30
+        )
+        if carousel_resp.status_code != 200:
+            return False, carousel_resp.text[:200]
+        carousel_id = carousel_resp.json().get("id")
+        pub_resp = requests.post(
+            f"https://graph.facebook.com/v18.0/{ig_user_id}/media_publish",
+            data={"creation_id": carousel_id, "access_token": fb_token},
+            timeout=15
+        )
+        if pub_resp.status_code == 200:
+            return True, pub_resp.json().get("id")
+        return False, pub_resp.text[:200]
     except Exception as e:
         return False, str(e)
 
