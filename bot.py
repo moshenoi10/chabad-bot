@@ -3378,42 +3378,55 @@ def handle_callback(cb):
 
     elif cb_data.startswith("ig_story_"):
         media_id = cb_data.replace("ig_story_", "")
-        send_message(chat_id, "⏳ מכין סטורי...")
         post_image = draft.get("main_image")
         post_title = draft.get("last_post_title", draft.get("title", ""))
         if post_image:
             story_img = create_story_template(post_image, post_title)
         else:
             story_img = None
+
+        # שלח הודעה אחת ועדכן אותה
+        status_resp = requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": chat_id, "text": "⏳ מכין סטורי...", "parse_mode": "HTML"},
+            timeout=10
+        )
+        msg_id = status_resp.json().get("result", {}).get("message_id") if status_resp.ok else None
+
         def _post_story():
             ig_user_id = os.environ.get("IG_USER_ID","")
             fb_token = os.environ.get("FB_PAGE_TOKEN","")
             if story_img:
-                # העלה תמונת סטורי מותאמת
+                edit_message(chat_id, msg_id, "⏳ מעלה תמונת סטורי...")
                 _, img_url = upload_image_to_wp(story_img, "story.jpg")
                 if img_url:
+                    edit_message(chat_id, msg_id, "⏳ יוצר סטורי...")
                     resp = requests.post(
                         f"https://graph.facebook.com/v18.0/{ig_user_id}/media",
                         data={"image_url": img_url, "media_type": "STORIES", "access_token": fb_token},
                         timeout=30
                     )
+                    print(f"Story container: {resp.status_code} {resp.text[:100]}", flush=True)
                     if resp.status_code == 200:
                         container_id = resp.json().get("id")
-                        time.sleep(3)
+                        time.sleep(5)
                         pub = requests.post(
                             f"https://graph.facebook.com/v18.0/{ig_user_id}/media_publish",
                             data={"creation_id": container_id, "access_token": fb_token},
                             timeout=15
                         )
+                        print(f"Story publish: {pub.status_code} {pub.text[:100]}", flush=True)
                         if pub.status_code == 200:
-                            send_message(chat_id, "✅ סטורי פורסם!")
-                            return
-            # גיבוי – שתף פוסט ישירות
-            ok, result = post_to_instagram_story(media_id)
-            if ok:
-                send_message(chat_id, "✅ סטורי פורסם!")
+                            edit_message(chat_id, msg_id, "✅ סטורי פורסם!")
+                        else:
+                            edit_message(chat_id, msg_id, f"❌ שגיאה: {pub.text[:200]}")
+                    else:
+                        edit_message(chat_id, msg_id, f"❌ שגיאה: {resp.text[:200]}")
+                else:
+                    edit_message(chat_id, msg_id, "❌ לא הצלחתי להעלות תמונה")
             else:
-                send_message(chat_id, f"❌ שגיאה: {result}")
+                edit_message(chat_id, msg_id, "❌ אין תמונה לסטורי")
+
         threading.Thread(target=_post_story, daemon=True).start()
 
     elif cb_data == "watermark_settings":
