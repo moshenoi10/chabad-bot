@@ -3366,6 +3366,46 @@ def handle_callback(cb):
         draft["step"] = "social_yt_title"
         send_message(chat_id, "▶️ <b>YouTube ראשון</b>\n\nשלח כותרת לסרטון:")
 
+    elif cb_data.startswith("ig_story_"):
+        media_id = cb_data.replace("ig_story_", "")
+        send_message(chat_id, "⏳ מכין סטורי...")
+        post_image = draft.get("main_image")
+        post_title = draft.get("last_post_title", draft.get("title", ""))
+        if post_image:
+            story_img = create_story_template(post_image, post_title)
+        else:
+            story_img = None
+        def _post_story():
+            ig_user_id = os.environ.get("IG_USER_ID","")
+            fb_token = os.environ.get("FB_PAGE_TOKEN","")
+            if story_img:
+                # העלה תמונת סטורי מותאמת
+                _, img_url = upload_image_to_wp(story_img, "story.jpg")
+                if img_url:
+                    resp = requests.post(
+                        f"https://graph.facebook.com/v18.0/{ig_user_id}/media",
+                        data={"image_url": img_url, "media_type": "STORIES", "access_token": fb_token},
+                        timeout=30
+                    )
+                    if resp.status_code == 200:
+                        container_id = resp.json().get("id")
+                        time.sleep(3)
+                        pub = requests.post(
+                            f"https://graph.facebook.com/v18.0/{ig_user_id}/media_publish",
+                            data={"creation_id": container_id, "access_token": fb_token},
+                            timeout=15
+                        )
+                        if pub.status_code == 200:
+                            send_message(chat_id, "✅ סטורי פורסם!")
+                            return
+            # גיבוי – שתף פוסט ישירות
+            ok, result = post_to_instagram_story(media_id)
+            if ok:
+                send_message(chat_id, "✅ סטורי פורסם!")
+            else:
+                send_message(chat_id, f"❌ שגיאה: {result}")
+        threading.Thread(target=_post_story, daemon=True).start()
+
     elif cb_data == "watermark_settings":
         wm = watermark_settings
         send_message(chat_id, f"""🖼 <b>הגדרות ווטרמארק</b>
@@ -3512,33 +3552,6 @@ def handle_callback(cb):
         draft["step"] = "social_delete_fb_input"
         send_message(chat_id, "🗑️ שלח לינק לפוסט בפייסבוק למחיקה:")
 
-    elif step == "social_delete_fb_input":
-        import re
-        fb_token = os.environ.get("FB_PAGE_TOKEN","")
-        # נסה לחלץ post ID מלינק
-        post_id = text.strip()
-        match = re.search(r'facebook\.com/.+?/posts/(\d+)', text)
-        if match:
-            post_id = match.group(1)
-        else:
-            match = re.search(r'facebook\.com/permalink\.php\?story_fbid=(\d+)', text)
-            if match:
-                post_id = match.group(1)
-        try:
-            resp = requests.delete(
-                f"https://graph.facebook.com/v18.0/{post_id}",
-                params={"access_token": fb_token},
-                timeout=15
-            )
-            if resp.status_code == 200:
-                send_message(chat_id, "✅ פוסט נמחק מפייסבוק!", get_menu(user_id))
-            else:
-                send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
-        except Exception as e:
-            send_message(chat_id, f"❌ {e}")
-        draft["step"] = "idle"
-        return True
-
     elif cb_data == "social_delete_ig":
         draft["step"] = "social_delete_ig_input"
         send_message(chat_id, "🗑️ שלח לינק לפוסט באינסטגרם למחיקה:")
@@ -3649,7 +3662,9 @@ def handle_callback(cb):
                     ok, result = post_to_instagram_carousel(ig_text, [add_watermark(img) for img in post_images[:10]])
                     if ok:
                         draft["last_ig_post_id"] = result
-                        send_message(chat_id, "✅ פורסם באינסטגרם!")
+                        send_message(chat_id, "✅ פורסם באינסטגרם!", {
+                            "inline_keyboard": [[{"text": "📱 שתף לסטורי", "callback_data": f"ig_story_{result}"}]]
+                        })
                     else:
                         send_message(chat_id, f"❌ אינסטגרם נכשל: {result}", {
                             "inline_keyboard": [[{"text": "🔄 נסה שוב", "callback_data": "auto_share_ig"}]]
@@ -3658,7 +3673,9 @@ def handle_callback(cb):
                     ok, result = post_to_instagram(ig_text, add_watermark(post_images[0]))
                     if ok:
                         draft["last_ig_post_id"] = result
-                        send_message(chat_id, "✅ פורסם באינסטגרם!")
+                        send_message(chat_id, "✅ פורסם באינסטגרם!", {
+                            "inline_keyboard": [[{"text": "📱 שתף לסטורי", "callback_data": f"ig_story_{result}"}]]
+                        })
                     else:
                         send_message(chat_id, f"❌ אינסטגרם נכשל: {result}", {
                             "inline_keyboard": [[{"text": "🔄 נסה שוב", "callback_data": "auto_share_ig"}]]
@@ -4000,7 +4017,104 @@ def post_to_facebook(text, image_bytes=None, link=None):
     except Exception as e:
         return False, str(e)
 
-def add_watermark(image_bytes):
+def create_story_template(post_image_bytes, title="", subtitle=""):
+    """בונה תבנית סטורי 1080x1920 עם מסגרת כחול-לבן"""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        import io
+
+        W, H = 1080, 1920
+        BLUE_DARK  = "#1A3A6B"
+        BLUE_MID   = "#2255A4"
+        BLUE_LIGHT = "#4A80D0"
+        WHITE      = "#FFFFFF"
+        GOLD       = "#D4AF37"
+
+        # רקע כחול כהה
+        story = Image.new("RGB", (W, H), BLUE_DARK)
+        draw = ImageDraw.Draw(story)
+
+        # פס עליון כחול בהיר
+        draw.rectangle([0, 0, W, 180], fill=BLUE_MID)
+
+        # לוגו / שם האתר בפס עליון
+        try:
+            font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 72)
+            font_sub   = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 42)
+            font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36)
+        except:
+            font_title = font_sub = font_small = ImageFont.load_default()
+
+        site_name = "עדכוני חב״ד"
+        bbox = draw.textbbox((0,0), site_name, font=font_title)
+        tw = bbox[2] - bbox[0]
+        draw.text(((W - tw)//2, 50), site_name, font=font_title, fill=WHITE)
+
+        # קו זהב מתחת לפס
+        draw.rectangle([0, 180, W, 190], fill=GOLD)
+
+        # תמונת הפוסט במרכז – מרובעת
+        if post_image_bytes:
+            post_img = Image.open(io.BytesIO(post_image_bytes)).convert("RGB")
+            # חתוך לריבוע
+            pw, ph = post_img.size
+            side = min(pw, ph)
+            left = (pw - side) // 2
+            top  = (ph - side) // 2
+            post_img = post_img.crop((left, top, left+side, top+side))
+            # שנה גודל
+            img_size = 940
+            post_img = post_img.resize((img_size, img_size), Image.LANCZOS)
+            # מרכז אנכי
+            img_y = 250
+            story.paste(post_img, ((W - img_size)//2, img_y))
+            # מסגרת לבנה סביב התמונה
+            ix = (W - img_size)//2
+            draw.rectangle([ix-6, img_y-6, ix+img_size+6, img_y+img_size+6],
+                          outline=WHITE, width=6)
+
+        # כותרת מתחת לתמונה
+        text_y = 250 + 940 + 40
+        if title:
+            # שבור לשורות
+            words = title.split()
+            lines = []
+            line = ""
+            for word in words:
+                test = (line + " " + word).strip()
+                bbox = draw.textbbox((0,0), test, font=font_sub)
+                if bbox[2] - bbox[0] > W - 80:
+                    if line:
+                        lines.append(line)
+                    line = word
+                else:
+                    line = test
+            if line:
+                lines.append(line)
+
+            for l in lines[:3]:
+                bbox = draw.textbbox((0,0), l, font=font_sub)
+                tw = bbox[2] - bbox[0]
+                draw.text(((W-tw)//2, text_y), l, font=font_sub, fill=WHITE)
+                text_y += 55
+
+        # פס תחתון
+        draw.rectangle([0, H-160, W, H], fill=BLUE_MID)
+        draw.rectangle([0, H-160, W, H-150], fill=GOLD)
+
+        # טקסט "לפוסט המלא ←" בפס תחתון
+        cta = "לפוסט המלא ←"
+        bbox = draw.textbbox((0,0), cta, font=font_sub)
+        tw = bbox[2] - bbox[0]
+        draw.text(((W-tw)//2, H-120), cta, font=font_sub, fill=WHITE)
+
+        output = io.BytesIO()
+        story.save(output, format="JPEG", quality=92)
+        return output.getvalue()
+
+    except Exception as e:
+        print(f"שגיאה story template: {e}", flush=True)
+        return post_image_bytes
     """מוסיף ווטרמארק לתמונה לפי הגדרות watermark_settings"""
     if not watermark_settings.get("enabled"):
         return image_bytes
@@ -4221,6 +4335,39 @@ def post_to_instagram_carousel(caption, images_list):
         )
         if pub_resp.status_code == 200:
             return True, pub_resp.json().get("id")
+        return False, pub_resp.text[:200]
+    except Exception as e:
+        return False, str(e)
+
+def post_to_instagram_story(media_id):
+    """משתף פוסט קיים לסטורי אינסטגרם"""
+    ig_user_id = os.environ.get("IG_USER_ID", "")
+    fb_token = os.environ.get("FB_PAGE_TOKEN", "")
+    if not ig_user_id or not fb_token:
+        return False, "חסרים פרטי אינסטגרם"
+    try:
+        # צור container לסטורי
+        resp = requests.post(
+            f"https://graph.facebook.com/v18.0/{ig_user_id}/media",
+            data={
+                "media_type": "STORIES",
+                "source_type": "post",
+                "source_media_id": media_id,
+                "access_token": fb_token
+            },
+            timeout=30
+        )
+        if resp.status_code != 200:
+            return False, resp.text[:200]
+        container_id = resp.json().get("id")
+        # פרסם
+        pub_resp = requests.post(
+            f"https://graph.facebook.com/v18.0/{ig_user_id}/media_publish",
+            data={"creation_id": container_id, "access_token": fb_token},
+            timeout=15
+        )
+        if pub_resp.status_code == 200:
+            return True, pub_resp.json().get("id","")
         return False, pub_resp.text[:200]
     except Exception as e:
         return False, str(e)
