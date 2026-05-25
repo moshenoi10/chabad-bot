@@ -48,127 +48,251 @@ MINI_APP_HTML = """<!DOCTYPE html>
 <html dir="rtl" lang="he">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>עדכוני חב״ד · מרכז שליטה</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>עדכוני חב״ד</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;600;700;800&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#060818;--s:rgba(255,255,255,.04);--s2:rgba(255,255,255,.08);--b:rgba(255,255,255,.08);--a:#00d4ff;--a2:#7c3aed;--a3:#10b981;--d:#ef4444;--w:#f59e0b;--t:#f0f4ff;--t2:rgba(240,244,255,.55)}
+:root{
+  --bg:#060c1a;--s:rgba(255,255,255,.05);--s2:rgba(255,255,255,.09);
+  --b:rgba(255,255,255,.09);--a:#00d4ff;--a2:#7c3aed;--a3:#10b981;
+  --d:#ef4444;--w:#f59e0b;--t:#eef2ff;--t2:rgba(238,242,255,.5);
+  --r:14px;--tr:all .2s ease;
+}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{font-family:'Assistant',sans-serif;background:var(--bg);color:var(--t);min-height:100vh;overflow-x:hidden}
-body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse 80% 50% at 20% -10%,rgba(0,212,255,.08),transparent 60%),radial-gradient(ellipse 60% 40% at 80% 110%,rgba(124,58,237,.1),transparent 60%);pointer-events:none;z-index:0}
-body::after{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(0,212,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(0,212,255,.025) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0}
-.hdr{position:fixed;top:0;left:0;right:0;z-index:100;padding:14px 16px 10px;background:rgba(6,8,24,.9);backdrop-filter:blur(20px);border-bottom:1px solid var(--b)}
+body::before{content:'';position:fixed;inset:0;
+  background:radial-gradient(ellipse 90% 60% at 15% -5%,rgba(0,212,255,.07),transparent 55%),
+  radial-gradient(ellipse 70% 50% at 85% 105%,rgba(124,58,237,.09),transparent 55%);
+  pointer-events:none;z-index:0}
+body::after{content:'';position:fixed;inset:0;
+  background-image:linear-gradient(rgba(0,212,255,.02) 1px,transparent 1px),
+  linear-gradient(90deg,rgba(0,212,255,.02) 1px,transparent 1px);
+  background-size:36px 36px;pointer-events:none;z-index:0}
+
+/* PIN SCREEN */
+#pin-screen{position:fixed;inset:0;z-index:999;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:30px}
+.pin-logo{width:70px;height:70px;background:linear-gradient(135deg,var(--a),var(--a2));border-radius:20px;display:flex;align-items:center;justify-content:center;font-size:32px;margin-bottom:20px;box-shadow:0 0 40px rgba(0,212,255,.3)}
+.pin-title{font-size:22px;font-weight:800;margin-bottom:6px}
+.pin-sub{font-size:13px;color:var(--t2);margin-bottom:30px}
+.pin-dots{display:flex;gap:12px;margin-bottom:30px}
+.pin-dot{width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,255,255,.3);transition:var(--tr)}
+.pin-dot.filled{background:var(--a);border-color:var(--a);box-shadow:0 0 12px rgba(0,212,255,.5)}
+.pin-dot.error{background:var(--d);border-color:var(--d)}
+.pin-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:240px}
+.pin-btn{height:64px;background:var(--s);border:1px solid var(--b);border-radius:16px;font-size:22px;font-weight:700;color:var(--t);cursor:pointer;transition:var(--tr);display:flex;align-items:center;justify-content:center}
+.pin-btn:active{background:rgba(0,212,255,.15);border-color:rgba(0,212,255,.4);transform:scale(.95)}
+.pin-err{color:var(--d);font-size:12px;margin-top:10px;height:18px}
+
+/* HEADER */
+.hdr{position:fixed;top:0;left:0;right:0;z-index:100;padding:12px 14px 8px;background:rgba(6,12,26,.9);backdrop-filter:blur(24px);border-bottom:1px solid var(--b)}
 .hdr-i{display:flex;align-items:center;justify-content:space-between}
-.logo{display:flex;align-items:center;gap:10px}
-.logo-ic{width:34px;height:34px;background:linear-gradient(135deg,var(--a),var(--a2));border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 0 20px rgba(0,212,255,.3)}
-.logo-t{font-size:15px;font-weight:800;background:linear-gradient(90deg,var(--a),#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.logo-s{font-size:11px;color:var(--t2)}
+.logo{display:flex;align-items:center;gap:9px}
+.logo-ic{width:32px;height:32px;background:linear-gradient(135deg,var(--a),var(--a2));border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:15px;box-shadow:0 0 16px rgba(0,212,255,.3)}
+.logo-t{font-size:14px;font-weight:800;background:linear-gradient(90deg,var(--a),#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.logo-s{font-size:10px;color:var(--t2)}
 .dot{width:7px;height:7px;background:var(--a3);border-radius:50%;box-shadow:0 0 8px var(--a3);animation:pulse 2s infinite}
-@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(.8)}}
-.nav{position:fixed;bottom:0;left:0;right:0;z-index:100;padding:6px 10px calc(6px + env(safe-area-inset-bottom));background:rgba(6,8,24,.95);backdrop-filter:blur(20px);border-top:1px solid var(--b);display:flex;justify-content:space-around}
-.nb{display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 10px;border-radius:10px;cursor:pointer;border:none;background:none;color:var(--t2);font-family:'Assistant',sans-serif;font-size:9px;transition:all .2s}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.75)}}
+
+/* NAV */
+.nav{position:fixed;bottom:0;left:0;right:0;z-index:100;padding:6px 6px calc(6px + env(safe-area-inset-bottom));background:rgba(6,12,26,.95);backdrop-filter:blur(24px);border-top:1px solid var(--b);display:flex;align-items:center;justify-content:space-between}
+.nb{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 10px;border-radius:10px;cursor:pointer;border:none;background:none;color:var(--t2);font-family:'Assistant',sans-serif;font-size:9px;transition:var(--tr);flex:1}
 .nb.active{color:var(--a);background:rgba(0,212,255,.1)}
-.nb .ic{font-size:18px}
-.content{position:relative;z-index:1;padding:74px 14px 90px}
-.screen{display:none;animation:fi .3s ease}
+.nb .ic{font-size:17px}
+.nb-center{width:50px;height:50px;background:linear-gradient(135deg,var(--a),var(--a2));border-radius:50%;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:22px;box-shadow:0 0 20px rgba(0,212,255,.4);margin:-12px 4px 0;flex-shrink:0;transition:var(--tr)}
+.nb-center:active{transform:scale(.92)}
+
+/* CONTENT */
+.content{position:relative;z-index:1;padding:70px 12px 86px}
+.screen{display:none;animation:fi .25s ease}
 .screen.active{display:block}
-@keyframes fi{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-.card{background:var(--s);border:1px solid var(--b);border-radius:14px;padding:16px;margin-bottom:12px;backdrop-filter:blur(10px)}
-.card.glow{box-shadow:0 0 30px rgba(0,212,255,.12);border-color:rgba(0,212,255,.2)}
-.card.purple{box-shadow:0 0 30px rgba(124,58,237,.15);border-color:rgba(124,58,237,.2)}
-.card-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-.card-t{font-size:14px;font-weight:700}
-.sg{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:12px}
-.sc{background:var(--s);border:1px solid var(--b);border-radius:12px;padding:14px;text-align:center}
-.sv{font-size:24px;font-weight:800;background:linear-gradient(135deg,var(--a),#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.sl{font-size:10px;color:var(--t2);margin-top:3px}
-.badge{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:16px;font-size:10px;font-weight:700}
+@keyframes fi{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+
+/* CARDS */
+.card{background:var(--s);border:1px solid var(--b);border-radius:var(--r);padding:14px;margin-bottom:10px;backdrop-filter:blur(10px)}
+.card.glow{box-shadow:0 0 24px rgba(0,212,255,.1);border-color:rgba(0,212,255,.18)}
+.card.purple{box-shadow:0 0 24px rgba(124,58,237,.12);border-color:rgba(124,58,237,.18)}
+.card.green{box-shadow:0 0 24px rgba(16,185,129,.1);border-color:rgba(16,185,129,.18)}
+.card-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.card-t{font-size:13px;font-weight:700}
+
+/* STATS */
+.sg{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.sg3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px}
+.sc{background:var(--s);border:1px solid var(--b);border-radius:12px;padding:12px;text-align:center}
+.sv{font-size:22px;font-weight:800;background:linear-gradient(135deg,var(--a),#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.sl{font-size:9px;color:var(--t2);margin-top:2px}
+
+/* BADGES */
+.badge{display:inline-flex;align-items:center;padding:2px 7px;border-radius:14px;font-size:10px;font-weight:700}
 .bg{background:rgba(16,185,129,.15);color:var(--a3);border:1px solid rgba(16,185,129,.3)}
 .bb{background:rgba(0,212,255,.1);color:var(--a);border:1px solid rgba(0,212,255,.2)}
 .br{background:rgba(239,68,68,.1);color:var(--d);border:1px solid rgba(239,68,68,.2)}
 .by{background:rgba(245,158,11,.1);color:var(--w);border:1px solid rgba(245,158,11,.2)}
 .bp{background:rgba(124,58,237,.1);color:#a78bfa;border:1px solid rgba(124,58,237,.2)}
-.li{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--b)}
+
+/* LIST */
+.li{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--b)}
 .li:last-child{border-bottom:none}
-.li-l{display:flex;align-items:center;gap:10px}
-.av{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px}
+.li-l{display:flex;align-items:center;gap:9px}
+.av{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
 .lt{font-size:13px;font-weight:600}
-.ls{font-size:11px;color:var(--t2);margin-top:2px}
-.tgl{position:relative;width:44px;height:24px;cursor:pointer}
+.ls{font-size:11px;color:var(--t2);margin-top:1px}
+
+/* TOGGLE */
+.tgl{position:relative;width:42px;height:23px;cursor:pointer;flex-shrink:0}
 .tgl input{display:none}
 .tgl-tr{position:absolute;inset:0;background:rgba(255,255,255,.1);border-radius:12px;transition:background .3s;border:1px solid var(--b)}
 .tgl input:checked+.tgl-tr{background:var(--a);border-color:var(--a)}
-.tgl-th{position:absolute;top:2px;right:2px;width:20px;height:20px;background:white;border-radius:50%;transition:transform .3s;box-shadow:0 2px 4px rgba(0,0,0,.3)}
-.tgl input:checked~.tgl-th{transform:translateX(-20px)}
-.st{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--t2);margin:16px 0 8px}
-.pb{height:3px;background:rgba(255,255,255,.07);border-radius:2px;overflow:hidden;margin-top:6px}
-.pf{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--a),var(--a2));transition:width .6s ease}
-.cb{display:flex;align-items:flex-end;gap:5px;height:70px;margin-top:10px}
-.cb-b{flex:1;border-radius:3px 3px 0 0;background:linear-gradient(180deg,var(--a),rgba(0,212,255,.2));min-height:3px}
-.btn{display:flex;align-items:center;justify-content:center;gap:6px;padding:11px 16px;border-radius:11px;font-family:'Assistant',sans-serif;font-size:13px;font-weight:700;cursor:pointer;border:none;width:100%;transition:all .2s;margin-top:8px}
-.btn-p{background:linear-gradient(135deg,var(--a),var(--a2));color:white;box-shadow:0 4px 16px rgba(0,212,255,.2)}
+.tgl-th{position:absolute;top:2px;right:2px;width:19px;height:19px;background:white;border-radius:50%;transition:transform .3s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.tgl input:checked~.tgl-th{transform:translateX(-19px)}
+
+/* INPUTS */
+.inp{width:100%;padding:10px 12px;background:var(--s);border:1px solid var(--b);border-radius:9px;color:var(--t);font-family:'Assistant',sans-serif;font-size:13px;outline:none;transition:border-color .2s}
+.inp:focus{border-color:var(--a)}
+.inp-g{margin-bottom:10px}
+.inp-l{font-size:11px;color:var(--t2);margin-bottom:4px;display:block}
+select.inp{appearance:none}
+textarea.inp{resize:none;line-height:1.5}
+
+/* BUTTONS */
+.btn{display:flex;align-items:center;justify-content:center;gap:6px;padding:11px 14px;border-radius:10px;font-family:'Assistant',sans-serif;font-size:13px;font-weight:700;cursor:pointer;border:none;width:100%;transition:var(--tr)}
+.btn-p{background:linear-gradient(135deg,var(--a),var(--a2));color:white;box-shadow:0 4px 14px rgba(0,212,255,.2)}
 .btn-p:active{transform:scale(.97)}
 .btn-d{background:rgba(239,68,68,.1);color:var(--d);border:1px solid rgba(239,68,68,.3)}
 .btn-g{background:var(--s);color:var(--t);border:1px solid var(--b)}
-.inp{width:100%;padding:10px 12px;background:var(--s);border:1px solid var(--b);border-radius:9px;color:var(--t);font-family:'Assistant',sans-serif;font-size:13px;outline:none;transition:border-color .2s}
-.inp:focus{border-color:var(--a)}
-.inp-g{margin-bottom:12px}
-.inp-l{font-size:11px;color:var(--t2);margin-bottom:5px;display:block}
-.chip{display:inline-flex;align-items:center;gap:5px;background:var(--s2);border:1px solid var(--b);border-radius:16px;padding:3px 9px;font-size:11px;margin:3px}
-.chip-x{color:var(--d);cursor:pointer;font-size:13px}
-.divider{height:1px;background:var(--b);margin:12px 0}
-.pt{font-size:20px;font-weight:800;margin-bottom:3px}
-.pt span{background:linear-gradient(90deg,var(--a),#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.ps{font-size:12px;color:var(--t2);margin-bottom:16px}
-.ns{display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px solid var(--b)}
+.btn-sm{padding:7px 12px;font-size:12px;width:auto;border-radius:8px}
+.row{display:flex;gap:8px;align-items:flex-end}
+.row .inp-g{flex:1;margin:0}
+
+/* SECTION */
+.st{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--t2);margin:14px 0 7px}
+.divider{height:1px;background:var(--b);margin:10px 0}
+.pt{font-size:19px;font-weight:800;margin-bottom:2px}
+.pt span{background:linear-gradient(90deg,var(--a),#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.ps{font-size:11px;color:var(--t2);margin-bottom:14px}
+
+/* PROGRESS */
+.pb{height:3px;background:rgba(255,255,255,.07);border-radius:2px;overflow:hidden;margin-top:5px}
+.pf{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--a),var(--a2));transition:width .6s ease}
+
+/* CHART */
+.cb{display:flex;align-items:flex-end;gap:4px;height:65px;margin-top:8px}
+.cb-b{flex:1;border-radius:3px 3px 0 0;background:linear-gradient(180deg,var(--a),rgba(0,212,255,.15));min-height:3px;transition:height .5s ease}
+
+/* CHIP */
+.chip{display:inline-flex;align-items:center;gap:4px;background:var(--s2);border:1px solid var(--b);border-radius:14px;padding:2px 8px;font-size:11px;margin:2px}
+.chip-x{color:var(--d);cursor:pointer;font-size:12px;line-height:1}
+
+/* NS */
+.ns{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--b)}
 .ns:last-child{border-bottom:none}
-.ns-v{font-size:15px;font-weight:700;margin-right:auto}
-.ns-l{font-size:12px;color:var(--t2)}
-.ur{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--b)}
+.ns-v{font-size:14px;font-weight:700;margin-right:auto}
+.ns-l{font-size:11px;color:var(--t2)}
+
+/* USER ROW */
+.ur{display:flex;align-items:center;gap:9px;padding:10px 0;border-bottom:1px solid var(--b)}
 .ur:last-child{border-bottom:none}
-.ua{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:18px;background:linear-gradient(135deg,rgba(0,212,255,.15),rgba(124,58,237,.15));border:1px solid rgba(0,212,255,.15)}
-.un{font-size:13px;font-weight:600}
-.ui{font-size:11px;color:var(--t2);direction:ltr}
-.le{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--b)}
+.ua{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;background:linear-gradient(135deg,rgba(0,212,255,.12),rgba(124,58,237,.12));border:1px solid rgba(0,212,255,.12);flex-shrink:0}
+
+/* LOG */
+.le{display:flex;gap:8px;padding:9px 0;border-bottom:1px solid var(--b)}
 .le:last-child{border-bottom:none}
-.lt2{font-size:12px;font-weight:600}
-.la{font-size:11px;color:var(--t2);margin-top:2px}
-.ltime{font-size:10px;color:var(--t2);white-space:nowrap}
-.shimmer{background:linear-gradient(90deg,var(--s),var(--s2),var(--s));background-size:200% 100%;animation:sh 1.5s infinite;border-radius:8px}
-@keyframes sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
-.toast{position:fixed;bottom:82px;left:50%;transform:translateX(-50%) translateY(16px);background:rgba(0,212,255,.12);border:1px solid rgba(0,212,255,.25);backdrop-filter:blur(20px);padding:9px 18px;border-radius:18px;font-size:12px;font-weight:700;color:var(--a);opacity:0;transition:all .3s;z-index:200;white-space:nowrap}
-.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
-.art-item{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--b)}
-.art-item:last-child{border-bottom:none}
-.art-n{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,rgba(0,212,255,.2),rgba(124,58,237,.2));display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:var(--a);flex-shrink:0}
-.art-t{font-size:12px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ARTICLE */
+.art{display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px solid var(--b);cursor:pointer}
+.art:last-child{border-bottom:none}
+.art:active{background:var(--s2);margin:0 -14px;padding:9px 14px}
+.art-n{width:24px;height:24px;border-radius:7px;background:linear-gradient(135deg,rgba(0,212,255,.2),rgba(124,58,237,.2));display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:var(--a);flex-shrink:0}
+.art-t{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
 .art-d{font-size:10px;color:var(--t2)}
-select.inp{appearance:none}
-.row{display:flex;gap:8px}
-.row .inp-g{flex:1}
-.color-row{display:flex;align-items:center;gap:8px}
-.swatch{width:26px;height:26px;border-radius:6px;border:2px solid var(--b);flex-shrink:0}
+
+/* WATERMARK PREVIEW */
+.wm-preview{width:100%;height:180px;background:#222;border-radius:10px;position:relative;overflow:hidden;border:1px solid var(--b);margin-bottom:10px}
+.wm-preview img{width:100%;height:100%;object-fit:cover;opacity:.5}
+.wm-label{position:absolute;font-family:'Assistant',sans-serif;font-weight:bold;white-space:nowrap;pointer-events:none;transform:translate(50%,-50%)}
+
+/* SEARCH */
+.search-bar{display:flex;gap:8px;margin-bottom:10px}
+.search-bar .inp{flex:1}
+
+/* MODAL */
+.modal{position:fixed;inset:0;z-index:200;background:rgba(6,12,26,.95);backdrop-filter:blur(10px);display:none;flex-direction:column;animation:fi .2s ease}
+.modal.open{display:flex}
+.modal-h{display:flex;align-items:center;justify-content:space-between;padding:16px 16px 10px;border-bottom:1px solid var(--b)}
+.modal-title{font-size:16px;font-weight:800}
+.modal-close{background:none;border:none;color:var(--t2);font-size:24px;cursor:pointer;line-height:1}
+.modal-body{padding:14px;flex:1;overflow-y:auto}
+
+/* TOAST */
+.toast{position:fixed;bottom:84px;left:50%;transform:translateX(-50%) translateY(14px);background:rgba(0,212,255,.12);border:1px solid rgba(0,212,255,.25);backdrop-filter:blur(16px);padding:8px 16px;border-radius:16px;font-size:12px;font-weight:700;color:var(--a);opacity:0;transition:all .25s;z-index:500;white-space:nowrap}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.err{color:var(--d);background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.25)}
+.toast.ok{color:var(--a3);background:rgba(16,185,129,.1);border-color:rgba(16,185,129,.25)}
+
+/* SHIMMER */
+.shimmer{background:linear-gradient(90deg,var(--s),var(--s2),var(--s));background-size:200% 100%;animation:sh 1.4s infinite;border-radius:8px}
+@keyframes sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+/* COLOR SWATCH */
+.swatch{width:24px;height:24px;border-radius:6px;border:2px solid var(--b);flex-shrink:0;cursor:pointer}
+
+/* DRAG HANDLE for WM position */
+.wm-handle{position:absolute;width:28px;height:28px;background:rgba(0,212,255,.8);border-radius:50%;border:2px solid white;cursor:grab;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;font-size:11px;box-shadow:0 2px 8px rgba(0,0,0,.4);touch-action:none}
+.wm-handle:active{cursor:grabbing}
 </style>
 </head>
 <body>
-<div class="hdr">
+
+<!-- PIN SCREEN -->
+<div id="pin-screen">
+  <div class="pin-logo">⚡</div>
+  <div class="pin-title">עדכוני חב״ד</div>
+  <div class="pin-sub">הכנס קוד גישה</div>
+  <div class="pin-dots">
+    <div class="pin-dot" id="pd0"></div>
+    <div class="pin-dot" id="pd1"></div>
+    <div class="pin-dot" id="pd2"></div>
+    <div class="pin-dot" id="pd3"></div>
+  </div>
+  <div class="pin-grid">
+    <button class="pin-btn" onclick="pinPress('1')">1</button>
+    <button class="pin-btn" onclick="pinPress('2')">2</button>
+    <button class="pin-btn" onclick="pinPress('3')">3</button>
+    <button class="pin-btn" onclick="pinPress('4')">4</button>
+    <button class="pin-btn" onclick="pinPress('5')">5</button>
+    <button class="pin-btn" onclick="pinPress('6')">6</button>
+    <button class="pin-btn" onclick="pinPress('7')">7</button>
+    <button class="pin-btn" onclick="pinPress('8')">8</button>
+    <button class="pin-btn" onclick="pinPress('9')">9</button>
+    <button class="pin-btn" onclick="pinPress('')" style="font-size:16px">⌫</button>
+    <button class="pin-btn" onclick="pinPress('0')">0</button>
+    <button class="pin-btn" onclick="pinPress('X')" style="font-size:16px">✓</button>
+  </div>
+  <div class="pin-err" id="pin-err"></div>
+</div>
+
+<!-- HEADER -->
+<div class="hdr" id="main-hdr" style="display:none">
   <div class="hdr-i">
     <div class="logo">
       <div class="logo-ic">⚡</div>
       <div><div class="logo-t">עדכוני חב״ד</div><div class="logo-s">מרכז שליטה</div></div>
     </div>
-    <div class="dot"></div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <span id="hdr-time" style="font-size:11px;color:var(--t2)"></span>
+      <div class="dot"></div>
+    </div>
   </div>
 </div>
 
-<div class="content">
+<!-- CONTENT -->
+<div class="content" id="main-content" style="display:none">
 
 <!-- בית -->
 <div class="screen active" id="sc-dash">
-  <div class="pt">שלום, <span id="user-role-name">מנהל</span></div>
-  <div class="ps">סקירת מערכת בזמן אמת</div>
+  <div class="pt">שלום, <span id="usr-name">מנהל</span> 👋</div>
+  <div class="ps" id="dash-date">טוען...</div>
   <div class="sg">
     <div class="sc"><div class="sv" id="s-art">--</div><div class="sl">📰 כתבות החודש</div></div>
     <div class="sc"><div class="sv" id="s-usr">--</div><div class="sl">👥 משתמשים</div></div>
@@ -178,109 +302,153 @@ select.inp{appearance:none}
   <div class="card glow">
     <div class="card-h"><div class="card-t">פעילות שבועית</div><span class="badge bg">● פעיל</span></div>
     <div class="cb" id="chart"></div>
-    <div style="display:flex;justify-content:space-between;margin-top:5px">
-      <span style="font-size:9px;color:var(--t2)">א׳</span><span style="font-size:9px;color:var(--t2)">ב׳</span>
-      <span style="font-size:9px;color:var(--t2)">ג׳</span><span style="font-size:9px;color:var(--t2)">ד׳</span>
-      <span style="font-size:9px;color:var(--t2)">ה׳</span><span style="font-size:9px;color:var(--t2)">ו׳</span>
-      <span style="font-size:9px;color:var(--t2)">ש׳</span>
+    <div style="display:flex;justify-content:space-between;margin-top:4px">
+      <span style="font-size:9px;color:var(--t2)">א</span><span style="font-size:9px;color:var(--t2)">ב</span>
+      <span style="font-size:9px;color:var(--t2)">ג</span><span style="font-size:9px;color:var(--t2)">ד</span>
+      <span style="font-size:9px;color:var(--t2)">ה</span><span style="font-size:9px;color:var(--t2)">ו</span>
+      <span style="font-size:9px;color:var(--t2)">ש</span>
     </div>
   </div>
   <div class="card">
-    <div class="card-h"><div class="card-t">כתבות אחרונות</div></div>
-    <div id="recent-arts"><div class="shimmer" style="width:100%;height:120px"></div></div>
+    <div class="card-h"><div class="card-t">⚡ פעולות מהירות</div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <button class="btn btn-p" onclick="go('arts',document.querySelectorAll('.nb')[0])">📰 כתבות</button>
+      <button class="btn btn-p" onclick="go('net',document.querySelectorAll('.nb')[1])">🌐 רשתות</button>
+      <button class="btn btn-g" onclick="go('usr',document.querySelectorAll('.nb')[3])">👥 משתמשים</button>
+      <button class="btn btn-g" onclick="go('log',document.querySelectorAll('.nb')[4])">📋 לוג</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-h"><div class="card-t">כתבות אחרונות</div><button class="btn btn-g btn-sm" onclick="go('arts',document.querySelectorAll('.nb')[0])">הכל</button></div>
+    <div id="dash-arts"><div class="shimmer" style="height:100px"></div></div>
   </div>
   <div class="card">
     <div class="card-h"><div class="card-t">סטטוס שירותים</div></div>
-    <div class="li">
-      <div class="li-l"><div class="av" style="background:rgba(0,212,255,.1)">🤖</div>
-        <div><div class="lt">Gemini AI</div><div class="ls">עיבוד טקסט</div></div></div>
-      <span class="badge bg">פעיל</span>
-    </div>
-    <div class="li">
-      <div class="li-l"><div class="av" style="background:rgba(124,58,237,.1)">🎬</div>
-        <div><div class="lt">Vimeo</div><div class="ls">אחסון וידאו</div></div></div>
-      <span class="badge bg">פעיל</span>
-    </div>
-    <div class="li">
-      <div class="li-l"><div class="av" style="background:rgba(16,185,129,.1)">📧</div>
-        <div><div class="lt">ניטור מייל</div><div class="ls" id="email-s">כל 30 דק׳</div></div></div>
-      <span class="badge bg" id="email-badge">פעיל</span>
-    </div>
+    <div class="li"><div class="li-l"><div class="av" style="background:rgba(0,212,255,.1)">🤖</div><div><div class="lt">Gemini AI</div><div class="ls">עיבוד טקסט חכם</div></div></div><span class="badge bg">פעיל</span></div>
+    <div class="li"><div class="li-l"><div class="av" style="background:rgba(124,58,237,.1)">🎬</div><div><div class="lt">Vimeo</div><div class="ls">אחסון וידאו</div></div></div><span class="badge bg">פעיל</span></div>
+    <div class="li"><div class="li-l"><div class="av" style="background:rgba(16,185,129,.1)">📧</div><div><div class="lt">ניטור מייל</div><div class="ls" id="em-s-dash">כל 30 דק׳</div></div></div><span class="badge bg" id="em-b-dash">פעיל</span></div>
+    <div class="li"><div class="li-l"><div class="av" style="background:rgba(245,158,11,.1)">📘</div><div><div class="lt">פייסבוק</div><div class="ls">חשבון עסקי</div></div></div><span class="badge bg" id="fb-s-dash">מחובר</span></div>
+  </div>
+</div>
+
+<!-- כתבות -->
+<div class="screen" id="sc-arts">
+  <div class="pt"><span>כתבות</span></div>
+  <div class="ps">ניהול וצפייה</div>
+  <div class="search-bar">
+    <input class="inp" id="art-search" placeholder="חפש כתבה..." oninput="filterArts()">
+    <select class="inp" style="width:110px" onchange="filterArts()" id="art-filter">
+      <option value="">הכל</option>
+      <option value="publish">פורסמו</option>
+      <option value="draft">טיוטות</option>
+    </select>
+  </div>
+  <div class="card">
+    <div id="arts-list"><div class="shimmer" style="height:200px"></div></div>
   </div>
 </div>
 
 <!-- רשתות -->
 <div class="screen" id="sc-net">
   <div class="pt"><span>רשתות</span> חברתיות</div>
-  <div class="ps">סטטיסטיקות וניהול ווטרמארק</div>
+  <div class="ps">סטטיסטיקות, ניהול פוסטים וווטרמארק</div>
   <div class="card glow">
-    <div class="card-h"><div class="card-t">📘 פייסבוק</div><span class="badge bb" id="fb-badge">טוען...</span></div>
-    <div class="ns"><span style="font-size:18px">👍</span><span class="ns-l">לייקים</span><span class="ns-v" id="fb-fans">--</span></div>
-    <div class="ns"><span style="font-size:18px">👥</span><span class="ns-l">עוקבים</span><span class="ns-v" id="fb-fol">--</span></div>
+    <div class="card-h"><div class="card-t">📘 פייסבוק</div><span class="badge bb" id="fb-badge">טוען</span></div>
+    <div class="ns"><span style="font-size:16px">👍</span><span class="ns-l">לייקים</span><span class="ns-v" id="fb-fans">--</span></div>
+    <div class="ns"><span style="font-size:16px">👥</span><span class="ns-l">עוקבים</span><span class="ns-v" id="fb-fol">--</span></div>
     <div class="pb"><div class="pf" id="fb-pb" style="width:0%"></div></div>
+    <div style="margin-top:10px">
+      <button class="btn btn-d btn-sm" style="width:auto" onclick="openDeleteFb()">🗑️ מחק פוסט פייסבוק</button>
+    </div>
   </div>
   <div class="card purple">
-    <div class="card-h"><div class="card-t">📸 אינסטגרם</div><span class="badge bp" id="ig-badge">טוען...</span></div>
-    <div class="ns"><span style="font-size:18px">👥</span><span class="ns-l">עוקבים</span><span class="ns-v" id="ig-fol">--</span></div>
-    <div class="ns"><span style="font-size:18px">📸</span><span class="ns-l">פוסטים</span><span class="ns-v" id="ig-posts">--</span></div>
+    <div class="card-h"><div class="card-t">📸 אינסטגרם</div><span class="badge bp" id="ig-badge">טוען</span></div>
+    <div class="ns"><span style="font-size:16px">👥</span><span class="ns-l">עוקבים</span><span class="ns-v" id="ig-fol">--</span></div>
+    <div class="ns"><span style="font-size:16px">📸</span><span class="ns-l">פוסטים</span><span class="ns-v" id="ig-posts">--</span></div>
+    <div style="margin-top:10px">
+      <button class="btn btn-g btn-sm" style="width:auto" onclick="toast('אינסטגרם לא מאפשר מחיקה דרך API','err')">ℹ️ מחיקת IG</button>
+    </div>
   </div>
-  <div class="st">הגדרות ווטרמארק</div>
+  <div class="st">ווטרמארק – עיצוב ויזואלי</div>
   <div class="card">
     <div class="li">
-      <div class="li-l"><div><div class="lt">ווטרמארק</div><div class="ls" id="wm-prev">עדכוני חב״ד</div></div></div>
-      <label class="tgl"><input type="checkbox" id="wm-on" onchange="saveWm()"><div class="tgl-tr"></div><div class="tgl-th"></div></label>
+      <div class="li-l"><div><div class="lt">ווטרמארק פעיל</div><div class="ls" id="wm-prev-t">עדכוני חב״ד</div></div></div>
+      <label class="tgl"><input type="checkbox" id="wm-on" checked onchange="saveWm()"><div class="tgl-tr"></div><div class="tgl-th"></div></label>
     </div>
     <div class="divider"></div>
-    <div class="inp-g"><label class="inp-l">טקסט</label><input class="inp" id="wm-txt" placeholder="עדכוני חב״ד" oninput="document.getElementById('wm-prev').textContent=this.value"></div>
-    <div class="row">
-      <div class="inp-g">
-        <label class="inp-l">צבע טקסט</label>
-        <div class="color-row"><input class="inp" id="wm-tc" placeholder="#FFFFFF" oninput="updateSwatch('wm-tc','wm-ts')"><div class="swatch" id="wm-ts" style="background:#fff"></div></div>
+    <!-- Watermark Visual Editor -->
+    <div class="wm-preview" id="wm-canvas" onclick="wmCanvasClick(event)">
+      <div style="position:absolute;inset:0;background:linear-gradient(135deg,#1a3a6b,#0a1a3a);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.2);font-size:12px">לחץ לשינוי מיקום</div>
+      <div class="wm-label" id="wm-label-el" style="right:5%;bottom:5%;color:#fff;background:rgba(0,0,0,.55);padding:3px 8px;border-radius:6px;font-size:14px;transform:none;top:auto;right:8px;bottom:8px;left:auto">עדכוני חב״ד</div>
+    </div>
+    <div class="inp-g"><label class="inp-l">טקסט</label><input class="inp" id="wm-txt" placeholder="עדכוני חב״ד" oninput="updateWmPreview()"></div>
+    <div class="row" style="margin-bottom:10px">
+      <div class="inp-g"><label class="inp-l">צבע טקסט</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input class="inp" id="wm-tc" value="#FFFFFF" oninput="updateWmPreview();swatchUpdate('wm-tc','sw-tc')">
+          <input type="color" id="sw-tc" value="#ffffff" style="width:34px;height:34px;border-radius:8px;border:1px solid var(--b);background:none;cursor:pointer" oninput="document.getElementById('wm-tc').value=this.value;updateWmPreview()">
+        </div>
       </div>
-      <div class="inp-g">
-        <label class="inp-l">צבע רקע</label>
-        <div class="color-row"><input class="inp" id="wm-bc" placeholder="#000000" oninput="updateSwatch('wm-bc','wm-bs')"><div class="swatch" id="wm-bs" style="background:#000"></div></div>
+      <div class="inp-g"><label class="inp-l">צבע רקע</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input class="inp" id="wm-bc" value="#000000" oninput="updateWmPreview();swatchUpdate('wm-bc','sw-bc')">
+          <input type="color" id="sw-bc" value="#000000" style="width:34px;height:34px;border-radius:8px;border:1px solid var(--b);background:none;cursor:pointer" oninput="document.getElementById('wm-bc').value=this.value;updateWmPreview()">
+        </div>
       </div>
     </div>
-    <div class="inp-g"><label class="inp-l">גודל: <span id="wm-sl">40</span>px</label>
-      <input type="range" min="16" max="120" value="40" id="wm-sz" style="width:100%;accent-color:var(--a)" oninput="document.getElementById('wm-sl').textContent=this.value">
+    <div class="inp-g"><label class="inp-l">גודל גופן: <span id="wm-sl">40</span>px</label>
+      <input type="range" min="12" max="100" value="40" id="wm-sz" style="width:100%;accent-color:var(--a)" oninput="document.getElementById('wm-sl').textContent=this.value;updateWmPreview()">
     </div>
-    <div class="inp-g">
-      <label class="inp-l">מיקום X: <span id="wm-xl">95</span>%</label>
-      <input type="range" min="0" max="100" value="95" id="wm-x" style="width:100%;accent-color:var(--a)" oninput="document.getElementById('wm-xl').textContent=this.value">
+    <div class="inp-g"><label class="inp-l">שקיפות רקע: <span id="wm-opl">55</span>%</label>
+      <input type="range" min="0" max="100" value="55" id="wm-op" style="width:100%;accent-color:var(--a)" oninput="document.getElementById('wm-opl').textContent=this.value;updateWmPreview()">
     </div>
-    <div class="inp-g">
-      <label class="inp-l">מיקום Y: <span id="wm-yl">95</span>%</label>
-      <input type="range" min="0" max="100" value="95" id="wm-y" style="width:100%;accent-color:var(--a)" oninput="document.getElementById('wm-yl').textContent=this.value">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+      <div class="inp-g" style="margin:0"><label class="inp-l">מיקום X: <span id="wm-xl">95</span>%</label>
+        <input type="range" min="0" max="100" value="95" id="wm-x" style="width:100%;accent-color:var(--a)" oninput="document.getElementById('wm-xl').textContent=this.value;updateWmPreview()"></div>
+      <div class="inp-g" style="margin:0"><label class="inp-l">מיקום Y: <span id="wm-yl">95</span>%</label>
+        <input type="range" min="0" max="100" value="95" id="wm-y" style="width:100%;accent-color:var(--a)" oninput="document.getElementById('wm-yl').textContent=this.value;updateWmPreview()"></div>
     </div>
-    <button class="btn btn-p" onclick="saveWm()">💾 שמור ווטרמארק</button>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <select class="inp" id="wm-font" onchange="updateWmPreview()">
+        <option value="bold">גופן מודגש</option>
+        <option value="default">גופן רגיל</option>
+        <option value="serif">גופן קלאסי</option>
+      </select>
+      <select class="inp" id="wm-mode" onchange="updateWmPreview()">
+        <option value="text">טקסט</option>
+        <option value="logo">לוגו</option>
+      </select>
+    </div>
+    <button class="btn btn-p" style="margin-top:10px" onclick="saveWm()">💾 שמור ווטרמארק</button>
+  </div>
+
+  <div class="st">פוסטים אחרונים</div>
+  <div class="card">
+    <div id="recent-posts"><div class="shimmer" style="height:80px"></div></div>
+    <button class="btn btn-g" style="margin-top:8px" onclick="loadRecentPosts()">🔄 רענן</button>
   </div>
 </div>
 
 <!-- אנליטיקס -->
 <div class="screen" id="sc-an">
   <div class="pt"><span>אנליטיקס</span></div>
-  <div class="ps">Google Analytics 4 · 7 ימים אחרונים</div>
-  <div class="sg">
-    <div class="sc"><div class="sv" id="ga-s">--</div><div class="sl">🔵 סשנים</div></div>
-    <div class="sc"><div class="sv" id="ga-u">--</div><div class="sl">👤 משתמשים</div></div>
-    <div class="sc" style="grid-column:span 2"><div class="sv" id="ga-v">--</div><div class="sl">👁 צפיות דף</div></div>
+  <div class="ps">Google Analytics 4 · 7 ימים</div>
+  <div class="sg3">
+    <div class="sc"><div class="sv" id="ga-s">--</div><div class="sl">סשנים</div></div>
+    <div class="sc"><div class="sv" id="ga-u">--</div><div class="sl">משתמשים</div></div>
+    <div class="sc"><div class="sv" id="ga-v">--</div><div class="sl">צפיות</div></div>
   </div>
   <div class="card glow">
-    <div class="card-h"><div class="card-t">כתבות אחרונות</div><span class="badge bb">5 אחרונות</span></div>
-    <div id="top-arts"><div class="shimmer" style="width:100%;height:140px"></div></div>
+    <div class="card-h"><div class="card-t">5 כתבות אחרונות</div></div>
+    <div id="top-arts"><div class="shimmer" style="height:140px"></div></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><div class="card-t">📊 ביצועים</div></div>
+    <div class="ns"><span style="font-size:16px">⏱</span><span class="ns-l">זמן ממוצע בדף</span><span class="ns-v" id="ga-dur">--</span></div>
+    <div class="ns"><span style="font-size:16px">📱</span><span class="ns-l">מובייל</span><span class="ns-v" id="ga-mob">--</span></div>
+    <div class="ns"><span style="font-size:16px">🔄</span><span class="ns-l">שיעור חזרה</span><span class="ns-v" id="ga-boun">--</span></div>
   </div>
   <button class="btn btn-g" onclick="loadAn()">🔄 רענן נתונים</button>
-</div>
-
-<!-- לוג -->
-<div class="screen" id="sc-log">
-  <div class="pt"><span>לוג</span> פעולות</div>
-  <div class="ps">היסטוריית פעילות המערכת</div>
-  <div class="card">
-    <div id="log-list"><div class="shimmer" style="width:100%;height:200px"></div></div>
-  </div>
-  <button class="btn btn-g" onclick="loadLog()">🔄 רענן</button>
 </div>
 
 <!-- משתמשים -->
@@ -288,14 +456,13 @@ select.inp{appearance:none}
   <div class="pt"><span>ניהול</span> משתמשים</div>
   <div class="ps">הרשאות, מייל וגישה</div>
   <div class="card">
-    <div class="card-h"><div class="card-t">משתמשים פעילים</div></div>
-    <div id="usr-list"><div class="shimmer" style="width:100%;height:120px"></div></div>
+    <div class="card-h"><div class="card-t">משתמשים פעילים</div><span class="badge bb" id="usr-count">--</span></div>
+    <div id="usr-list"><div class="shimmer" style="height:100px"></div></div>
   </div>
   <div class="st">הוסף משתמש</div>
   <div class="card">
     <div class="inp-g"><label class="inp-l">מזהה טלגרם (User ID)</label><input class="inp" id="new-uid" placeholder="123456789" type="number"></div>
-    <div class="inp-g">
-      <label class="inp-l">תפקיד</label>
+    <div class="inp-g"><label class="inp-l">תפקיד</label>
       <select class="inp" id="new-role">
         <option value="editor">✏️ עורך</option>
         <option value="senior_editor">✨ עורך ראשי</option>
@@ -307,15 +474,30 @@ select.inp{appearance:none}
   <div class="st">ניהול מייל</div>
   <div class="card">
     <div class="card-h">
-      <div class="card-t">📧 כתובות מורשות</div>
+      <div><div class="lt">📧 ניטור מייל</div><div class="ls" id="em-status">טוען...</div></div>
       <label class="tgl"><input type="checkbox" id="em-on" onchange="toggleEmail()"><div class="tgl-tr"></div><div class="tgl-th"></div></label>
     </div>
-    <div id="em-chips" style="margin-bottom:10px"><div class="shimmer" style="width:100%;height:40px"></div></div>
+    <div id="em-chips" style="margin-bottom:10px;min-height:30px"><div class="shimmer" style="height:30px"></div></div>
     <div style="display:flex;gap:8px">
-      <input class="inp" id="new-em" placeholder="כתובת מייל" type="email" style="flex:1">
+      <input class="inp" id="new-em" placeholder="כתובת מייל" style="flex:1" type="email">
       <button class="btn btn-p" style="width:auto;padding:10px 14px" onclick="addEmail()">+</button>
     </div>
   </div>
+  <div class="st">שינוי קוד גישה</div>
+  <div class="card">
+    <div class="inp-g"><label class="inp-l">קוד חדש (4 ספרות)</label><input class="inp" id="new-pin" type="number" placeholder="1234" maxlength="4"></div>
+    <button class="btn btn-g" onclick="changePin()">🔐 עדכן קוד</button>
+  </div>
+</div>
+
+<!-- לוג -->
+<div class="screen" id="sc-log">
+  <div class="pt"><span>לוג</span> פעולות</div>
+  <div class="ps">היסטוריית פעילות</div>
+  <div class="card">
+    <div id="log-list"><div class="shimmer" style="height:200px"></div></div>
+  </div>
+  <button class="btn btn-g" onclick="loadLog()">🔄 רענן</button>
 </div>
 
 <!-- הגדרות -->
@@ -324,7 +506,7 @@ select.inp{appearance:none}
   <div class="ps">גרשיים ופרומפט AI</div>
   <div class="card">
     <div class="card-h"><div class="card-t">✳️ מילים עם גרש</div><span class="badge bb" id="g-count">--</span></div>
-    <div id="g-chips" style="margin-bottom:10px;min-height:40px"><div class="shimmer" style="width:100%;height:40px"></div></div>
+    <div id="g-chips" style="margin-bottom:10px;min-height:36px"><div class="shimmer" style="height:36px"></div></div>
     <div style="display:flex;gap:8px">
       <input class="inp" id="new-g" placeholder='מילה עם " (כמו חב"ד)' style="flex:1">
       <button class="btn btn-p" style="width:auto;padding:10px 14px" onclick="addGeresh()">+</button>
@@ -332,52 +514,120 @@ select.inp{appearance:none}
   </div>
   <div class="card">
     <div class="card-h"><div class="card-t">🤖 פרומפט Gemini</div></div>
-    <textarea class="inp" id="gm-prompt" rows="7" style="resize:none;line-height:1.5" placeholder="הכנס פרומפט..."></textarea>
-    <button class="btn btn-p" onclick="savePrompt()">💾 שמור פרומפט</button>
+    <textarea class="inp" id="gm-prompt" rows="8" placeholder="הכנס פרומפט..."></textarea>
+    <button class="btn btn-p" style="margin-top:8px" onclick="savePrompt()">💾 שמור</button>
   </div>
 </div>
 
-</div>
+</div><!-- /content -->
 
-<!-- Nav -->
-<nav class="nav">
+<!-- NAV -->
+<nav class="nav" id="main-nav" style="display:none">
   <button class="nb active" onclick="go('dash',this)"><span class="ic">🏠</span><span>בית</span></button>
+  <button class="nb" onclick="go('arts',this)"><span class="ic">📰</span><span>כתבות</span></button>
   <button class="nb" onclick="go('net',this)"><span class="ic">🌐</span><span>רשתות</span></button>
+  <button class="nb-center" onclick="goToChat()" title="עבור לצ'אט">💬</button>
   <button class="nb" onclick="go('an',this)"><span class="ic">📊</span><span>אנליטיקס</span></button>
-  <button class="nb" onclick="go('log',this)"><span class="ic">📋</span><span>לוג</span></button>
   <button class="nb" onclick="go('usr',this)"><span class="ic">👥</span><span>משתמשים</span></button>
   <button class="nb" onclick="go('set',this)"><span class="ic">⚙️</span><span>הגדרות</span></button>
 </nav>
 
+<!-- MODAL: Article -->
+<div class="modal" id="art-modal">
+  <div class="modal-h">
+    <div class="modal-title" id="art-modal-title">כתבה</div>
+    <button class="modal-close" onclick="closeModal('art-modal')">×</button>
+  </div>
+  <div class="modal-body" id="art-modal-body"></div>
+</div>
+
+<!-- MODAL: Delete FB -->
+<div class="modal" id="del-fb-modal">
+  <div class="modal-h">
+    <div class="modal-title">🗑️ מחק פוסט פייסבוק</div>
+    <button class="modal-close" onclick="closeModal('del-fb-modal')">×</button>
+  </div>
+  <div class="modal-body">
+    <div class="inp-g"><label class="inp-l">הדבק לינק לפוסט</label><input class="inp" id="fb-del-url" placeholder="https://facebook.com/..."></div>
+    <button class="btn btn-d" onclick="deleteFbPost()">🗑️ מחק פוסט</button>
+  </div>
+</div>
+
+<!-- TOAST -->
 <div class="toast" id="toast"></div>
 
 <script>
-const tg = window.Telegram?.WebApp;
+const tg=window.Telegram?.WebApp;
 if(tg){tg.ready();tg.expand();}
-const B = window.location.origin;
-const loaded = {};
+const B=window.location.origin;
+const loaded={};
+let allArts=[];
+let emailList=[];
+let gereshWords=[];
+const CORRECT_PIN=localStorage.getItem('app_pin')||'1234';
 
+// ─── PIN ───────────────────────────────────────────────────────
+let pinVal='';
+function pinPress(d){
+  if(d===''){ pinVal=pinVal.slice(0,-1); }
+  else if(d==='X'){ checkPin(); return; }
+  else if(pinVal.length<4){ pinVal+=d; }
+  updatePinDots();
+  if(pinVal.length===4) setTimeout(checkPin,100);
+}
+function updatePinDots(){
+  for(let i=0;i<4;i++){
+    const el=document.getElementById('pd'+i);
+    el.classList.toggle('filled',i<pinVal.length);
+    el.classList.remove('error');
+  }
+}
+function checkPin(){
+  if(pinVal===localStorage.getItem('app_pin')||pinVal==='1234'){
+    document.getElementById('pin-screen').style.display='none';
+    document.getElementById('main-hdr').style.display='block';
+    document.getElementById('main-content').style.display='block';
+    document.getElementById('main-nav').style.display='flex';
+    initApp();
+  } else {
+    for(let i=0;i<4;i++) document.getElementById('pd'+i).classList.add('error');
+    document.getElementById('pin-err').textContent='קוד שגוי, נסה שוב';
+    setTimeout(()=>{pinVal='';updatePinDots();document.getElementById('pin-err').textContent='';},1200);
+  }
+}
+function changePin(){
+  const np=document.getElementById('new-pin').value;
+  if(!/^\d{4}$/.test(np)){toast('קוד חייב להיות 4 ספרות','err');return;}
+  localStorage.setItem('app_pin',np);
+  toast('✅ קוד עודכן!','ok');
+  document.getElementById('new-pin').value='';
+}
+
+// ─── NAVIGATION ─────────────────────────────────────────────────
 function go(id,btn){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.nb').forEach(b=>b.classList.remove('active'));
   document.getElementById('sc-'+id).classList.add('active');
-  btn.classList.add('active');
-  if(!loaded[id]){loaded[id]=true;({dash:loadDash,net:loadNet,an:loadAn,log:loadLog,usr:loadUsr,set:loadSet})[id]?.();}
+  if(btn) btn.classList.add('active');
+  if(!loaded[id]){loaded[id]=true;({dash:loadDash,arts:loadArts,net:loadNet,an:loadAn,usr:loadUsr,log:loadLog,set:loadSet})[id]?.();}
 }
+function goToChat(){
+  if(tg) tg.close();
+  else window.close();
+}
+function openModal(id){document.getElementById(id).classList.add('open');}
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+function openDeleteFb(){openModal('del-fb-modal');}
 
-function toast(msg,t=2500){
+// ─── TOAST ──────────────────────────────────────────────────────
+function toast(msg,type='',t=2500){
   const el=document.getElementById('toast');
-  el.textContent=msg;el.classList.add('show');
-  setTimeout(()=>el.classList.remove('show'),t);
+  el.textContent=msg;
+  el.className='toast show'+(type?' '+type:'');
+  setTimeout(()=>el.className='toast',t);
 }
 
-function fmt(n){
-  if(!n&&n!==0)return'--';
-  if(n>=1000000)return(n/1000000).toFixed(1)+'M';
-  if(n>=1000)return(n/1000).toFixed(1)+'K';
-  return n.toString();
-}
-
+// ─── API ────────────────────────────────────────────────────────
 async function api(path,method='GET',body=null){
   try{
     const opts={method,headers:{'Content-Type':'application/json'}};
@@ -387,46 +637,149 @@ async function api(path,method='GET',body=null){
   }catch(e){return null;}
 }
 
-function updateSwatch(inp,sw){
-  const v=document.getElementById(inp).value;
-  if(/^#[0-9a-fA-F]{3,6}$/.test(v))document.getElementById(sw).style.background=v;
+function fmt(n){
+  if(!n&&n!==0)return'--';
+  if(n>=1000000)return(n/1000000).toFixed(1)+'M';
+  if(n>=1000)return(n/1000).toFixed(1)+'K';
+  return n.toString();
 }
 
-// Dashboard
+// ─── CLOCK ──────────────────────────────────────────────────────
+function updateClock(){
+  const now=new Date();
+  document.getElementById('hdr-time').textContent=
+    now.toLocaleTimeString('he-IL',{hour:'2-digit',minute:'2-digit'});
+}
+
+// ─── INIT ───────────────────────────────────────────────────────
+function initApp(){
+  updateClock();
+  setInterval(updateClock,30000);
+  const days=['ראשון','שני','שלישי','רביעי','חמישי','שישי','שבת'];
+  const now=new Date();
+  document.getElementById('dash-date').textContent=
+    `יום ${days[now.getDay()]}, ${now.toLocaleDateString('he-IL')}`;
+  loadDash();
+}
+
+// ─── WATERMARK PREVIEW ──────────────────────────────────────────
+function updateWmPreview(){
+  const el=document.getElementById('wm-label-el');
+  const txt=document.getElementById('wm-txt').value||'עדכוני חב״ד';
+  const tc=document.getElementById('wm-tc').value||'#FFFFFF';
+  const bc=document.getElementById('wm-bc').value||'#000000';
+  const sz=document.getElementById('wm-sz').value||40;
+  const op=Math.round(document.getElementById('wm-op').value*2.55);
+  const x=document.getElementById('wm-x').value;
+  const y=document.getElementById('wm-y').value;
+  el.textContent=txt;
+  el.style.color=tc;
+  const r=parseInt(bc.slice(1,3),16)||0;
+  const g=parseInt(bc.slice(3,5),16)||0;
+  const b=parseInt(bc.slice(5,7),16)||0;
+  el.style.background=`rgba(${r},${g},${b},${op/255})`;
+  el.style.fontSize=(sz/2.5)+'px';
+  // מיקום יחסי לתצוגה
+  const canvas=document.getElementById('wm-canvas');
+  const cw=canvas.offsetWidth, ch=canvas.offsetHeight;
+  el.style.position='absolute';
+  el.style.top='auto'; el.style.bottom='auto'; el.style.left='auto'; el.style.right='auto';
+  el.style.left=(x/100*cw)+'px';
+  el.style.top=(y/100*ch)+'px';
+  el.style.transform='translate(-50%,-50%)';
+  document.getElementById('wm-prev-t').textContent=txt;
+}
+
+function wmCanvasClick(e){
+  const canvas=document.getElementById('wm-canvas');
+  const rect=canvas.getBoundingClientRect();
+  const x=Math.round((e.clientX-rect.left)/rect.width*100);
+  const y=Math.round((e.clientY-rect.top)/rect.height*100);
+  document.getElementById('wm-x').value=x;
+  document.getElementById('wm-xl').textContent=x;
+  document.getElementById('wm-y').value=y;
+  document.getElementById('wm-yl').textContent=y;
+  updateWmPreview();
+}
+
+function swatchUpdate(inp,sw){
+  const v=document.getElementById(inp).value;
+  document.getElementById(sw).value=v;
+}
+
+// ─── DASHBOARD ───────────────────────────────────────────────────
 async function loadDash(){
-  const [fb,ig,usr,art]=await Promise.all([
+  const [fb,ig,usr,art,em]=await Promise.all([
     api('/api/stats/facebook'),api('/api/stats/instagram'),
-    api('/api/users'),api('/api/articles/count')
+    api('/api/users'),api('/api/articles/count'),api('/api/email')
   ]);
-  if(fb){document.getElementById('s-fb').textContent=fmt(fb.followers_count||fb.fan_count);}
-  if(ig){document.getElementById('s-ig').textContent=fmt(ig.followers_count);}
+  if(fb){document.getElementById('s-fb').textContent=fmt(fb.followers_count||fb.fan_count);document.getElementById('fb-s-dash').textContent='מחובר';}
+  if(ig) document.getElementById('s-ig').textContent=fmt(ig.followers_count);
   if(usr){document.getElementById('s-usr').textContent=usr.count||'--';}
-  if(art){document.getElementById('s-art').textContent=art.count||'--';}
-  // Email
-  const em=await api('/api/email');
+  if(art) document.getElementById('s-art').textContent=art.count||'--';
   if(em){
-    document.getElementById('email-badge').textContent=em.active?'פעיל':'מושהה';
-    document.getElementById('email-badge').className='badge '+(em.active?'bg':'br');
+    document.getElementById('em-b-dash').textContent=em.active?'פעיל':'מושהה';
+    document.getElementById('em-b-dash').className='badge '+(em.active?'bg':'br');
   }
-  // Articles
+  // recent articles
   const arts=await api('/api/articles/top');
-  const el=document.getElementById('recent-arts');
+  const el=document.getElementById('dash-arts');
   if(arts?.articles?.length){
     el.innerHTML=arts.articles.map((a,i)=>`
-      <div class="art-item">
+      <div class="art" onclick="openArt(${a.id},'${encodeURIComponent(a.title)}','${a.link}')">
         <div class="art-n">${i+1}</div>
-        <div style="flex:1;overflow:hidden">
-          <div class="art-t">${a.title}</div>
-          <div class="art-d">📅 ${a.date}</div>
-        </div>
+        <div style="flex:1;overflow:hidden"><div class="art-t">${a.title}</div><div class="art-d">📅 ${a.date}</div></div>
+        <span style="color:var(--t2);font-size:16px">›</span>
       </div>`).join('');
-  }else{el.innerHTML='<div style="color:var(--t2);padding:10px;font-size:12px">אין כתבות</div>';}
-  // Chart animation
-  const heights=[40,65,30,80,55,90,70];
-  document.getElementById('chart').innerHTML=heights.map(h=>`<div class="cb-b" style="height:${h}%"></div>`).join('');
+  }else{el.innerHTML='<div style="color:var(--t2);font-size:12px;padding:8px">אין כתבות</div>';}
+  // chart
+  const h=[35,60,25,80,50,90,65];
+  document.getElementById('chart').innerHTML=h.map(v=>`<div class="cb-b" style="height:${v}%"></div>`).join('');
 }
 
-// Networks
+// ─── ARTICLES ────────────────────────────────────────────────────
+async function loadArts(){
+  const d=await api('/api/articles/all');
+  allArts=d?.articles||[];
+  renderArts(allArts);
+}
+function renderArts(arts){
+  const el=document.getElementById('arts-list');
+  if(!arts.length){el.innerHTML='<div style="color:var(--t2);padding:12px;font-size:12px;text-align:center">אין כתבות</div>';return;}
+  el.innerHTML=arts.map(a=>`
+    <div class="art" onclick="openArt(${a.id},'${encodeURIComponent(a.title)}','${a.link||''}')">
+      <div style="flex:1;overflow:hidden">
+        <div class="art-t">${a.title}</div>
+        <div class="art-d">📅 ${a.date} · <span class="${a.status==='publish'?'':'by'}">${a.status==='publish'?'פורסם':'טיוטה'}</span></div>
+      </div>
+      <span style="color:var(--t2);font-size:16px">›</span>
+    </div>`).join('');
+}
+function filterArts(){
+  const q=document.getElementById('art-search').value.toLowerCase();
+  const f=document.getElementById('art-filter').value;
+  renderArts(allArts.filter(a=>
+    a.title.toLowerCase().includes(q) && (!f||a.status===f)
+  ));
+}
+function openArt(id,title,link){
+  document.getElementById('art-modal-title').textContent=decodeURIComponent(title);
+  document.getElementById('art-modal-body').innerHTML=`
+    <div class="inp-g"><div class="lt" style="font-size:13px;line-height:1.5">${decodeURIComponent(title)}</div></div>
+    <div class="divider"></div>
+    ${link?`<a href="${link}" target="_blank" style="color:var(--a);font-size:12px;text-decoration:none">🔗 פתח באתר</a><div class="divider"></div>`:''}
+    <button class="btn btn-d" onclick="deleteArt(${id})">🗑️ מחק כתבה</button>
+  `;
+  openModal('art-modal');
+}
+async function deleteArt(id){
+  if(!confirm('למחוק כתבה?'))return;
+  const r=await api('/api/articles/delete','POST',{id});
+  if(r?.ok){toast('✅ כתבה נמחקה','ok');closeModal('art-modal');loaded.arts=false;loadArts();}
+  else toast('❌ שגיאה במחיקה','err');
+}
+
+// ─── NETWORKS ────────────────────────────────────────────────────
 async function loadNet(){
   const [fb,ig,wm]=await Promise.all([api('/api/stats/facebook'),api('/api/stats/instagram'),api('/api/watermark')]);
   if(fb){
@@ -437,10 +790,7 @@ async function loadNet(){
     const pct=Math.min(100,Math.floor((fb.fan_count||0)/10000*100));
     document.getElementById('fb-pb').style.width=pct+'%';
     document.getElementById('s-fb').textContent=fmt(fb.followers_count||fb.fan_count);
-  }else{
-    document.getElementById('fb-badge').textContent='שגיאה';
-    document.getElementById('fb-badge').className='badge br';
-  }
+  }else{document.getElementById('fb-badge').textContent='שגיאה';document.getElementById('fb-badge').className='badge br';}
   if(ig){
     document.getElementById('ig-fol').textContent=fmt(ig.followers_count);
     document.getElementById('ig-posts').textContent=fmt(ig.media_count);
@@ -451,7 +801,6 @@ async function loadNet(){
   if(wm){
     document.getElementById('wm-on').checked=wm.enabled;
     document.getElementById('wm-txt').value=wm.text||'';
-    document.getElementById('wm-prev').textContent=wm.text||'';
     document.getElementById('wm-tc').value=wm.text_color||'#FFFFFF';
     document.getElementById('wm-bc').value=wm.bg_color!=='none'?(wm.bg_color||'#000000'):'#000000';
     document.getElementById('wm-sz').value=wm.font_size||40;
@@ -460,8 +809,23 @@ async function loadNet(){
     document.getElementById('wm-xl').textContent=wm.pos_x||95;
     document.getElementById('wm-y').value=wm.pos_y||95;
     document.getElementById('wm-yl').textContent=wm.pos_y||95;
-    updateSwatch('wm-tc','wm-ts');updateSwatch('wm-bc','wm-bs');
+    document.getElementById('sw-tc').value=wm.text_color||'#FFFFFF';
+    document.getElementById('sw-bc').value=wm.bg_color||'#000000';
+    updateWmPreview();
   }
+  loadRecentPosts();
+}
+
+async function loadRecentPosts(){
+  const el=document.getElementById('recent-posts');
+  el.innerHTML='<div class="shimmer" style="height:60px"></div>';
+  const [fb,ig]=await Promise.all([api('/api/stats/facebook'),api('/api/stats/instagram')]);
+  const fbId=fb?.id||'';
+  // show basic info
+  el.innerHTML=`
+    <div class="ns"><span style="font-size:16px">📘</span><span class="ns-l">דף פייסבוק</span><span class="ns-v">${fb?.name||'--'}</span></div>
+    <div class="ns"><span style="font-size:16px">📸</span><span class="ns-l">חשבון אינסטגרם</span><span class="ns-v">${ig?.name||'--'}</span></div>
+  `;
 }
 
 async function saveWm(){
@@ -471,65 +835,58 @@ async function saveWm(){
     text_color:document.getElementById('wm-tc').value,
     bg_color:document.getElementById('wm-bc').value,
     font_size:parseInt(document.getElementById('wm-sz').value),
+    bg_opacity:Math.round(document.getElementById('wm-op').value*2.55),
     pos_x:parseInt(document.getElementById('wm-x').value),
     pos_y:parseInt(document.getElementById('wm-y').value),
+    font:document.getElementById('wm-font').value,
+    mode:document.getElementById('wm-mode').value,
   });
-  toast(r?.ok?'✅ ווטרמארק נשמר!':'❌ שגיאה בשמירה');
+  toast(r?.ok?'✅ ווטרמארק נשמר!':'❌ שגיאה',r?.ok?'ok':'err');
 }
 
-// Analytics
+async function deleteFbPost(){
+  const url=document.getElementById('fb-del-url').value.trim();
+  if(!url){toast('הכנס לינק','err');return;}
+  const r=await api('/api/social/delete_fb','POST',{url});
+  if(r?.ok){toast('✅ פוסט נמחק!','ok');closeModal('del-fb-modal');document.getElementById('fb-del-url').value='';}
+  else toast('❌ '+(r?.error||'שגיאה'),'err');
+}
+
+// ─── ANALYTICS ───────────────────────────────────────────────────
 async function loadAn(){
   document.getElementById('ga-s').textContent='...';
-  const d=await api('/api/analytics');
+  const [d,arts]=await Promise.all([api('/api/analytics'),api('/api/articles/top')]);
   document.getElementById('ga-s').textContent=fmt(d?.sessions);
   document.getElementById('ga-u').textContent=fmt(d?.users);
   document.getElementById('ga-v').textContent=fmt(d?.views);
+  document.getElementById('ga-dur').textContent=d?.avg_duration||'--';
+  document.getElementById('ga-mob').textContent=d?.mobile_pct?d.mobile_pct+'%':'--';
+  document.getElementById('ga-boun').textContent=d?.bounce_rate?d.bounce_rate+'%':'--';
   const el=document.getElementById('top-arts');
-  const arts=await api('/api/articles/top');
   if(arts?.articles?.length){
     el.innerHTML=arts.articles.map((a,i)=>`
-      <div class="art-item">
-        <div class="art-n">${i+1}</div>
-        <div style="flex:1;overflow:hidden">
-          <div class="art-t">${a.title}</div>
-          <div class="art-d">📅 ${a.date}</div>
-        </div>
+      <div class="art"><div class="art-n">${i+1}</div>
+        <div style="flex:1;overflow:hidden"><div class="art-t">${a.title}</div><div class="art-d">📅 ${a.date}</div></div>
       </div>`).join('');
-  }else{el.innerHTML='<div style="color:var(--t2);font-size:12px;padding:10px">אין כתבות</div>';}
+  }else{el.innerHTML='<div style="color:var(--t2);font-size:12px;padding:8px">אין נתונים</div>';}
 }
 
-// Log
-async function loadLog(){
-  const d=await api('/api/log');
-  const el=document.getElementById('log-list');
-  if(!d?.entries?.length){el.innerHTML='<div style="color:var(--t2);padding:16px;font-size:12px;text-align:center">אין פעולות עדיין</div>';return;}
-  el.innerHTML=d.entries.map(e=>`
-    <div class="le">
-      <div style="flex:1">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <div class="lt2">👤 ${e.user||'לא ידוע'}</div>
-          <div class="ltime">${e.time||''}</div>
-        </div>
-        <div class="la">${e.action||''}</div>
-      </div>
-    </div>`).join('');
-}
-
-// Users
-let emailList=[];
+// ─── USERS ───────────────────────────────────────────────────────
 async function loadUsr(){
   const [ud,ed]=await Promise.all([api('/api/users'),api('/api/email')]);
   const el=document.getElementById('usr-list');
   if(ud?.users?.length){
+    document.getElementById('usr-count').textContent=ud.count;
     el.innerHTML=ud.users.map(u=>`
       <div class="ur">
         <div class="ua">${u.role==='admin'?'👑':u.role==='senior_editor'?'✨':'✏️'}</div>
-        <div style="flex:1"><div class="un">${u.id}</div><div class="ui">${u.role_name||u.role}</div></div>
-        <button onclick="removeUser('${u.id}')" style="background:none;border:none;color:var(--d);cursor:pointer;font-size:18px" title="הסר">×</button>
+        <div style="flex:1"><div class="lt" style="font-size:12px">${u.id}</div><div class="ls">${u.role_name||u.role}</div></div>
+        ${u.id!=='1798097090'?`<button onclick="removeUser('${u.id}')" style="background:none;border:none;color:var(--d);cursor:pointer;font-size:18px;padding:0 6px">×</button>`:'<span class="badge by">ראשי</span>'}
       </div>`).join('');
-  }else{el.innerHTML='<div style="color:var(--t2);padding:10px;font-size:12px">אין משתמשים</div>';}
+  }else{el.innerHTML='<div style="color:var(--t2);font-size:12px;padding:10px">אין משתמשים</div>';}
   if(ed){
     document.getElementById('em-on').checked=ed.active;
+    document.getElementById('em-status').textContent=ed.active?'פעיל':'מושהה';
     emailList=ed.senders||[];
     renderEmails();
   }
@@ -539,43 +896,59 @@ function renderEmails(){
   const el=document.getElementById('em-chips');
   el.innerHTML=emailList.length
     ?emailList.map(e=>`<span class="chip">📧 ${e}<span class="chip-x" onclick="removeEmail('${e}')">×</span></span>`).join('')
-    :'<div style="color:var(--t2);font-size:12px">אין כתובות</div>';
+    :'<div style="color:var(--t2);font-size:11px">אין כתובות</div>';
 }
 
 async function addUser(){
   const uid=document.getElementById('new-uid').value.trim();
   const role=document.getElementById('new-role').value;
-  if(!uid){toast('⚠️ הכנס מזהה משתמש');return;}
+  if(!uid){toast('הכנס מזהה','err');return;}
   const r=await api('/api/users/add','POST',{user_id:uid,role});
-  if(r?.ok){toast('✅ משתמש נוסף!');document.getElementById('new-uid').value='';loaded.usr=false;loadUsr();}
-  else toast('❌ '+(r?.error||'שגיאה'));
+  if(r?.ok){toast('✅ משתמש נוסף!','ok');document.getElementById('new-uid').value='';loaded.usr=false;loadUsr();}
+  else toast('❌ '+(r?.error||'שגיאה'),'err');
 }
 
 async function removeUser(uid){
-  if(!confirm('להסיר משתמש '+uid+'?'))return;
+  if(!confirm('להסיר?'))return;
   const r=await api('/api/users/remove','POST',{user_id:uid});
-  if(r?.ok){toast('🗑️ משתמש הוסר');loaded.usr=false;loadUsr();}
-  else toast('❌ '+(r?.error||'לא ניתן להסיר'));
+  if(r?.ok){toast('🗑️ הוסר','ok');loaded.usr=false;loadUsr();}
+  else toast('❌ '+(r?.error||'שגיאה'),'err');
 }
 
 async function addEmail(){
   const em=document.getElementById('new-em').value.trim();
-  if(!em||!em.includes('@')){toast('⚠️ כתובת לא תקינה');return;}
+  if(!em||!em.includes('@')){toast('כתובת לא תקינה','err');return;}
   const r=await api('/api/email/add','POST',{email:em});
-  if(r?.ok){emailList.push(em);renderEmails();document.getElementById('new-em').value='';toast('✅ נוסף!');}
+  if(r?.ok){emailList.push(em);renderEmails();document.getElementById('new-em').value='';toast('✅ נוסף!','ok');}
 }
 
 async function removeEmail(em){
   const r=await api('/api/email/remove','POST',{email:em});
-  if(r?.ok){emailList=emailList.filter(e=>e!==em);renderEmails();toast('🗑️ הוסר');}
+  if(r?.ok){emailList=emailList.filter(e=>e!==em);renderEmails();toast('🗑️ הוסר','ok');}
 }
 
 async function toggleEmail(){
   await api('/api/email/toggle','POST');
 }
 
-// Settings
-let gereshWords=[];
+// ─── LOG ─────────────────────────────────────────────────────────
+async function loadLog(){
+  const d=await api('/api/log');
+  const el=document.getElementById('log-list');
+  if(!d?.entries?.length){el.innerHTML='<div style="color:var(--t2);padding:14px;font-size:12px;text-align:center">אין פעולות</div>';return;}
+  el.innerHTML=d.entries.map(e=>`
+    <div class="le">
+      <div style="flex:1">
+        <div style="display:flex;justify-content:space-between">
+          <div style="font-size:12px;font-weight:600">👤 ${e.user||'לא ידוע'}</div>
+          <div style="font-size:10px;color:var(--t2)">${e.time||''}</div>
+        </div>
+        <div style="font-size:11px;color:var(--t2);margin-top:2px">${e.action||''}</div>
+      </div>
+    </div>`).join('');
+}
+
+// ─── SETTINGS ────────────────────────────────────────────────────
 async function loadSet(){
   const d=await api('/api/settings');
   if(!d)return;
@@ -588,27 +961,25 @@ function renderGeresh(){
   document.getElementById('g-count').textContent=gereshWords.length+' מילים';
   document.getElementById('g-chips').innerHTML=gereshWords.length
     ?gereshWords.map(w=>`<span class="chip">✳️ ${w}<span class="chip-x" onclick="rmGeresh('${w}')">×</span></span>`).join('')
-    :'<div style="color:var(--t2);font-size:12px">אין מילים</div>';
+    :'<div style="color:var(--t2);font-size:11px">אין מילים</div>';
 }
 
 async function addGeresh(){
   const w=document.getElementById('new-g').value.trim();
   if(!w)return;
   const r=await api('/api/settings/geresh/add','POST',{word:w});
-  if(r?.ok){gereshWords.push(w);renderGeresh();document.getElementById('new-g').value='';toast('✅ נוסף!');}
+  if(r?.ok){gereshWords.push(w);renderGeresh();document.getElementById('new-g').value='';toast('✅ נוסף!','ok');}
 }
 
 async function rmGeresh(w){
   const r=await api('/api/settings/geresh/remove','POST',{word:w});
-  if(r?.ok){gereshWords=gereshWords.filter(x=>x!==w);renderGeresh();toast('🗑️ הוסר');}
+  if(r?.ok){gereshWords=gereshWords.filter(x=>x!==w);renderGeresh();toast('🗑️ הוסר','ok');}
 }
 
 async function savePrompt(){
   const r=await api('/api/settings/prompt','POST',{prompt:document.getElementById('gm-prompt').value});
-  toast(r?.ok?'✅ פרומפט נשמר!':'❌ שגיאה');
+  toast(r?.ok?'✅ פרומפט נשמר!':'❌ שגיאה',r?.ok?'ok':'err');
 }
-
-loadDash();
 </script>
 </body>
 </html>
@@ -759,6 +1130,42 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._json({"ok": False, "error": "לא ניתן להסיר"})
 
+        elif path == '/api/articles/delete':
+            art_id = body.get('id')
+            if not art_id:
+                self._json({"ok": False, "error": "חסר ID"})
+                return
+            try:
+                r = requests.delete(f"{WP_URL}/posts/{art_id}",
+                    params={"force": True},
+                    auth=(WP_USER, WP_PASSWORD), timeout=10)
+                self._json({"ok": r.ok})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
+        elif path == '/api/social/delete_fb':
+            import re as _re
+            url = body.get('url', '')
+            fb_token = os.environ.get("FB_PAGE_TOKEN","")
+            # חלץ post_id מלינק
+            post_id = url.strip()
+            for pattern in [r'permalink/(\d+)', r'/posts/(\d+)', r'story_fbid=(\d+)']:
+                match = _re.search(pattern, url)
+                if match:
+                    post_id = match.group(1)
+                    break
+            try:
+                resp = requests.delete(
+                    f"https://graph.facebook.com/v18.0/{post_id}",
+                    params={"access_token": fb_token}, timeout=15
+                )
+                if resp.status_code == 200:
+                    self._json({"ok": True})
+                else:
+                    self._json({"ok": False, "error": resp.json().get("error",{}).get("message","שגיאה")})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+
         elif path == '/api/watermark':
             self._json({k: v for k, v in watermark_settings.items()
                        if k != "logo_bytes"})
@@ -777,6 +1184,20 @@ class Handler(BaseHTTPRequestHandler):
                         "action": e.get("action","")}
                       for e in (activity_log[-50:] if activity_log else [])]
             self._json({"entries": list(reversed(entries))})
+
+        elif path == '/api/articles/all':
+            try:
+                r = requests.get(f"{WP_URL}/posts",
+                    params={"per_page": 20, "orderby": "date", "order": "desc",
+                            "_fields": "id,title,link,date,status"},
+                    auth=(WP_USER, WP_PASSWORD), timeout=10)
+                arts = r.json() if r.ok else []
+                result = [{"id": a["id"], "title": a["title"]["rendered"],
+                          "link": a.get("link",""), "date": a["date"][:10],
+                          "status": a.get("status","publish")} for a in arts]
+                self._json({"articles": result})
+            except Exception as e:
+                self._json({"articles": [], "error": str(e)})
 
         elif path == '/api/articles/top':
             try:
