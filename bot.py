@@ -189,10 +189,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(data or {})
 
         elif path == '/api/log':
-            entries = [{"time": e.split("|")[0].strip(),
-                        "user": e.split("|")[2].strip() if "|" in e else "",
-                        "action": e.split("|")[3].strip() if e.count("|") >= 3 else e}
-                      for e in (action_log[-50:] if action_log else [])]
+            entries = [{"time": e.get("time",""),
+                        "user": e.get("username",""),
+                        "action": e.get("action","")}
+                      for e in (activity_log[-50:] if activity_log else [])]
             self._json({"entries": list(reversed(entries))})
 
         elif path == '/api/articles/count':
@@ -272,6 +272,13 @@ class Handler(BaseHTTPRequestHandler):
 
         else:
             self._json({"ok": False})
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
 
     def _json(self, data):
         content = json.dumps(data, ensure_ascii=False).encode()
@@ -385,10 +392,7 @@ ADMIN_MENU = {
         [{"text": "🎉 מזל טוב"}, {"text": "🎬 העלאה ליוטיוב"}],
         [{"text": "✏️ עריכת כתבה"}, {"text": "🗑️ מחיקת כתבה"}],
         [{"text": "📋 כתבות אחרונות"}, {"text": "📝 טיוטות"}],
-        [{"text": "👥 ניהול משתמשים"}, {"text": "📊 לוג פעולות"}],
-        [{"text": "📧 ניהול מייל"}, {"text": "📈 אנליטיקס"}],
         [{"text": "📢 הפצת תוכן"}, {"text": "🎥 הפצת וידאו"}],
-        [{"text": "🌐 ניהול רשתות"}, {"text": "⚙️ הגדרות מערכת"}]
     ],
     "resize_keyboard": True,
     "persistent": True
@@ -400,9 +404,7 @@ SENIOR_EDITOR_MENU = {
         [{"text": "🎉 מזל טוב"}, {"text": "🎬 העלאה ליוטיוב"}],
         [{"text": "✏️ עריכת כתבה"}, {"text": "🗑️ מחיקת כתבה"}],
         [{"text": "📋 כתבות אחרונות"}, {"text": "📝 טיוטות"}],
-        [{"text": "📧 ניהול מייל"}, {"text": "📈 אנליטיקס"}],
         [{"text": "📢 הפצת תוכן"}, {"text": "🎥 הפצת וידאו"}],
-        [{"text": "🌐 ניהול רשתות"}]
     ],
     "resize_keyboard": True,
     "persistent": True
