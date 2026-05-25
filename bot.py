@@ -51,1232 +51,563 @@ MINI_APP_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>עדכוני חב״ד · מרכז שליטה</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;600;700;800&display=swap" rel="stylesheet">
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;600;700;800&display=swap');
-
-  :root {
-    --bg: #060818;
-    --surface: rgba(255,255,255,0.04);
-    --surface2: rgba(255,255,255,0.07);
-    --border: rgba(255,255,255,0.08);
-    --accent: #00d4ff;
-    --accent2: #7c3aed;
-    --accent3: #10b981;
-    --danger: #ef4444;
-    --warning: #f59e0b;
-    --text: #f0f4ff;
-    --text2: rgba(240,244,255,0.55);
-    --glow: 0 0 30px rgba(0,212,255,0.15);
-    --glow2: 0 0 30px rgba(124,58,237,0.2);
-  }
-
-  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-
-  body {
-    font-family: 'Assistant', sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    overflow-x: hidden;
-  }
-
-  /* Animated background */
-  body::before {
-    content:'';
-    position: fixed;
-    inset: 0;
-    background:
-      radial-gradient(ellipse 80% 50% at 20% -10%, rgba(0,212,255,0.08) 0%, transparent 60%),
-      radial-gradient(ellipse 60% 40% at 80% 110%, rgba(124,58,237,0.1) 0%, transparent 60%),
-      radial-gradient(ellipse 40% 30% at 50% 50%, rgba(16,185,129,0.04) 0%, transparent 70%);
-    pointer-events: none;
-    z-index: 0;
-  }
-
-  /* Grid pattern */
-  body::after {
-    content:'';
-    position: fixed;
-    inset: 0;
-    background-image:
-      linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
-    background-size: 40px 40px;
-    pointer-events: none;
-    z-index: 0;
-  }
-
-  /* Header */
-  .header {
-    position: fixed;
-    top: 0; left: 0; right: 0;
-    z-index: 100;
-    padding: 16px 20px 12px;
-    background: rgba(6,8,24,0.85);
-    backdrop-filter: blur(20px);
-    border-bottom: 1px solid var(--border);
-  }
-
-  .header-inner {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .logo {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .logo-icon {
-    width: 36px; height: 36px;
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 18px;
-    box-shadow: 0 0 20px rgba(0,212,255,0.3);
-  }
-
-  .logo-text {
-    font-size: 16px;
-    font-weight: 800;
-    background: linear-gradient(90deg, var(--accent), #a78bfa);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-
-  .logo-sub {
-    font-size: 11px;
-    color: var(--text2);
-    font-weight: 400;
-  }
-
-  .status-dot {
-    width: 8px; height: 8px;
-    background: var(--accent3);
-    border-radius: 50%;
-    box-shadow: 0 0 8px var(--accent3);
-    animation: pulse 2s infinite;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.6; transform: scale(0.8); }
-  }
-
-  /* Nav */
-  .nav {
-    position: fixed;
-    bottom: 0; left: 0; right: 0;
-    z-index: 100;
-    padding: 8px 16px calc(8px + env(safe-area-inset-bottom));
-    background: rgba(6,8,24,0.9);
-    backdrop-filter: blur(20px);
-    border-top: 1px solid var(--border);
-    display: flex;
-    justify-content: space-around;
-  }
-
-  .nav-btn {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    padding: 8px 12px;
-    border-radius: 12px;
-    cursor: pointer;
-    transition: all 0.2s;
-    border: none;
-    background: none;
-    color: var(--text2);
-    font-family: 'Assistant', sans-serif;
-    font-size: 10px;
-  }
-
-  .nav-btn.active {
-    color: var(--accent);
-    background: rgba(0,212,255,0.1);
-  }
-
-  .nav-btn .icon { font-size: 20px; }
-
-  /* Content */
-  .content {
-    position: relative;
-    z-index: 1;
-    padding: 80px 16px 100px;
-  }
-
-  /* Screens */
-  .screen { display: none; animation: fadeIn 0.3s ease; }
-  .screen.active { display: block; }
-
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(8px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-
-  /* Cards */
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 18px;
-    margin-bottom: 14px;
-    backdrop-filter: blur(10px);
-    transition: all 0.2s;
-  }
-
-  .card:active { transform: scale(0.99); background: var(--surface2); }
-
-  .card-glow {
-    box-shadow: var(--glow);
-    border-color: rgba(0,212,255,0.2);
-  }
-
-  .card-purple {
-    box-shadow: var(--glow2);
-    border-color: rgba(124,58,237,0.2);
-  }
-
-  .card-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 14px;
-  }
-
-  .card-title {
-    font-size: 15px;
-    font-weight: 700;
-    color: var(--text);
-  }
-
-  .card-icon {
-    font-size: 20px;
-  }
-
-  /* Stats row */
-  .stats-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    margin-bottom: 14px;
-  }
-
-  .stat-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 16px;
-    text-align: center;
-  }
-
-  .stat-value {
-    font-size: 26px;
-    font-weight: 800;
-    background: linear-gradient(135deg, var(--accent), #a78bfa);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-
-  .stat-label {
-    font-size: 11px;
-    color: var(--text2);
-    margin-top: 4px;
-  }
-
-  /* Badge */
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 3px 10px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 600;
-  }
-
-  .badge-green { background: rgba(16,185,129,0.15); color: var(--accent3); border: 1px solid rgba(16,185,129,0.3); }
-  .badge-blue { background: rgba(0,212,255,0.1); color: var(--accent); border: 1px solid rgba(0,212,255,0.2); }
-  .badge-red { background: rgba(239,68,68,0.1); color: var(--danger); border: 1px solid rgba(239,68,68,0.2); }
-  .badge-yellow { background: rgba(245,158,11,0.1); color: var(--warning); border: 1px solid rgba(245,158,11,0.2); }
-  .badge-purple { background: rgba(124,58,237,0.1); color: #a78bfa; border: 1px solid rgba(124,58,237,0.2); }
-
-  /* List items */
-  .list-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .list-item:last-child { border-bottom: none; }
-
-  .list-item-left { display: flex; align-items: center; gap: 12px; }
-  .list-item-avatar {
-    width: 38px; height: 38px;
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 18px;
-  }
-
-  .list-item-title { font-size: 14px; font-weight: 600; }
-  .list-item-sub { font-size: 12px; color: var(--text2); margin-top: 2px; }
-
-  /* Toggle */
-  .toggle {
-    position: relative;
-    width: 46px; height: 26px;
-    cursor: pointer;
-  }
-  .toggle input { display: none; }
-  .toggle-track {
-    position: absolute;
-    inset: 0;
-    background: rgba(255,255,255,0.1);
-    border-radius: 13px;
-    transition: background 0.3s;
-    border: 1px solid var(--border);
-  }
-  .toggle input:checked + .toggle-track { background: var(--accent); border-color: var(--accent); }
-  .toggle-thumb {
-    position: absolute;
-    top: 3px; right: 3px;
-    width: 20px; height: 20px;
-    background: white;
-    border-radius: 50%;
-    transition: transform 0.3s;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-  }
-  .toggle input:checked ~ .toggle-thumb { transform: translateX(-20px); }
-
-  /* Section title */
-  .section-title {
-    font-size: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    color: var(--text2);
-    margin: 20px 0 10px;
-  }
-
-  /* Progress bar */
-  .progress-bar {
-    height: 4px;
-    background: rgba(255,255,255,0.08);
-    border-radius: 2px;
-    overflow: hidden;
-    margin-top: 8px;
-  }
-  .progress-fill {
-    height: 100%;
-    border-radius: 2px;
-    background: linear-gradient(90deg, var(--accent), var(--accent2));
-    transition: width 0.6s ease;
-  }
-
-  /* Chart */
-  .chart-bars {
-    display: flex;
-    align-items: flex-end;
-    gap: 6px;
-    height: 80px;
-    margin-top: 12px;
-  }
-  .chart-bar {
-    flex: 1;
-    border-radius: 4px 4px 0 0;
-    background: linear-gradient(180deg, var(--accent), rgba(0,212,255,0.2));
-    transition: height 0.6s ease;
-    min-height: 4px;
-  }
-
-  /* Buttons */
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 12px 20px;
-    border-radius: 12px;
-    font-family: 'Assistant', sans-serif;
-    font-size: 14px;
-    font-weight: 700;
-    cursor: pointer;
-    border: none;
-    transition: all 0.2s;
-    width: 100%;
-  }
-
-  .btn-primary {
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    color: white;
-    box-shadow: 0 4px 20px rgba(0,212,255,0.25);
-  }
-  .btn-primary:active { transform: scale(0.97); }
-
-  .btn-danger {
-    background: rgba(239,68,68,0.1);
-    color: var(--danger);
-    border: 1px solid rgba(239,68,68,0.3);
-  }
-
-  .btn-ghost {
-    background: var(--surface);
-    color: var(--text);
-    border: 1px solid var(--border);
-  }
-
-  /* Input */
-  .input-group { margin-bottom: 14px; }
-  .input-label { font-size: 12px; color: var(--text2); margin-bottom: 6px; display: block; }
-  .input {
-    width: 100%;
-    padding: 12px 14px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    color: var(--text);
-    font-family: 'Assistant', sans-serif;
-    font-size: 14px;
-    outline: none;
-    transition: border-color 0.2s;
-  }
-  .input:focus { border-color: var(--accent); }
-
-  /* Color preview */
-  .color-swatch {
-    width: 28px; height: 28px;
-    border-radius: 6px;
-    border: 2px solid var(--border);
-    cursor: pointer;
-  }
-
-  /* Log entry */
-  .log-entry {
-    display: flex;
-    gap: 12px;
-    padding: 12px 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .log-entry:last-child { border-bottom: none; }
-  .log-time { font-size: 11px; color: var(--text2); white-space: nowrap; direction: ltr; }
-  .log-user { font-size: 13px; font-weight: 600; }
-  .log-action { font-size: 12px; color: var(--text2); margin-top: 2px; }
-
-  /* Glow line */
-  .glow-line {
-    height: 1px;
-    background: linear-gradient(90deg, transparent, var(--accent), transparent);
-    margin: 20px 0;
-    opacity: 0.4;
-  }
-
-  /* Email chip */
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 20px;
-    padding: 4px 10px;
-    font-size: 12px;
-    margin: 4px;
-  }
-  .chip-remove {
-    color: var(--danger);
-    cursor: pointer;
-    font-size: 14px;
-    line-height: 1;
-  }
-
-  /* Floating elements */
-  .float-accent {
-    position: fixed;
-    width: 200px; height: 200px;
-    border-radius: 50%;
-    pointer-events: none;
-    z-index: 0;
-    opacity: 0.04;
-    filter: blur(60px);
-  }
-
-  /* Toast */
-  .toast {
-    position: fixed;
-    bottom: 90px; left: 50%;
-    transform: translateX(-50%) translateY(20px);
-    background: rgba(0,212,255,0.15);
-    border: 1px solid rgba(0,212,255,0.3);
-    backdrop-filter: blur(20px);
-    padding: 10px 20px;
-    border-radius: 20px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--accent);
-    opacity: 0;
-    transition: all 0.3s;
-    z-index: 200;
-    white-space: nowrap;
-  }
-  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-
-  /* Divider */
-  .divider { height: 1px; background: var(--border); margin: 14px 0; }
-
-  /* Page title */
-  .page-title {
-    font-size: 22px;
-    font-weight: 800;
-    margin-bottom: 4px;
-  }
-  .page-title span {
-    background: linear-gradient(90deg, var(--accent), #a78bfa);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-  .page-sub { font-size: 13px; color: var(--text2); margin-bottom: 20px; }
-
-  /* Network stat */
-  .network-stat {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .network-stat:last-child { border-bottom: none; }
-  .network-stat-icon { font-size: 22px; }
-  .network-stat-label { font-size: 13px; color: var(--text2); }
-  .network-stat-value { font-size: 16px; font-weight: 700; margin-right: auto; }
-
-  /* User row */
-  .user-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .user-row:last-child { border-bottom: none; }
-  .user-avatar {
-    width: 40px; height: 40px;
-    border-radius: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 20px;
-    background: linear-gradient(135deg, rgba(0,212,255,0.2), rgba(124,58,237,0.2));
-    border: 1px solid rgba(0,212,255,0.2);
-  }
-  .user-info { flex: 1; }
-  .user-name { font-size: 14px; font-weight: 600; }
-  .user-id { font-size: 11px; color: var(--text2); direction: ltr; }
-
-  /* Shimmer loading */
-  .shimmer {
-    background: linear-gradient(90deg, var(--surface), var(--surface2), var(--surface));
-    background-size: 200% 100%;
-    animation: shimmer 1.5s infinite;
-    border-radius: 8px;
-  }
-  @keyframes shimmer {
-    0% { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
-  }
+:root{--bg:#060818;--s:rgba(255,255,255,.04);--s2:rgba(255,255,255,.08);--b:rgba(255,255,255,.08);--a:#00d4ff;--a2:#7c3aed;--a3:#10b981;--d:#ef4444;--w:#f59e0b;--t:#f0f4ff;--t2:rgba(240,244,255,.55)}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{font-family:'Assistant',sans-serif;background:var(--bg);color:var(--t);min-height:100vh;overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse 80% 50% at 20% -10%,rgba(0,212,255,.08),transparent 60%),radial-gradient(ellipse 60% 40% at 80% 110%,rgba(124,58,237,.1),transparent 60%);pointer-events:none;z-index:0}
+body::after{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(0,212,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(0,212,255,.025) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0}
+.hdr{position:fixed;top:0;left:0;right:0;z-index:100;padding:14px 16px 10px;background:rgba(6,8,24,.9);backdrop-filter:blur(20px);border-bottom:1px solid var(--b)}
+.hdr-i{display:flex;align-items:center;justify-content:space-between}
+.logo{display:flex;align-items:center;gap:10px}
+.logo-ic{width:34px;height:34px;background:linear-gradient(135deg,var(--a),var(--a2));border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 0 20px rgba(0,212,255,.3)}
+.logo-t{font-size:15px;font-weight:800;background:linear-gradient(90deg,var(--a),#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.logo-s{font-size:11px;color:var(--t2)}
+.dot{width:7px;height:7px;background:var(--a3);border-radius:50%;box-shadow:0 0 8px var(--a3);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(.8)}}
+.nav{position:fixed;bottom:0;left:0;right:0;z-index:100;padding:6px 10px calc(6px + env(safe-area-inset-bottom));background:rgba(6,8,24,.95);backdrop-filter:blur(20px);border-top:1px solid var(--b);display:flex;justify-content:space-around}
+.nb{display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 10px;border-radius:10px;cursor:pointer;border:none;background:none;color:var(--t2);font-family:'Assistant',sans-serif;font-size:9px;transition:all .2s}
+.nb.active{color:var(--a);background:rgba(0,212,255,.1)}
+.nb .ic{font-size:18px}
+.content{position:relative;z-index:1;padding:74px 14px 90px}
+.screen{display:none;animation:fi .3s ease}
+.screen.active{display:block}
+@keyframes fi{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.card{background:var(--s);border:1px solid var(--b);border-radius:14px;padding:16px;margin-bottom:12px;backdrop-filter:blur(10px)}
+.card.glow{box-shadow:0 0 30px rgba(0,212,255,.12);border-color:rgba(0,212,255,.2)}
+.card.purple{box-shadow:0 0 30px rgba(124,58,237,.15);border-color:rgba(124,58,237,.2)}
+.card-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.card-t{font-size:14px;font-weight:700}
+.sg{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:12px}
+.sc{background:var(--s);border:1px solid var(--b);border-radius:12px;padding:14px;text-align:center}
+.sv{font-size:24px;font-weight:800;background:linear-gradient(135deg,var(--a),#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.sl{font-size:10px;color:var(--t2);margin-top:3px}
+.badge{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:16px;font-size:10px;font-weight:700}
+.bg{background:rgba(16,185,129,.15);color:var(--a3);border:1px solid rgba(16,185,129,.3)}
+.bb{background:rgba(0,212,255,.1);color:var(--a);border:1px solid rgba(0,212,255,.2)}
+.br{background:rgba(239,68,68,.1);color:var(--d);border:1px solid rgba(239,68,68,.2)}
+.by{background:rgba(245,158,11,.1);color:var(--w);border:1px solid rgba(245,158,11,.2)}
+.bp{background:rgba(124,58,237,.1);color:#a78bfa;border:1px solid rgba(124,58,237,.2)}
+.li{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--b)}
+.li:last-child{border-bottom:none}
+.li-l{display:flex;align-items:center;gap:10px}
+.av{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px}
+.lt{font-size:13px;font-weight:600}
+.ls{font-size:11px;color:var(--t2);margin-top:2px}
+.tgl{position:relative;width:44px;height:24px;cursor:pointer}
+.tgl input{display:none}
+.tgl-tr{position:absolute;inset:0;background:rgba(255,255,255,.1);border-radius:12px;transition:background .3s;border:1px solid var(--b)}
+.tgl input:checked+.tgl-tr{background:var(--a);border-color:var(--a)}
+.tgl-th{position:absolute;top:2px;right:2px;width:20px;height:20px;background:white;border-radius:50%;transition:transform .3s;box-shadow:0 2px 4px rgba(0,0,0,.3)}
+.tgl input:checked~.tgl-th{transform:translateX(-20px)}
+.st{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--t2);margin:16px 0 8px}
+.pb{height:3px;background:rgba(255,255,255,.07);border-radius:2px;overflow:hidden;margin-top:6px}
+.pf{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--a),var(--a2));transition:width .6s ease}
+.cb{display:flex;align-items:flex-end;gap:5px;height:70px;margin-top:10px}
+.cb-b{flex:1;border-radius:3px 3px 0 0;background:linear-gradient(180deg,var(--a),rgba(0,212,255,.2));min-height:3px}
+.btn{display:flex;align-items:center;justify-content:center;gap:6px;padding:11px 16px;border-radius:11px;font-family:'Assistant',sans-serif;font-size:13px;font-weight:700;cursor:pointer;border:none;width:100%;transition:all .2s;margin-top:8px}
+.btn-p{background:linear-gradient(135deg,var(--a),var(--a2));color:white;box-shadow:0 4px 16px rgba(0,212,255,.2)}
+.btn-p:active{transform:scale(.97)}
+.btn-d{background:rgba(239,68,68,.1);color:var(--d);border:1px solid rgba(239,68,68,.3)}
+.btn-g{background:var(--s);color:var(--t);border:1px solid var(--b)}
+.inp{width:100%;padding:10px 12px;background:var(--s);border:1px solid var(--b);border-radius:9px;color:var(--t);font-family:'Assistant',sans-serif;font-size:13px;outline:none;transition:border-color .2s}
+.inp:focus{border-color:var(--a)}
+.inp-g{margin-bottom:12px}
+.inp-l{font-size:11px;color:var(--t2);margin-bottom:5px;display:block}
+.chip{display:inline-flex;align-items:center;gap:5px;background:var(--s2);border:1px solid var(--b);border-radius:16px;padding:3px 9px;font-size:11px;margin:3px}
+.chip-x{color:var(--d);cursor:pointer;font-size:13px}
+.divider{height:1px;background:var(--b);margin:12px 0}
+.pt{font-size:20px;font-weight:800;margin-bottom:3px}
+.pt span{background:linear-gradient(90deg,var(--a),#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.ps{font-size:12px;color:var(--t2);margin-bottom:16px}
+.ns{display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px solid var(--b)}
+.ns:last-child{border-bottom:none}
+.ns-v{font-size:15px;font-weight:700;margin-right:auto}
+.ns-l{font-size:12px;color:var(--t2)}
+.ur{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--b)}
+.ur:last-child{border-bottom:none}
+.ua{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:18px;background:linear-gradient(135deg,rgba(0,212,255,.15),rgba(124,58,237,.15));border:1px solid rgba(0,212,255,.15)}
+.un{font-size:13px;font-weight:600}
+.ui{font-size:11px;color:var(--t2);direction:ltr}
+.le{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--b)}
+.le:last-child{border-bottom:none}
+.lt2{font-size:12px;font-weight:600}
+.la{font-size:11px;color:var(--t2);margin-top:2px}
+.ltime{font-size:10px;color:var(--t2);white-space:nowrap}
+.shimmer{background:linear-gradient(90deg,var(--s),var(--s2),var(--s));background-size:200% 100%;animation:sh 1.5s infinite;border-radius:8px}
+@keyframes sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.toast{position:fixed;bottom:82px;left:50%;transform:translateX(-50%) translateY(16px);background:rgba(0,212,255,.12);border:1px solid rgba(0,212,255,.25);backdrop-filter:blur(20px);padding:9px 18px;border-radius:18px;font-size:12px;font-weight:700;color:var(--a);opacity:0;transition:all .3s;z-index:200;white-space:nowrap}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.art-item{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--b)}
+.art-item:last-child{border-bottom:none}
+.art-n{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,rgba(0,212,255,.2),rgba(124,58,237,.2));display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:var(--a);flex-shrink:0}
+.art-t{font-size:12px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.art-d{font-size:10px;color:var(--t2)}
+select.inp{appearance:none}
+.row{display:flex;gap:8px}
+.row .inp-g{flex:1}
+.color-row{display:flex;align-items:center;gap:8px}
+.swatch{width:26px;height:26px;border-radius:6px;border:2px solid var(--b);flex-shrink:0}
 </style>
 </head>
 <body>
-
-<!-- Floating accents -->
-<div class="float-accent" style="top:-50px;right:-50px;background:var(--accent);"></div>
-<div class="float-accent" style="bottom:100px;left:-80px;background:var(--accent2);"></div>
-
-<!-- Header -->
-<div class="header">
-  <div class="header-inner">
+<div class="hdr">
+  <div class="hdr-i">
     <div class="logo">
-      <div class="logo-icon">⚡</div>
-      <div>
-        <div class="logo-text">עדכוני חב״ד</div>
-        <div class="logo-sub">מרכז שליטה</div>
-      </div>
+      <div class="logo-ic">⚡</div>
+      <div><div class="logo-t">עדכוני חב״ד</div><div class="logo-s">מרכז שליטה</div></div>
     </div>
-    <div class="status-dot"></div>
+    <div class="dot"></div>
   </div>
 </div>
 
-<!-- Content -->
 <div class="content">
 
-  <!-- SCREEN: Dashboard -->
-  <div class="screen active" id="screen-dash">
-    <div class="page-title">שלום, <span>מנהל</span></div>
-    <div class="page-sub">סקירה מהירה של המערכת</div>
-
-    <div class="stats-grid">
-      <div class="stat-card">
-        <div class="stat-value" id="stat-articles">--</div>
-        <div class="stat-label">📰 כתבות השבוע</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" id="stat-users">--</div>
-        <div class="stat-label">👥 משתמשים פעילים</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" id="stat-fb">--</div>
-        <div class="stat-label">📘 עוקבי פייסבוק</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" id="stat-ig">--</div>
-        <div class="stat-label">📸 עוקבי אינסטגרם</div>
-      </div>
-    </div>
-
-    <div class="card card-glow">
-      <div class="card-header">
-        <div class="card-title">פעילות השבוע</div>
-        <span class="badge badge-green">● פעיל</span>
-      </div>
-      <div class="chart-bars" id="chart-bars">
-        <div class="chart-bar" style="height:40%"></div>
-        <div class="chart-bar" style="height:65%"></div>
-        <div class="chart-bar" style="height:30%"></div>
-        <div class="chart-bar" style="height:80%"></div>
-        <div class="chart-bar" style="height:55%"></div>
-        <div class="chart-bar" style="height:90%"></div>
-        <div class="chart-bar" style="height:70%"></div>
-      </div>
-      <div style="display:flex;justify-content:space-between;margin-top:6px;">
-        <span style="font-size:10px;color:var(--text2)">א׳</span>
-        <span style="font-size:10px;color:var(--text2)">ב׳</span>
-        <span style="font-size:10px;color:var(--text2)">ג׳</span>
-        <span style="font-size:10px;color:var(--text2)">ד׳</span>
-        <span style="font-size:10px;color:var(--text2)">ה׳</span>
-        <span style="font-size:10px;color:var(--text2)">ו׳</span>
-        <span style="font-size:10px;color:var(--text2)">ש׳</span>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">סטטוס שירותים</div>
-      </div>
-      <div class="list-item">
-        <div class="list-item-left">
-          <div class="list-item-avatar" style="background:rgba(0,212,255,0.1)">🤖</div>
-          <div>
-            <div class="list-item-title">Gemini AI</div>
-            <div class="list-item-sub">עיבוד טקסט</div>
-          </div>
-        </div>
-        <span class="badge badge-green">פעיל</span>
-      </div>
-      <div class="list-item">
-        <div class="list-item-left">
-          <div class="list-item-avatar" style="background:rgba(124,58,237,0.1)">🎬</div>
-          <div>
-            <div class="list-item-title">Vimeo</div>
-            <div class="list-item-sub">אחסון וידאו</div>
-          </div>
-        </div>
-        <span class="badge badge-green">פעיל</span>
-      </div>
-      <div class="list-item">
-        <div class="list-item-left">
-          <div class="list-item-avatar" style="background:rgba(16,185,129,0.1)">📧</div>
-          <div>
-            <div class="list-item-title">ניטור מייל</div>
-            <div class="list-item-sub">בדיקה כל 30 דק׳</div>
-          </div>
-        </div>
-        <span class="badge badge-green" id="email-status-badge">פעיל</span>
-      </div>
+<!-- בית -->
+<div class="screen active" id="sc-dash">
+  <div class="pt">שלום, <span id="user-role-name">מנהל</span></div>
+  <div class="ps">סקירת מערכת בזמן אמת</div>
+  <div class="sg">
+    <div class="sc"><div class="sv" id="s-art">--</div><div class="sl">📰 כתבות החודש</div></div>
+    <div class="sc"><div class="sv" id="s-usr">--</div><div class="sl">👥 משתמשים</div></div>
+    <div class="sc"><div class="sv" id="s-fb">--</div><div class="sl">📘 עוקבי FB</div></div>
+    <div class="sc"><div class="sv" id="s-ig">--</div><div class="sl">📸 עוקבי IG</div></div>
+  </div>
+  <div class="card glow">
+    <div class="card-h"><div class="card-t">פעילות שבועית</div><span class="badge bg">● פעיל</span></div>
+    <div class="cb" id="chart"></div>
+    <div style="display:flex;justify-content:space-between;margin-top:5px">
+      <span style="font-size:9px;color:var(--t2)">א׳</span><span style="font-size:9px;color:var(--t2)">ב׳</span>
+      <span style="font-size:9px;color:var(--t2)">ג׳</span><span style="font-size:9px;color:var(--t2)">ד׳</span>
+      <span style="font-size:9px;color:var(--t2)">ה׳</span><span style="font-size:9px;color:var(--t2)">ו׳</span>
+      <span style="font-size:9px;color:var(--t2)">ש׳</span>
     </div>
   </div>
-
-  <!-- SCREEN: Networks -->
-  <div class="screen" id="screen-networks">
-    <div class="page-title"><span>רשתות</span> חברתיות</div>
-    <div class="page-sub">סטטיסטיקות וניהול</div>
-
-    <div class="card card-glow">
-      <div class="card-header">
-        <div class="card-title">📘 פייסבוק</div>
-        <span class="badge badge-blue">מחובר</span>
-      </div>
-      <div class="network-stat">
-        <span class="network-stat-icon">👍</span>
-        <span class="network-stat-label">לייקים</span>
-        <span class="network-stat-value" id="fb-fans">טוען...</span>
-      </div>
-      <div class="network-stat">
-        <span class="network-stat-icon">👥</span>
-        <span class="network-stat-label">עוקבים</span>
-        <span class="network-stat-value" id="fb-followers">טוען...</span>
-      </div>
-      <div class="progress-bar"><div class="progress-fill" id="fb-progress" style="width:0%"></div></div>
+  <div class="card">
+    <div class="card-h"><div class="card-t">כתבות אחרונות</div></div>
+    <div id="recent-arts"><div class="shimmer" style="width:100%;height:120px"></div></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><div class="card-t">סטטוס שירותים</div></div>
+    <div class="li">
+      <div class="li-l"><div class="av" style="background:rgba(0,212,255,.1)">🤖</div>
+        <div><div class="lt">Gemini AI</div><div class="ls">עיבוד טקסט</div></div></div>
+      <span class="badge bg">פעיל</span>
     </div>
-
-    <div class="card card-purple">
-      <div class="card-header">
-        <div class="card-title">📸 אינסטגרם</div>
-        <span class="badge badge-purple">מחובר</span>
-      </div>
-      <div class="network-stat">
-        <span class="network-stat-icon">👥</span>
-        <span class="network-stat-label">עוקבים</span>
-        <span class="network-stat-value" id="ig-followers">טוען...</span>
-      </div>
-      <div class="network-stat">
-        <span class="network-stat-icon">📸</span>
-        <span class="network-stat-label">פוסטים</span>
-        <span class="network-stat-value" id="ig-posts">טוען...</span>
-      </div>
+    <div class="li">
+      <div class="li-l"><div class="av" style="background:rgba(124,58,237,.1)">🎬</div>
+        <div><div class="lt">Vimeo</div><div class="ls">אחסון וידאו</div></div></div>
+      <span class="badge bg">פעיל</span>
     </div>
-
-    <div class="section-title">הגדרות ווטרמארק</div>
-    <div class="card">
-      <div class="list-item">
-        <div class="list-item-left">
-          <div>
-            <div class="list-item-title">ווטרמארק</div>
-            <div class="list-item-sub" id="wm-text-preview">עדכוני חב״ד</div>
-          </div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="wm-toggle" checked onchange="sendToBot('wm_toggle','')">
-          <div class="toggle-track"></div>
-          <div class="toggle-thumb"></div>
-        </label>
-      </div>
-      <div class="divider"></div>
-      <div class="input-group">
-        <label class="input-label">טקסט ווטרמארק</label>
-        <input class="input" id="wm-text-input" value="עדכוני חב״ד" placeholder="הכנס טקסט...">
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-        <div class="input-group" style="margin:0">
-          <label class="input-label">צבע טקסט</label>
-          <div style="display:flex;align-items:center;gap:8px">
-            <input class="input" style="flex:1;padding:10px" id="wm-text-color" value="#FFFFFF" placeholder="#FFFFFF">
-            <div class="color-swatch" id="wm-text-swatch" style="background:#fff"></div>
-          </div>
-        </div>
-        <div class="input-group" style="margin:0">
-          <label class="input-label">צבע רקע</label>
-          <div style="display:flex;align-items:center;gap:8px">
-            <input class="input" style="flex:1;padding:10px" id="wm-bg-color" value="#000000" placeholder="#000000">
-            <div class="color-swatch" id="wm-bg-swatch" style="background:#000"></div>
-          </div>
-        </div>
-      </div>
-      <div class="input-group">
-        <label class="input-label">גודל גופן: <span id="wm-size-label">40</span>px</label>
-        <input type="range" min="16" max="120" value="40" id="wm-size-range"
-          style="width:100%;accent-color:var(--accent)"
-          oninput="document.getElementById('wm-size-label').textContent=this.value">
-      </div>
-      <button class="btn btn-primary" onclick="saveWatermark()">💾 שמור הגדרות</button>
+    <div class="li">
+      <div class="li-l"><div class="av" style="background:rgba(16,185,129,.1)">📧</div>
+        <div><div class="lt">ניטור מייל</div><div class="ls" id="email-s">כל 30 דק׳</div></div></div>
+      <span class="badge bg" id="email-badge">פעיל</span>
     </div>
   </div>
+</div>
 
-  <!-- SCREEN: Settings -->
-  <div class="screen" id="screen-settings">
-    <div class="page-title"><span>הגדרות</span> מערכת</div>
-    <div class="page-sub">גרשיים ופרומפט AI</div>
-
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">✳️ מילים עם גרש</div>
-        <span class="badge badge-blue" id="geresh-count">טוען...</span>
+<!-- רשתות -->
+<div class="screen" id="sc-net">
+  <div class="pt"><span>רשתות</span> חברתיות</div>
+  <div class="ps">סטטיסטיקות וניהול ווטרמארק</div>
+  <div class="card glow">
+    <div class="card-h"><div class="card-t">📘 פייסבוק</div><span class="badge bb" id="fb-badge">טוען...</span></div>
+    <div class="ns"><span style="font-size:18px">👍</span><span class="ns-l">לייקים</span><span class="ns-v" id="fb-fans">--</span></div>
+    <div class="ns"><span style="font-size:18px">👥</span><span class="ns-l">עוקבים</span><span class="ns-v" id="fb-fol">--</span></div>
+    <div class="pb"><div class="pf" id="fb-pb" style="width:0%"></div></div>
+  </div>
+  <div class="card purple">
+    <div class="card-h"><div class="card-t">📸 אינסטגרם</div><span class="badge bp" id="ig-badge">טוען...</span></div>
+    <div class="ns"><span style="font-size:18px">👥</span><span class="ns-l">עוקבים</span><span class="ns-v" id="ig-fol">--</span></div>
+    <div class="ns"><span style="font-size:18px">📸</span><span class="ns-l">פוסטים</span><span class="ns-v" id="ig-posts">--</span></div>
+  </div>
+  <div class="st">הגדרות ווטרמארק</div>
+  <div class="card">
+    <div class="li">
+      <div class="li-l"><div><div class="lt">ווטרמארק</div><div class="ls" id="wm-prev">עדכוני חב״ד</div></div></div>
+      <label class="tgl"><input type="checkbox" id="wm-on" onchange="saveWm()"><div class="tgl-tr"></div><div class="tgl-th"></div></label>
+    </div>
+    <div class="divider"></div>
+    <div class="inp-g"><label class="inp-l">טקסט</label><input class="inp" id="wm-txt" placeholder="עדכוני חב״ד" oninput="document.getElementById('wm-prev').textContent=this.value"></div>
+    <div class="row">
+      <div class="inp-g">
+        <label class="inp-l">צבע טקסט</label>
+        <div class="color-row"><input class="inp" id="wm-tc" placeholder="#FFFFFF" oninput="updateSwatch('wm-tc','wm-ts')"><div class="swatch" id="wm-ts" style="background:#fff"></div></div>
       </div>
-      <div id="geresh-chips" style="display:flex;flex-wrap:wrap;margin-bottom:12px">
-        <div class="shimmer" style="width:100%;height:60px;"></div>
-      </div>
-      <div style="display:flex;gap:8px">
-        <input class="input" id="new-geresh" placeholder='הוסף מילה (כמו חב"ד)' style="flex:1">
-        <button class="btn btn-primary" style="width:auto;padding:12px 16px" onclick="addGeresh()">+</button>
+      <div class="inp-g">
+        <label class="inp-l">צבע רקע</label>
+        <div class="color-row"><input class="inp" id="wm-bc" placeholder="#000000" oninput="updateSwatch('wm-bc','wm-bs')"><div class="swatch" id="wm-bs" style="background:#000"></div></div>
       </div>
     </div>
+    <div class="inp-g"><label class="inp-l">גודל: <span id="wm-sl">40</span>px</label>
+      <input type="range" min="16" max="120" value="40" id="wm-sz" style="width:100%;accent-color:var(--a)" oninput="document.getElementById('wm-sl').textContent=this.value">
+    </div>
+    <div class="inp-g">
+      <label class="inp-l">מיקום X: <span id="wm-xl">95</span>%</label>
+      <input type="range" min="0" max="100" value="95" id="wm-x" style="width:100%;accent-color:var(--a)" oninput="document.getElementById('wm-xl').textContent=this.value">
+    </div>
+    <div class="inp-g">
+      <label class="inp-l">מיקום Y: <span id="wm-yl">95</span>%</label>
+      <input type="range" min="0" max="100" value="95" id="wm-y" style="width:100%;accent-color:var(--a)" oninput="document.getElementById('wm-yl').textContent=this.value">
+    </div>
+    <button class="btn btn-p" onclick="saveWm()">💾 שמור ווטרמארק</button>
+  </div>
+</div>
 
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">🤖 פרומפט Gemini</div>
-        <span class="badge badge-yellow">מותאם אישית</span>
-      </div>
-      <textarea class="input" id="gemini-prompt" rows="8" placeholder="הכנס פרומפט..." style="resize:none;line-height:1.5"></textarea>
-      <div style="margin-top:10px">
-        <button class="btn btn-primary" onclick="savePrompt()">💾 שמור פרומפט</button>
-      </div>
+<!-- אנליטיקס -->
+<div class="screen" id="sc-an">
+  <div class="pt"><span>אנליטיקס</span></div>
+  <div class="ps">Google Analytics 4 · 7 ימים אחרונים</div>
+  <div class="sg">
+    <div class="sc"><div class="sv" id="ga-s">--</div><div class="sl">🔵 סשנים</div></div>
+    <div class="sc"><div class="sv" id="ga-u">--</div><div class="sl">👤 משתמשים</div></div>
+    <div class="sc" style="grid-column:span 2"><div class="sv" id="ga-v">--</div><div class="sl">👁 צפיות דף</div></div>
+  </div>
+  <div class="card glow">
+    <div class="card-h"><div class="card-t">כתבות אחרונות</div><span class="badge bb">5 אחרונות</span></div>
+    <div id="top-arts"><div class="shimmer" style="width:100%;height:140px"></div></div>
+  </div>
+  <button class="btn btn-g" onclick="loadAn()">🔄 רענן נתונים</button>
+</div>
+
+<!-- לוג -->
+<div class="screen" id="sc-log">
+  <div class="pt"><span>לוג</span> פעולות</div>
+  <div class="ps">היסטוריית פעילות המערכת</div>
+  <div class="card">
+    <div id="log-list"><div class="shimmer" style="width:100%;height:200px"></div></div>
+  </div>
+  <button class="btn btn-g" onclick="loadLog()">🔄 רענן</button>
+</div>
+
+<!-- משתמשים -->
+<div class="screen" id="sc-usr">
+  <div class="pt"><span>ניהול</span> משתמשים</div>
+  <div class="ps">הרשאות, מייל וגישה</div>
+  <div class="card">
+    <div class="card-h"><div class="card-t">משתמשים פעילים</div></div>
+    <div id="usr-list"><div class="shimmer" style="width:100%;height:120px"></div></div>
+  </div>
+  <div class="st">הוסף משתמש</div>
+  <div class="card">
+    <div class="inp-g"><label class="inp-l">מזהה טלגרם (User ID)</label><input class="inp" id="new-uid" placeholder="123456789" type="number"></div>
+    <div class="inp-g">
+      <label class="inp-l">תפקיד</label>
+      <select class="inp" id="new-role">
+        <option value="editor">✏️ עורך</option>
+        <option value="senior_editor">✨ עורך ראשי</option>
+        <option value="admin">👑 מנהל</option>
+      </select>
+    </div>
+    <button class="btn btn-p" onclick="addUser()">➕ הוסף משתמש</button>
+  </div>
+  <div class="st">ניהול מייל</div>
+  <div class="card">
+    <div class="card-h">
+      <div class="card-t">📧 כתובות מורשות</div>
+      <label class="tgl"><input type="checkbox" id="em-on" onchange="toggleEmail()"><div class="tgl-tr"></div><div class="tgl-th"></div></label>
+    </div>
+    <div id="em-chips" style="margin-bottom:10px"><div class="shimmer" style="width:100%;height:40px"></div></div>
+    <div style="display:flex;gap:8px">
+      <input class="inp" id="new-em" placeholder="כתובת מייל" type="email" style="flex:1">
+      <button class="btn btn-p" style="width:auto;padding:10px 14px" onclick="addEmail()">+</button>
     </div>
   </div>
+</div>
 
-  <!-- SCREEN: Log -->
-  <div class="screen" id="screen-log">
-    <div class="page-title"><span>לוג</span> פעולות</div>
-    <div class="page-sub">היסטוריית פעילות</div>
-
-    <div class="card">
-      <div id="log-entries">
-        <div class="shimmer" style="width:100%;height:200px;"></div>
-      </div>
+<!-- הגדרות -->
+<div class="screen" id="sc-set">
+  <div class="pt"><span>הגדרות</span> מערכת</div>
+  <div class="ps">גרשיים ופרומפט AI</div>
+  <div class="card">
+    <div class="card-h"><div class="card-t">✳️ מילים עם גרש</div><span class="badge bb" id="g-count">--</span></div>
+    <div id="g-chips" style="margin-bottom:10px;min-height:40px"><div class="shimmer" style="width:100%;height:40px"></div></div>
+    <div style="display:flex;gap:8px">
+      <input class="inp" id="new-g" placeholder='מילה עם " (כמו חב"ד)' style="flex:1">
+      <button class="btn btn-p" style="width:auto;padding:10px 14px" onclick="addGeresh()">+</button>
     </div>
   </div>
-
-  <!-- SCREEN: Analytics -->
-  <div class="screen" id="screen-analytics">
-    <div class="page-title"><span>אנליטיקס</span></div>
-    <div class="page-sub">Google Analytics 4</div>
-
-    <div class="stats-grid">
-      <div class="stat-card">
-        <div class="stat-value" id="ga-sessions">--</div>
-        <div class="stat-label">🔵 סשנים</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" id="ga-users">--</div>
-        <div class="stat-label">👤 משתמשים</div>
-      </div>
-      <div class="stat-card" style="grid-column:span 2">
-        <div class="stat-value" id="ga-views">--</div>
-        <div class="stat-label">👁️ צפיות דף</div>
-      </div>
-    </div>
-
-    <div class="card card-glow">
-      <div class="card-header">
-        <div class="card-title">כתבות מובילות</div>
-        <span class="badge badge-blue">7 ימים</span>
-      </div>
-      <div id="top-articles">
-        <div class="shimmer" style="width:100%;height:150px;"></div>
-      </div>
-    </div>
-
-    <button class="btn btn-ghost" onclick="loadAnalytics()">🔄 רענן נתונים</button>
+  <div class="card">
+    <div class="card-h"><div class="card-t">🤖 פרומפט Gemini</div></div>
+    <textarea class="inp" id="gm-prompt" rows="7" style="resize:none;line-height:1.5" placeholder="הכנס פרומפט..."></textarea>
+    <button class="btn btn-p" onclick="savePrompt()">💾 שמור פרומפט</button>
   </div>
-
-  <!-- SCREEN: Users -->
-  <div class="screen" id="screen-users">
-    <div class="page-title"><span>ניהול</span> משתמשים</div>
-    <div class="page-sub">הרשאות וגישה</div>
-
-    <div class="card">
-      <div id="users-list">
-        <div class="shimmer" style="width:100%;height:200px;"></div>
-      </div>
-    </div>
-
-    <div class="section-title">ניהול מייל</div>
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">📧 כתובות מורשות</div>
-        <label class="toggle">
-          <input type="checkbox" id="email-active" checked onchange="toggleEmail()">
-          <div class="toggle-track"></div>
-          <div class="toggle-thumb"></div>
-        </label>
-      </div>
-      <div id="email-chips" style="margin-bottom:12px">
-        <div class="shimmer" style="width:100%;height:50px;"></div>
-      </div>
-      <div style="display:flex;gap:8px">
-        <input class="input" id="new-email" placeholder="הוסף כתובת מייל" type="email" style="flex:1">
-        <button class="btn btn-primary" style="width:auto;padding:12px 16px" onclick="addEmail()">+</button>
-      </div>
-    </div>
-  </div>
+</div>
 
 </div>
 
 <!-- Nav -->
 <nav class="nav">
-  <button class="nav-btn active" onclick="showScreen('dash',this)">
-    <span class="icon">🏠</span>
-    <span>בית</span>
-  </button>
-  <button class="nav-btn" onclick="showScreen('networks',this)">
-    <span class="icon">🌐</span>
-    <span>רשתות</span>
-  </button>
-  <button class="nav-btn" onclick="showScreen('analytics',this)">
-    <span class="icon">📊</span>
-    <span>אנליטיקס</span>
-  </button>
-  <button class="nav-btn" onclick="showScreen('log',this)">
-    <span class="icon">📋</span>
-    <span>לוג</span>
-  </button>
-  <button class="nav-btn" onclick="showScreen('users',this)">
-    <span class="icon">👥</span>
-    <span>משתמשים</span>
-  </button>
-  <button class="nav-btn" onclick="showScreen('settings',this)">
-    <span class="icon">⚙️</span>
-    <span>הגדרות</span>
-  </button>
+  <button class="nb active" onclick="go('dash',this)"><span class="ic">🏠</span><span>בית</span></button>
+  <button class="nb" onclick="go('net',this)"><span class="ic">🌐</span><span>רשתות</span></button>
+  <button class="nb" onclick="go('an',this)"><span class="ic">📊</span><span>אנליטיקס</span></button>
+  <button class="nb" onclick="go('log',this)"><span class="ic">📋</span><span>לוג</span></button>
+  <button class="nb" onclick="go('usr',this)"><span class="ic">👥</span><span>משתמשים</span></button>
+  <button class="nb" onclick="go('set',this)"><span class="ic">⚙️</span><span>הגדרות</span></button>
 </nav>
 
-<!-- Toast -->
 <div class="toast" id="toast"></div>
 
 <script>
-// Telegram Web App init
 const tg = window.Telegram?.WebApp;
-if (tg) {
-  tg.ready();
-  tg.expand();
-}
+if(tg){tg.ready();tg.expand();}
+const B = window.location.origin;
+const loaded = {};
 
-const BASE_URL = window.location.origin;
-
-// Navigation
-function showScreen(id, btn) {
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('screen-' + id).classList.add('active');
+function go(id,btn){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.nb').forEach(b=>b.classList.remove('active'));
+  document.getElementById('sc-'+id).classList.add('active');
   btn.classList.add('active');
-  // Load data on first visit
-  const loaders = {
-    'networks': loadNetworks,
-    'log': loadLog,
-    'analytics': loadAnalytics,
-    'users': loadUsers,
-    'settings': loadSettings,
-    'dash': loadDash,
-  };
-  if (loaders[id]) loaders[id]();
+  if(!loaded[id]){loaded[id]=true;({dash:loadDash,net:loadNet,an:loadAn,log:loadLog,usr:loadUsr,set:loadSet})[id]?.();}
 }
 
-// Toast
-function showToast(msg, duration=2500) {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), duration);
+function toast(msg,t=2500){
+  const el=document.getElementById('toast');
+  el.textContent=msg;el.classList.add('show');
+  setTimeout(()=>el.classList.remove('show'),t);
 }
 
-// API calls to bot
-async function api(path) {
-  try {
-    const r = await fetch(BASE_URL + path);
-    return await r.json();
-  } catch(e) {
-    return null;
-  }
-}
-
-// Send action to bot via Telegram
-function sendToBot(action, data) {
-  if (tg) {
-    tg.sendData(JSON.stringify({action, data}));
-  }
-}
-
-// Format numbers
-function fmt(n) {
-  if (!n && n !== 0) return '--';
-  if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
-  if (n >= 1000) return (n/1000).toFixed(1) + 'K';
+function fmt(n){
+  if(!n&&n!==0)return'--';
+  if(n>=1000000)return(n/1000000).toFixed(1)+'M';
+  if(n>=1000)return(n/1000).toFixed(1)+'K';
   return n.toString();
 }
 
-// Load Dashboard
-async function loadDash() {
-  // Load FB stats
-  const fb = await api('/api/stats/facebook');
-  if (fb) {
-    document.getElementById('stat-fb').textContent = fmt(fb.followers_count || fb.fan_count);
-  }
-  // Load IG stats
-  const ig = await api('/api/stats/instagram');
-  if (ig) {
-    document.getElementById('stat-ig').textContent = fmt(ig.followers_count);
-  }
-  // Load users
-  const users = await api('/api/users');
-  if (users) {
-    document.getElementById('stat-users').textContent = users.count || '--';
+async function api(path,method='GET',body=null){
+  try{
+    const opts={method,headers:{'Content-Type':'application/json'}};
+    if(body)opts.body=JSON.stringify(body);
+    const r=await fetch(B+path,opts);
+    return await r.json();
+  }catch(e){return null;}
+}
+
+function updateSwatch(inp,sw){
+  const v=document.getElementById(inp).value;
+  if(/^#[0-9a-fA-F]{3,6}$/.test(v))document.getElementById(sw).style.background=v;
+}
+
+// Dashboard
+async function loadDash(){
+  const [fb,ig,usr,art]=await Promise.all([
+    api('/api/stats/facebook'),api('/api/stats/instagram'),
+    api('/api/users'),api('/api/articles/count')
+  ]);
+  if(fb){document.getElementById('s-fb').textContent=fmt(fb.followers_count||fb.fan_count);}
+  if(ig){document.getElementById('s-ig').textContent=fmt(ig.followers_count);}
+  if(usr){document.getElementById('s-usr').textContent=usr.count||'--';}
+  if(art){document.getElementById('s-art').textContent=art.count||'--';}
+  // Email
+  const em=await api('/api/email');
+  if(em){
+    document.getElementById('email-badge').textContent=em.active?'פעיל':'מושהה';
+    document.getElementById('email-badge').className='badge '+(em.active?'bg':'br');
   }
   // Articles
-  const articles = await api('/api/articles/count');
-  if (articles) {
-    document.getElementById('stat-articles').textContent = articles.count || '--';
-  }
-  // Animate chart
-  setTimeout(() => {
-    const bars = document.querySelectorAll('.chart-bar');
-    bars.forEach((b, i) => {
-      setTimeout(() => {
-        b.style.height = b.style.height; // trigger repaint
-      }, i * 80);
-    });
-  }, 300);
+  const arts=await api('/api/articles/top');
+  const el=document.getElementById('recent-arts');
+  if(arts?.articles?.length){
+    el.innerHTML=arts.articles.map((a,i)=>`
+      <div class="art-item">
+        <div class="art-n">${i+1}</div>
+        <div style="flex:1;overflow:hidden">
+          <div class="art-t">${a.title}</div>
+          <div class="art-d">📅 ${a.date}</div>
+        </div>
+      </div>`).join('');
+  }else{el.innerHTML='<div style="color:var(--t2);padding:10px;font-size:12px">אין כתבות</div>';}
+  // Chart animation
+  const heights=[40,65,30,80,55,90,70];
+  document.getElementById('chart').innerHTML=heights.map(h=>`<div class="cb-b" style="height:${h}%"></div>`).join('');
 }
 
-// Load Networks
-async function loadNetworks() {
-  const fb = await api('/api/stats/facebook');
-  if (fb) {
-    document.getElementById('fb-fans').textContent = fmt(fb.fan_count);
-    document.getElementById('fb-followers').textContent = fmt(fb.followers_count);
-    const pct = fb.fan_count ? Math.min(100, Math.floor(fb.fan_count / 10000 * 100)) : 0;
-    document.getElementById('fb-progress').style.width = pct + '%';
-    document.getElementById('stat-fb').textContent = fmt(fb.followers_count || fb.fan_count);
-  } else {
-    document.getElementById('fb-fans').textContent = 'שגיאה';
-    document.getElementById('fb-followers').textContent = 'שגיאה';
+// Networks
+async function loadNet(){
+  const [fb,ig,wm]=await Promise.all([api('/api/stats/facebook'),api('/api/stats/instagram'),api('/api/watermark')]);
+  if(fb){
+    document.getElementById('fb-fans').textContent=fmt(fb.fan_count);
+    document.getElementById('fb-fol').textContent=fmt(fb.followers_count);
+    document.getElementById('fb-badge').textContent='מחובר';
+    document.getElementById('fb-badge').className='badge bg';
+    const pct=Math.min(100,Math.floor((fb.fan_count||0)/10000*100));
+    document.getElementById('fb-pb').style.width=pct+'%';
+    document.getElementById('s-fb').textContent=fmt(fb.followers_count||fb.fan_count);
+  }else{
+    document.getElementById('fb-badge').textContent='שגיאה';
+    document.getElementById('fb-badge').className='badge br';
   }
-
-  const ig = await api('/api/stats/instagram');
-  if (ig) {
-    document.getElementById('ig-followers').textContent = fmt(ig.followers_count);
-    document.getElementById('ig-posts').textContent = fmt(ig.media_count);
-    document.getElementById('stat-ig').textContent = fmt(ig.followers_count);
+  if(ig){
+    document.getElementById('ig-fol').textContent=fmt(ig.followers_count);
+    document.getElementById('ig-posts').textContent=fmt(ig.media_count);
+    document.getElementById('ig-badge').textContent='מחובר';
+    document.getElementById('ig-badge').className='badge bg';
+    document.getElementById('s-ig').textContent=fmt(ig.followers_count);
   }
-
-  // Load watermark settings
-  const wm = await api('/api/watermark');
-  if (wm) {
-    document.getElementById('wm-toggle').checked = wm.enabled;
-    document.getElementById('wm-text-input').value = wm.text || '';
-    document.getElementById('wm-text-preview').textContent = wm.text || '';
-    document.getElementById('wm-text-color').value = wm.text_color || '#FFFFFF';
-    document.getElementById('wm-bg-color').value = wm.bg_color !== 'none' ? wm.bg_color : '#000000';
-    document.getElementById('wm-size-range').value = wm.font_size || 40;
-    document.getElementById('wm-size-label').textContent = wm.font_size || 40;
-    updateColorSwatches();
+  if(wm){
+    document.getElementById('wm-on').checked=wm.enabled;
+    document.getElementById('wm-txt').value=wm.text||'';
+    document.getElementById('wm-prev').textContent=wm.text||'';
+    document.getElementById('wm-tc').value=wm.text_color||'#FFFFFF';
+    document.getElementById('wm-bc').value=wm.bg_color!=='none'?(wm.bg_color||'#000000'):'#000000';
+    document.getElementById('wm-sz').value=wm.font_size||40;
+    document.getElementById('wm-sl').textContent=wm.font_size||40;
+    document.getElementById('wm-x').value=wm.pos_x||95;
+    document.getElementById('wm-xl').textContent=wm.pos_x||95;
+    document.getElementById('wm-y').value=wm.pos_y||95;
+    document.getElementById('wm-yl').textContent=wm.pos_y||95;
+    updateSwatch('wm-tc','wm-ts');updateSwatch('wm-bc','wm-bs');
   }
 }
 
-function updateColorSwatches() {
-  const tc = document.getElementById('wm-text-color').value;
-  const bc = document.getElementById('wm-bg-color').value;
-  document.getElementById('wm-text-swatch').style.background = tc;
-  document.getElementById('wm-bg-swatch').style.background = bc;
-}
-
-document.addEventListener('input', e => {
-  if (e.target.id === 'wm-text-color' || e.target.id === 'wm-bg-color') updateColorSwatches();
-});
-
-async function saveWatermark() {
-  const settings = {
-    enabled: document.getElementById('wm-toggle').checked,
-    text: document.getElementById('wm-text-input').value,
-    text_color: document.getElementById('wm-text-color').value,
-    bg_color: document.getElementById('wm-bg-color').value,
-    font_size: parseInt(document.getElementById('wm-size-range').value),
-  };
-  const r = await fetch(BASE_URL + '/api/watermark', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify(settings)
+async function saveWm(){
+  const r=await api('/api/watermark','POST',{
+    enabled:document.getElementById('wm-on').checked,
+    text:document.getElementById('wm-txt').value,
+    text_color:document.getElementById('wm-tc').value,
+    bg_color:document.getElementById('wm-bc').value,
+    font_size:parseInt(document.getElementById('wm-sz').value),
+    pos_x:parseInt(document.getElementById('wm-x').value),
+    pos_y:parseInt(document.getElementById('wm-y').value),
   });
-  if (r.ok) {
-    showToast('✅ הגדרות הווטרמארק נשמרו!');
-    document.getElementById('wm-text-preview').textContent = settings.text;
-  } else {
-    showToast('❌ שגיאה בשמירה');
-  }
+  toast(r?.ok?'✅ ווטרמארק נשמר!':'❌ שגיאה בשמירה');
 }
 
-// Load Log
-async function loadLog() {
-  const log = await api('/api/log');
-  const el = document.getElementById('log-entries');
-  if (!log || !log.entries?.length) {
-    el.innerHTML = '<div style="text-align:center;color:var(--text2);padding:20px">אין פעולות עדיין</div>';
-    return;
-  }
-  el.innerHTML = log.entries.slice(0,50).map(e => `
-    <div class="log-entry">
+// Analytics
+async function loadAn(){
+  document.getElementById('ga-s').textContent='...';
+  const d=await api('/api/analytics');
+  document.getElementById('ga-s').textContent=fmt(d?.sessions);
+  document.getElementById('ga-u').textContent=fmt(d?.users);
+  document.getElementById('ga-v').textContent=fmt(d?.views);
+  const el=document.getElementById('top-arts');
+  const arts=await api('/api/articles/top');
+  if(arts?.articles?.length){
+    el.innerHTML=arts.articles.map((a,i)=>`
+      <div class="art-item">
+        <div class="art-n">${i+1}</div>
+        <div style="flex:1;overflow:hidden">
+          <div class="art-t">${a.title}</div>
+          <div class="art-d">📅 ${a.date}</div>
+        </div>
+      </div>`).join('');
+  }else{el.innerHTML='<div style="color:var(--t2);font-size:12px;padding:10px">אין כתבות</div>';}
+}
+
+// Log
+async function loadLog(){
+  const d=await api('/api/log');
+  const el=document.getElementById('log-list');
+  if(!d?.entries?.length){el.innerHTML='<div style="color:var(--t2);padding:16px;font-size:12px;text-align:center">אין פעולות עדיין</div>';return;}
+  el.innerHTML=d.entries.map(e=>`
+    <div class="le">
       <div style="flex:1">
-        <div style="display:flex;align-items:center;justify-content:space-between">
-          <div class="log-user">👤 ${e.user || 'לא ידוע'}</div>
-          <div class="log-time">${e.time || ''}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div class="lt2">👤 ${e.user||'לא ידוע'}</div>
+          <div class="ltime">${e.time||''}</div>
         </div>
-        <div class="log-action">${e.action || ''}</div>
+        <div class="la">${e.action||''}</div>
       </div>
-    </div>
-  `).join('');
+    </div>`).join('');
 }
 
-// Load Analytics
-async function loadAnalytics() {
-  const data = await api('/api/analytics');
-  if (!data) {
-    document.getElementById('ga-sessions').textContent = '--';
-    return;
-  }
-  document.getElementById('ga-sessions').textContent = fmt(data.sessions);
-  document.getElementById('ga-users').textContent = fmt(data.users);
-  document.getElementById('ga-views').textContent = fmt(data.views);
-
-  const el = document.getElementById('top-articles');
-  if (data.articles?.length) {
-    el.innerHTML = data.articles.map((a, i) => `
-      <div class="list-item">
-        <div class="list-item-left">
-          <div class="list-item-avatar" style="background:rgba(0,212,255,0.1);font-size:14px;font-weight:800;color:var(--accent)">${i+1}</div>
-          <div>
-            <div class="list-item-title">${a.title}</div>
-            <div class="list-item-sub">${fmt(a.views)} צפיות</div>
-          </div>
-        </div>
-      </div>
-    `).join('');
+// Users
+let emailList=[];
+async function loadUsr(){
+  const [ud,ed]=await Promise.all([api('/api/users'),api('/api/email')]);
+  const el=document.getElementById('usr-list');
+  if(ud?.users?.length){
+    el.innerHTML=ud.users.map(u=>`
+      <div class="ur">
+        <div class="ua">${u.role==='admin'?'👑':u.role==='senior_editor'?'✨':'✏️'}</div>
+        <div style="flex:1"><div class="un">${u.id}</div><div class="ui">${u.role_name||u.role}</div></div>
+        <button onclick="removeUser('${u.id}')" style="background:none;border:none;color:var(--d);cursor:pointer;font-size:18px" title="הסר">×</button>
+      </div>`).join('');
+  }else{el.innerHTML='<div style="color:var(--t2);padding:10px;font-size:12px">אין משתמשים</div>';}
+  if(ed){
+    document.getElementById('em-on').checked=ed.active;
+    emailList=ed.senders||[];
+    renderEmails();
   }
 }
 
-// Load Users
-async function loadUsers() {
-  const data = await api('/api/users');
-  const el = document.getElementById('users-list');
-  if (!data?.users?.length) {
-    el.innerHTML = '<div style="text-align:center;color:var(--text2);padding:20px">אין משתמשים</div>';
-  } else {
-    const roleMap = {admin:'👑 מנהל', senior_editor:'✨ עורך ראשי', editor:'✏️ עורך'};
-    const badgeMap = {admin:'badge-yellow', senior_editor:'badge-purple', editor:'badge-blue'};
-    el.innerHTML = data.users.map(u => `
-      <div class="user-row">
-        <div class="user-avatar">${u.role==='admin'?'👑':u.role==='senior_editor'?'✨':'✏️'}</div>
-        <div class="user-info">
-          <div class="user-name">${u.name || u.id}</div>
-          <div class="user-id">${u.id}</div>
-        </div>
-        <span class="badge ${badgeMap[u.role]||'badge-blue'}">${roleMap[u.role]||u.role}</span>
-      </div>
-    `).join('');
-  }
-
-  // Load emails
-  const emailData = await api('/api/email');
-  if (emailData) {
-    document.getElementById('email-active').checked = emailData.active;
-    renderEmailChips(emailData.senders || []);
-  }
+function renderEmails(){
+  const el=document.getElementById('em-chips');
+  el.innerHTML=emailList.length
+    ?emailList.map(e=>`<span class="chip">📧 ${e}<span class="chip-x" onclick="removeEmail('${e}')">×</span></span>`).join('')
+    :'<div style="color:var(--t2);font-size:12px">אין כתובות</div>';
 }
 
-let emailList = [];
-function renderEmailChips(emails) {
-  emailList = emails;
-  const el = document.getElementById('email-chips');
-  if (!emails.length) {
-    el.innerHTML = '<div style="color:var(--text2);font-size:12px">אין כתובות מורשות</div>';
-    return;
-  }
-  el.innerHTML = emails.map(e => `
-    <span class="chip">📧 ${e}<span class="chip-remove" onclick="removeEmail('${e}')">×</span></span>
-  `).join('');
+async function addUser(){
+  const uid=document.getElementById('new-uid').value.trim();
+  const role=document.getElementById('new-role').value;
+  if(!uid){toast('⚠️ הכנס מזהה משתמש');return;}
+  const r=await api('/api/users/add','POST',{user_id:uid,role});
+  if(r?.ok){toast('✅ משתמש נוסף!');document.getElementById('new-uid').value='';loaded.usr=false;loadUsr();}
+  else toast('❌ '+(r?.error||'שגיאה'));
 }
 
-async function addEmail() {
-  const input = document.getElementById('new-email');
-  const email = input.value.trim();
-  if (!email || !email.includes('@')) { showToast('⚠️ כתובת לא תקינה'); return; }
-  const r = await fetch(BASE_URL + '/api/email/add', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({email})
-  });
-  if (r.ok) {
-    emailList.push(email);
-    renderEmailChips(emailList);
-    input.value = '';
-    showToast('✅ כתובת נוספה!');
-  }
+async function removeUser(uid){
+  if(!confirm('להסיר משתמש '+uid+'?'))return;
+  const r=await api('/api/users/remove','POST',{user_id:uid});
+  if(r?.ok){toast('🗑️ משתמש הוסר');loaded.usr=false;loadUsr();}
+  else toast('❌ '+(r?.error||'לא ניתן להסיר'));
 }
 
-async function removeEmail(email) {
-  const r = await fetch(BASE_URL + '/api/email/remove', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({email})
-  });
-  if (r.ok) {
-    emailList = emailList.filter(e => e !== email);
-    renderEmailChips(emailList);
-    showToast('🗑️ כתובת הוסרה');
-  }
+async function addEmail(){
+  const em=document.getElementById('new-em').value.trim();
+  if(!em||!em.includes('@')){toast('⚠️ כתובת לא תקינה');return;}
+  const r=await api('/api/email/add','POST',{email:em});
+  if(r?.ok){emailList.push(em);renderEmails();document.getElementById('new-em').value='';toast('✅ נוסף!');}
 }
 
-async function toggleEmail() {
-  await fetch(BASE_URL + '/api/email/toggle', {method:'POST'});
+async function removeEmail(em){
+  const r=await api('/api/email/remove','POST',{email:em});
+  if(r?.ok){emailList=emailList.filter(e=>e!==em);renderEmails();toast('🗑️ הוסר');}
 }
 
-// Load Settings
-async function loadSettings() {
-  const data = await api('/api/settings');
-  if (!data) return;
-
-  // Geresh words
-  const words = data.geresh_words || [];
-  document.getElementById('geresh-count').textContent = words.length + ' מילים';
-  renderGereshChips(words);
-
-  // Prompt
-  if (data.prompt) {
-    document.getElementById('gemini-prompt').value = data.prompt;
-  }
+async function toggleEmail(){
+  await api('/api/email/toggle','POST');
 }
 
-let gereshWords = [];
-function renderGereshChips(words) {
-  gereshWords = words;
-  document.getElementById('geresh-chips').innerHTML = words.map(w => `
-    <span class="chip">✳️ ${w}<span class="chip-remove" onclick="removeGeresh('${w}')">×</span></span>
-  `).join('');
-  document.getElementById('geresh-count').textContent = words.length + ' מילים';
+// Settings
+let gereshWords=[];
+async function loadSet(){
+  const d=await api('/api/settings');
+  if(!d)return;
+  gereshWords=d.geresh_words||[];
+  renderGeresh();
+  if(d.prompt)document.getElementById('gm-prompt').value=d.prompt;
 }
 
-async function addGeresh() {
-  const input = document.getElementById('new-geresh');
-  const word = input.value.trim();
-  if (!word) return;
-  const r = await fetch(BASE_URL + '/api/settings/geresh/add', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({word})
-  });
-  if (r.ok) {
-    gereshWords.push(word);
-    renderGereshChips(gereshWords);
-    input.value = '';
-    showToast('✅ מילה נוספה!');
-  }
+function renderGeresh(){
+  document.getElementById('g-count').textContent=gereshWords.length+' מילים';
+  document.getElementById('g-chips').innerHTML=gereshWords.length
+    ?gereshWords.map(w=>`<span class="chip">✳️ ${w}<span class="chip-x" onclick="rmGeresh('${w}')">×</span></span>`).join('')
+    :'<div style="color:var(--t2);font-size:12px">אין מילים</div>';
 }
 
-async function removeGeresh(word) {
-  const r = await fetch(BASE_URL + '/api/settings/geresh/remove', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({word})
-  });
-  if (r.ok) {
-    gereshWords = gereshWords.filter(w => w !== word);
-    renderGereshChips(gereshWords);
-    showToast('🗑️ מילה הוסרה');
-  }
+async function addGeresh(){
+  const w=document.getElementById('new-g').value.trim();
+  if(!w)return;
+  const r=await api('/api/settings/geresh/add','POST',{word:w});
+  if(r?.ok){gereshWords.push(w);renderGeresh();document.getElementById('new-g').value='';toast('✅ נוסף!');}
 }
 
-async function savePrompt() {
-  const prompt = document.getElementById('gemini-prompt').value;
-  const r = await fetch(BASE_URL + '/api/settings/prompt', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({prompt})
-  });
-  showToast(r.ok ? '✅ פרומפט נשמר!' : '❌ שגיאה');
+async function rmGeresh(w){
+  const r=await api('/api/settings/geresh/remove','POST',{word:w});
+  if(r?.ok){gereshWords=gereshWords.filter(x=>x!==w);renderGeresh();toast('🗑️ הוסר');}
 }
 
-// Init
+async function savePrompt(){
+  const r=await api('/api/settings/prompt','POST',{prompt:document.getElementById('gm-prompt').value});
+  toast(r?.ok?'✅ פרומפט נשמר!':'❌ שגיאה');
+}
+
 loadDash();
 </script>
 </body>
@@ -1402,13 +733,31 @@ class Handler(BaseHTTPRequestHandler):
             self._json(get_ig_stats())
 
         elif path == '/api/users':
-            users = [{"id": uid, "role": role, "name": uid}
+            role_names = {"admin":"👑 מנהל","senior_editor":"✨ עורך ראשי","editor":"✏️ עורך"}
+            users = [{"id": uid, "role": role, "role_name": role_names.get(role, role)}
                     for uid, role in users_permissions.items()]
             self._json({"users": users, "count": len(users)})
 
         elif path == '/api/email':
             self._json({"active": email_system["active"],
                         "senders": email_system["allowed_senders"]})
+
+        elif path == '/api/users/add':
+            uid = str(body.get('user_id', '')).strip()
+            role = body.get('role', 'editor')
+            if uid and role in ('editor', 'senior_editor', 'admin'):
+                users_permissions[uid] = role
+                self._json({"ok": True})
+            else:
+                self._json({"ok": False, "error": "נתונים לא תקינים"})
+
+        elif path == '/api/users/remove':
+            uid = str(body.get('user_id', '')).strip()
+            if uid in users_permissions and uid != SUPER_ADMIN_ID:
+                del users_permissions[uid]
+                self._json({"ok": True})
+            else:
+                self._json({"ok": False, "error": "לא ניתן להסיר"})
 
         elif path == '/api/watermark':
             self._json({k: v for k, v in watermark_settings.items()
@@ -1428,6 +777,19 @@ class Handler(BaseHTTPRequestHandler):
                         "action": e.get("action","")}
                       for e in (activity_log[-50:] if activity_log else [])]
             self._json({"entries": list(reversed(entries))})
+
+        elif path == '/api/articles/top':
+            try:
+                r = requests.get(f"{WP_URL}/posts",
+                    params={"per_page": 5, "orderby": "date", "order": "desc",
+                            "_fields": "id,title,link,date"},
+                    auth=(WP_USER, WP_PASSWORD), timeout=10)
+                articles = r.json() if r.ok else []
+                result = [{"id": a["id"], "title": a["title"]["rendered"],
+                          "link": a["link"], "date": a["date"][:10]} for a in articles]
+                self._json({"articles": result})
+            except Exception as e:
+                self._json({"articles": [], "error": str(e)})
 
         elif path == '/api/articles/count':
             try:
@@ -1627,6 +989,7 @@ ADMIN_MENU = {
         [{"text": "✏️ עריכת כתבה"}, {"text": "🗑️ מחיקת כתבה"}],
         [{"text": "📋 כתבות אחרונות"}, {"text": "📝 טיוטות"}],
         [{"text": "📢 הפצת תוכן"}, {"text": "🎥 הפצת וידאו"}],
+        [{"text": "⚙️ פעולות נוספות"}],
     ],
     "resize_keyboard": True,
     "persistent": True
@@ -1639,6 +1002,7 @@ SENIOR_EDITOR_MENU = {
         [{"text": "✏️ עריכת כתבה"}, {"text": "🗑️ מחיקת כתבה"}],
         [{"text": "📋 כתבות אחרונות"}, {"text": "📝 טיוטות"}],
         [{"text": "📢 הפצת תוכן"}, {"text": "🎥 הפצת וידאו"}],
+        [{"text": "⚙️ פעולות נוספות"}],
     ],
     "resize_keyboard": True,
     "persistent": True
@@ -2839,6 +2203,23 @@ def handle_message(msg):
                 [{"text": "✏️ ערוך פרומפט Gemini", "callback_data": "edit_prompt"}]
             ]
         })
+        return
+
+    if text == "⚙️ פעולות נוספות" and is_editor(user_id):
+        keyboard = {"inline_keyboard": []}
+        if is_admin(user_id):
+            keyboard["inline_keyboard"] += [
+                [{"text": "👥 ניהול משתמשים", "callback_data": "mgmt_users"},
+                 {"text": "📊 לוג פעולות", "callback_data": "mgmt_log"}],
+                [{"text": "⚙️ הגדרות מערכת", "callback_data": "mgmt_settings"}],
+            ]
+        if is_senior_editor(user_id):
+            keyboard["inline_keyboard"] += [
+                [{"text": "📧 ניהול מייל", "callback_data": "mgmt_email"},
+                 {"text": "📈 אנליטיקס", "callback_data": "mgmt_analytics"}],
+                [{"text": "🌐 ניהול רשתות", "callback_data": "mgmt_networks"}],
+            ]
+        send_message(chat_id, "⚙️ <b>פעולות נוספות</b>", keyboard)
         return
 
     if text == "📢 הפצת תוכן" and is_editor(user_id):
@@ -4963,6 +4344,75 @@ def handle_callback(cb):
                 edit_message(chat_id, msg_id, f"❌ שגיאה: {e}")
 
         threading.Thread(target=_post_story, daemon=True).start()
+
+    elif cb_data == "mgmt_users":
+        # ניהול משתמשים
+        users_text = "👥 <b>ניהול משתמשים</b>\n\n"
+        for uid, role in users_permissions.items():
+            emoji = {"admin":"👑","senior_editor":"✨","editor":"✏️"}.get(role,"👤")
+            users_text += f"{emoji} <code>{uid}</code> – {role}\n"
+        send_message(chat_id, users_text, {
+            "inline_keyboard": [
+                [{"text": "➕ הוסף עורך", "callback_data": "add_editor"},
+                 {"text": "➕ הוסף עורך ראשי", "callback_data": "add_senior"}],
+                [{"text": "🚫 חסום משתמש", "callback_data": "block_user"}]
+            ]
+        })
+
+    elif cb_data == "mgmt_log":
+        log_text = "📊 <b>לוג פעולות אחרונות:</b>\n\n"
+        for entry in activity_log[-20:]:
+            log_text += f"🕐 {entry['time']} | {entry['username']}\n└ {entry['action']}\n\n"
+        send_message(chat_id, log_text or "אין פעולות עדיין.")
+
+    elif cb_data == "mgmt_settings":
+        words_list = "\n".join([f"• {w}" for w in GERESH_WORDS[:15]])
+        send_message(chat_id, f"⚙️ <b>הגדרות מערכת</b>\n\n<b>מילים עם גרש ({len(GERESH_WORDS)}):</b>\n{words_list}", {
+            "inline_keyboard": [
+                [{"text": "➕ הוסף מילה", "callback_data": "geresh_add"},
+                 {"text": "➖ הסר מילה", "callback_data": "geresh_remove"}],
+                [{"text": "✏️ ערוך פרומפט Gemini", "callback_data": "edit_prompt"}]
+            ]
+        })
+
+    elif cb_data == "mgmt_email":
+        send_message(chat_id, get_email_status(), {
+            "inline_keyboard": [
+                [{"text": "⏸️ השהה" if email_system["active"] else "▶️ הפעל", "callback_data": "email_toggle"},
+                 {"text": "🔄 בדוק עכשיו", "callback_data": "email_check_now"}],
+                [{"text": "⏱️ שנה תדירות", "callback_data": "email_change_interval"}],
+                [{"text": "➕ הוסף כתובת", "callback_data": "email_add_sender"},
+                 {"text": "➖ הסר כתובת", "callback_data": "email_remove_sender"}]
+            ]
+        })
+
+    elif cb_data == "mgmt_analytics":
+        send_message(chat_id, "⏳ מושך נתוני Analytics...")
+        def _load_analytics():
+            data = get_analytics_data()
+            if data:
+                msg = f"""📈 <b>Google Analytics – 7 ימים</b>
+
+🔵 סשנים: <b>{data.get('sessions','--')}</b>
+👤 משתמשים: <b>{data.get('users','--')}</b>
+👁 צפיות: <b>{data.get('views','--')}</b>"""
+                send_message(chat_id, msg)
+            else:
+                send_message(chat_id, "❌ לא הצלחתי למשוך נתונים.")
+        threading.Thread(target=_load_analytics, daemon=True).start()
+
+    elif cb_data == "mgmt_networks":
+        fb_ok = "✅" if os.environ.get("FB_PAGE_TOKEN") else "❌"
+        ig_ok = "✅" if os.environ.get("IG_USER_ID") else "❌"
+        send_message(chat_id, f"🌐 <b>ניהול רשתות</b>\n\n{fb_ok} פייסבוק\n{ig_ok} אינסטגרם", {
+            "inline_keyboard": [
+                [{"text": "📊 סטטיסטיקות פייסבוק", "callback_data": "social_stats_fb"},
+                 {"text": "📊 סטטיסטיקות אינסטגרם", "callback_data": "social_stats_ig"}],
+                [{"text": "🗑️ מחק פוסט פייסבוק", "callback_data": "social_delete_fb"},
+                 {"text": "📋 פוסטים אחרונים", "callback_data": "social_recent_posts"}],
+                [{"text": "🖼 הגדרות ווטרמארק", "callback_data": "watermark_settings"}]
+            ]
+        })
 
     elif cb_data == "watermark_settings":
         wm = watermark_settings
