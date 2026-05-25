@@ -44,6 +44,1246 @@ GERESH_WORDS = ['חב״ד', 'ל״ג', 'ת״ת', 'ע״י', 'ע״ה', 'ז״ל', '�
                 'ח״כ', 'יו״ר', 'מנכ״ל', 'סמנכ״ל', 'ח״מ', 'ת״א',
                 'פ״א', 'ר״ל', 'ח״ו', 'כ״ף', 'נ״ך']
 
+MINI_APP_HTML = """<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>עדכוני חב״ד · מרכז שליטה</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;600;700;800&display=swap');
+
+  :root {
+    --bg: #060818;
+    --surface: rgba(255,255,255,0.04);
+    --surface2: rgba(255,255,255,0.07);
+    --border: rgba(255,255,255,0.08);
+    --accent: #00d4ff;
+    --accent2: #7c3aed;
+    --accent3: #10b981;
+    --danger: #ef4444;
+    --warning: #f59e0b;
+    --text: #f0f4ff;
+    --text2: rgba(240,244,255,0.55);
+    --glow: 0 0 30px rgba(0,212,255,0.15);
+    --glow2: 0 0 30px rgba(124,58,237,0.2);
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+
+  body {
+    font-family: 'Assistant', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Animated background */
+  body::before {
+    content:'';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 80% 50% at 20% -10%, rgba(0,212,255,0.08) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 40% at 80% 110%, rgba(124,58,237,0.1) 0%, transparent 60%),
+      radial-gradient(ellipse 40% 30% at 50% 50%, rgba(16,185,129,0.04) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Grid pattern */
+  body::after {
+    content:'';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Header */
+  .header {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 100;
+    padding: 16px 20px 12px;
+    background: rgba(6,8,24,0.85);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .header-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .logo-icon {
+    width: 36px; height: 36px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    box-shadow: 0 0 20px rgba(0,212,255,0.3);
+  }
+
+  .logo-text {
+    font-size: 16px;
+    font-weight: 800;
+    background: linear-gradient(90deg, var(--accent), #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .logo-sub {
+    font-size: 11px;
+    color: var(--text2);
+    font-weight: 400;
+  }
+
+  .status-dot {
+    width: 8px; height: 8px;
+    background: var(--accent3);
+    border-radius: 50%;
+    box-shadow: 0 0 8px var(--accent3);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(0.8); }
+  }
+
+  /* Nav */
+  .nav {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    z-index: 100;
+    padding: 8px 16px calc(8px + env(safe-area-inset-bottom));
+    background: rgba(6,8,24,0.9);
+    backdrop-filter: blur(20px);
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-around;
+  }
+
+  .nav-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 12px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+    background: none;
+    color: var(--text2);
+    font-family: 'Assistant', sans-serif;
+    font-size: 10px;
+  }
+
+  .nav-btn.active {
+    color: var(--accent);
+    background: rgba(0,212,255,0.1);
+  }
+
+  .nav-btn .icon { font-size: 20px; }
+
+  /* Content */
+  .content {
+    position: relative;
+    z-index: 1;
+    padding: 80px 16px 100px;
+  }
+
+  /* Screens */
+  .screen { display: none; animation: fadeIn 0.3s ease; }
+  .screen.active { display: block; }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Cards */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 18px;
+    margin-bottom: 14px;
+    backdrop-filter: blur(10px);
+    transition: all 0.2s;
+  }
+
+  .card:active { transform: scale(0.99); background: var(--surface2); }
+
+  .card-glow {
+    box-shadow: var(--glow);
+    border-color: rgba(0,212,255,0.2);
+  }
+
+  .card-purple {
+    box-shadow: var(--glow2);
+    border-color: rgba(124,58,237,0.2);
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+
+  .card-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .card-icon {
+    font-size: 20px;
+  }
+
+  /* Stats row */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+    text-align: center;
+  }
+
+  .stat-value {
+    font-size: 26px;
+    font-weight: 800;
+    background: linear-gradient(135deg, var(--accent), #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .stat-label {
+    font-size: 11px;
+    color: var(--text2);
+    margin-top: 4px;
+  }
+
+  /* Badge */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .badge-green { background: rgba(16,185,129,0.15); color: var(--accent3); border: 1px solid rgba(16,185,129,0.3); }
+  .badge-blue { background: rgba(0,212,255,0.1); color: var(--accent); border: 1px solid rgba(0,212,255,0.2); }
+  .badge-red { background: rgba(239,68,68,0.1); color: var(--danger); border: 1px solid rgba(239,68,68,0.2); }
+  .badge-yellow { background: rgba(245,158,11,0.1); color: var(--warning); border: 1px solid rgba(245,158,11,0.2); }
+  .badge-purple { background: rgba(124,58,237,0.1); color: #a78bfa; border: 1px solid rgba(124,58,237,0.2); }
+
+  /* List items */
+  .list-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .list-item:last-child { border-bottom: none; }
+
+  .list-item-left { display: flex; align-items: center; gap: 12px; }
+  .list-item-avatar {
+    width: 38px; height: 38px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+  }
+
+  .list-item-title { font-size: 14px; font-weight: 600; }
+  .list-item-sub { font-size: 12px; color: var(--text2); margin-top: 2px; }
+
+  /* Toggle */
+  .toggle {
+    position: relative;
+    width: 46px; height: 26px;
+    cursor: pointer;
+  }
+  .toggle input { display: none; }
+  .toggle-track {
+    position: absolute;
+    inset: 0;
+    background: rgba(255,255,255,0.1);
+    border-radius: 13px;
+    transition: background 0.3s;
+    border: 1px solid var(--border);
+  }
+  .toggle input:checked + .toggle-track { background: var(--accent); border-color: var(--accent); }
+  .toggle-thumb {
+    position: absolute;
+    top: 3px; right: 3px;
+    width: 20px; height: 20px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.3s;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+  }
+  .toggle input:checked ~ .toggle-thumb { transform: translateX(-20px); }
+
+  /* Section title */
+  .section-title {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text2);
+    margin: 20px 0 10px;
+  }
+
+  /* Progress bar */
+  .progress-bar {
+    height: 4px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 8px;
+  }
+  .progress-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    transition: width 0.6s ease;
+  }
+
+  /* Chart */
+  .chart-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    height: 80px;
+    margin-top: 12px;
+  }
+  .chart-bar {
+    flex: 1;
+    border-radius: 4px 4px 0 0;
+    background: linear-gradient(180deg, var(--accent), rgba(0,212,255,0.2));
+    transition: height 0.6s ease;
+    min-height: 4px;
+  }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 20px;
+    border-radius: 12px;
+    font-family: 'Assistant', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+    width: 100%;
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    color: white;
+    box-shadow: 0 4px 20px rgba(0,212,255,0.25);
+  }
+  .btn-primary:active { transform: scale(0.97); }
+
+  .btn-danger {
+    background: rgba(239,68,68,0.1);
+    color: var(--danger);
+    border: 1px solid rgba(239,68,68,0.3);
+  }
+
+  .btn-ghost {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  /* Input */
+  .input-group { margin-bottom: 14px; }
+  .input-label { font-size: 12px; color: var(--text2); margin-bottom: 6px; display: block; }
+  .input {
+    width: 100%;
+    padding: 12px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    font-family: 'Assistant', sans-serif;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .input:focus { border-color: var(--accent); }
+
+  /* Color preview */
+  .color-swatch {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    border: 2px solid var(--border);
+    cursor: pointer;
+  }
+
+  /* Log entry */
+  .log-entry {
+    display: flex;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .log-entry:last-child { border-bottom: none; }
+  .log-time { font-size: 11px; color: var(--text2); white-space: nowrap; direction: ltr; }
+  .log-user { font-size: 13px; font-weight: 600; }
+  .log-action { font-size: 12px; color: var(--text2); margin-top: 2px; }
+
+  /* Glow line */
+  .glow-line {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    margin: 20px 0;
+    opacity: 0.4;
+  }
+
+  /* Email chip */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 4px 10px;
+    font-size: 12px;
+    margin: 4px;
+  }
+  .chip-remove {
+    color: var(--danger);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+  }
+
+  /* Floating elements */
+  .float-accent {
+    position: fixed;
+    width: 200px; height: 200px;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.04;
+    filter: blur(60px);
+  }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    bottom: 90px; left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: rgba(0,212,255,0.15);
+    border: 1px solid rgba(0,212,255,0.3);
+    backdrop-filter: blur(20px);
+    padding: 10px 20px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    opacity: 0;
+    transition: all 0.3s;
+    z-index: 200;
+    white-space: nowrap;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* Divider */
+  .divider { height: 1px; background: var(--border); margin: 14px 0; }
+
+  /* Page title */
+  .page-title {
+    font-size: 22px;
+    font-weight: 800;
+    margin-bottom: 4px;
+  }
+  .page-title span {
+    background: linear-gradient(90deg, var(--accent), #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .page-sub { font-size: 13px; color: var(--text2); margin-bottom: 20px; }
+
+  /* Network stat */
+  .network-stat {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .network-stat:last-child { border-bottom: none; }
+  .network-stat-icon { font-size: 22px; }
+  .network-stat-label { font-size: 13px; color: var(--text2); }
+  .network-stat-value { font-size: 16px; font-weight: 700; margin-right: auto; }
+
+  /* User row */
+  .user-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .user-row:last-child { border-bottom: none; }
+  .user-avatar {
+    width: 40px; height: 40px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    background: linear-gradient(135deg, rgba(0,212,255,0.2), rgba(124,58,237,0.2));
+    border: 1px solid rgba(0,212,255,0.2);
+  }
+  .user-info { flex: 1; }
+  .user-name { font-size: 14px; font-weight: 600; }
+  .user-id { font-size: 11px; color: var(--text2); direction: ltr; }
+
+  /* Shimmer loading */
+  .shimmer {
+    background: linear-gradient(90deg, var(--surface), var(--surface2), var(--surface));
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+    border-radius: 8px;
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Floating accents -->
+<div class="float-accent" style="top:-50px;right:-50px;background:var(--accent);"></div>
+<div class="float-accent" style="bottom:100px;left:-80px;background:var(--accent2);"></div>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-inner">
+    <div class="logo">
+      <div class="logo-icon">⚡</div>
+      <div>
+        <div class="logo-text">עדכוני חב״ד</div>
+        <div class="logo-sub">מרכז שליטה</div>
+      </div>
+    </div>
+    <div class="status-dot"></div>
+  </div>
+</div>
+
+<!-- Content -->
+<div class="content">
+
+  <!-- SCREEN: Dashboard -->
+  <div class="screen active" id="screen-dash">
+    <div class="page-title">שלום, <span>מנהל</span></div>
+    <div class="page-sub">סקירה מהירה של המערכת</div>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-value" id="stat-articles">--</div>
+        <div class="stat-label">📰 כתבות השבוע</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-users">--</div>
+        <div class="stat-label">👥 משתמשים פעילים</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-fb">--</div>
+        <div class="stat-label">📘 עוקבי פייסבוק</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-ig">--</div>
+        <div class="stat-label">📸 עוקבי אינסטגרם</div>
+      </div>
+    </div>
+
+    <div class="card card-glow">
+      <div class="card-header">
+        <div class="card-title">פעילות השבוע</div>
+        <span class="badge badge-green">● פעיל</span>
+      </div>
+      <div class="chart-bars" id="chart-bars">
+        <div class="chart-bar" style="height:40%"></div>
+        <div class="chart-bar" style="height:65%"></div>
+        <div class="chart-bar" style="height:30%"></div>
+        <div class="chart-bar" style="height:80%"></div>
+        <div class="chart-bar" style="height:55%"></div>
+        <div class="chart-bar" style="height:90%"></div>
+        <div class="chart-bar" style="height:70%"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:6px;">
+        <span style="font-size:10px;color:var(--text2)">א׳</span>
+        <span style="font-size:10px;color:var(--text2)">ב׳</span>
+        <span style="font-size:10px;color:var(--text2)">ג׳</span>
+        <span style="font-size:10px;color:var(--text2)">ד׳</span>
+        <span style="font-size:10px;color:var(--text2)">ה׳</span>
+        <span style="font-size:10px;color:var(--text2)">ו׳</span>
+        <span style="font-size:10px;color:var(--text2)">ש׳</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">סטטוס שירותים</div>
+      </div>
+      <div class="list-item">
+        <div class="list-item-left">
+          <div class="list-item-avatar" style="background:rgba(0,212,255,0.1)">🤖</div>
+          <div>
+            <div class="list-item-title">Gemini AI</div>
+            <div class="list-item-sub">עיבוד טקסט</div>
+          </div>
+        </div>
+        <span class="badge badge-green">פעיל</span>
+      </div>
+      <div class="list-item">
+        <div class="list-item-left">
+          <div class="list-item-avatar" style="background:rgba(124,58,237,0.1)">🎬</div>
+          <div>
+            <div class="list-item-title">Vimeo</div>
+            <div class="list-item-sub">אחסון וידאו</div>
+          </div>
+        </div>
+        <span class="badge badge-green">פעיל</span>
+      </div>
+      <div class="list-item">
+        <div class="list-item-left">
+          <div class="list-item-avatar" style="background:rgba(16,185,129,0.1)">📧</div>
+          <div>
+            <div class="list-item-title">ניטור מייל</div>
+            <div class="list-item-sub">בדיקה כל 30 דק׳</div>
+          </div>
+        </div>
+        <span class="badge badge-green" id="email-status-badge">פעיל</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREEN: Networks -->
+  <div class="screen" id="screen-networks">
+    <div class="page-title"><span>רשתות</span> חברתיות</div>
+    <div class="page-sub">סטטיסטיקות וניהול</div>
+
+    <div class="card card-glow">
+      <div class="card-header">
+        <div class="card-title">📘 פייסבוק</div>
+        <span class="badge badge-blue">מחובר</span>
+      </div>
+      <div class="network-stat">
+        <span class="network-stat-icon">👍</span>
+        <span class="network-stat-label">לייקים</span>
+        <span class="network-stat-value" id="fb-fans">טוען...</span>
+      </div>
+      <div class="network-stat">
+        <span class="network-stat-icon">👥</span>
+        <span class="network-stat-label">עוקבים</span>
+        <span class="network-stat-value" id="fb-followers">טוען...</span>
+      </div>
+      <div class="progress-bar"><div class="progress-fill" id="fb-progress" style="width:0%"></div></div>
+    </div>
+
+    <div class="card card-purple">
+      <div class="card-header">
+        <div class="card-title">📸 אינסטגרם</div>
+        <span class="badge badge-purple">מחובר</span>
+      </div>
+      <div class="network-stat">
+        <span class="network-stat-icon">👥</span>
+        <span class="network-stat-label">עוקבים</span>
+        <span class="network-stat-value" id="ig-followers">טוען...</span>
+      </div>
+      <div class="network-stat">
+        <span class="network-stat-icon">📸</span>
+        <span class="network-stat-label">פוסטים</span>
+        <span class="network-stat-value" id="ig-posts">טוען...</span>
+      </div>
+    </div>
+
+    <div class="section-title">הגדרות ווטרמארק</div>
+    <div class="card">
+      <div class="list-item">
+        <div class="list-item-left">
+          <div>
+            <div class="list-item-title">ווטרמארק</div>
+            <div class="list-item-sub" id="wm-text-preview">עדכוני חב״ד</div>
+          </div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="wm-toggle" checked onchange="sendToBot('wm_toggle','')">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div class="divider"></div>
+      <div class="input-group">
+        <label class="input-label">טקסט ווטרמארק</label>
+        <input class="input" id="wm-text-input" value="עדכוני חב״ד" placeholder="הכנס טקסט...">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+        <div class="input-group" style="margin:0">
+          <label class="input-label">צבע טקסט</label>
+          <div style="display:flex;align-items:center;gap:8px">
+            <input class="input" style="flex:1;padding:10px" id="wm-text-color" value="#FFFFFF" placeholder="#FFFFFF">
+            <div class="color-swatch" id="wm-text-swatch" style="background:#fff"></div>
+          </div>
+        </div>
+        <div class="input-group" style="margin:0">
+          <label class="input-label">צבע רקע</label>
+          <div style="display:flex;align-items:center;gap:8px">
+            <input class="input" style="flex:1;padding:10px" id="wm-bg-color" value="#000000" placeholder="#000000">
+            <div class="color-swatch" id="wm-bg-swatch" style="background:#000"></div>
+          </div>
+        </div>
+      </div>
+      <div class="input-group">
+        <label class="input-label">גודל גופן: <span id="wm-size-label">40</span>px</label>
+        <input type="range" min="16" max="120" value="40" id="wm-size-range"
+          style="width:100%;accent-color:var(--accent)"
+          oninput="document.getElementById('wm-size-label').textContent=this.value">
+      </div>
+      <button class="btn btn-primary" onclick="saveWatermark()">💾 שמור הגדרות</button>
+    </div>
+  </div>
+
+  <!-- SCREEN: Settings -->
+  <div class="screen" id="screen-settings">
+    <div class="page-title"><span>הגדרות</span> מערכת</div>
+    <div class="page-sub">גרשיים ופרומפט AI</div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">✳️ מילים עם גרש</div>
+        <span class="badge badge-blue" id="geresh-count">טוען...</span>
+      </div>
+      <div id="geresh-chips" style="display:flex;flex-wrap:wrap;margin-bottom:12px">
+        <div class="shimmer" style="width:100%;height:60px;"></div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <input class="input" id="new-geresh" placeholder='הוסף מילה (כמו חב"ד)' style="flex:1">
+        <button class="btn btn-primary" style="width:auto;padding:12px 16px" onclick="addGeresh()">+</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">🤖 פרומפט Gemini</div>
+        <span class="badge badge-yellow">מותאם אישית</span>
+      </div>
+      <textarea class="input" id="gemini-prompt" rows="8" placeholder="הכנס פרומפט..." style="resize:none;line-height:1.5"></textarea>
+      <div style="margin-top:10px">
+        <button class="btn btn-primary" onclick="savePrompt()">💾 שמור פרומפט</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREEN: Log -->
+  <div class="screen" id="screen-log">
+    <div class="page-title"><span>לוג</span> פעולות</div>
+    <div class="page-sub">היסטוריית פעילות</div>
+
+    <div class="card">
+      <div id="log-entries">
+        <div class="shimmer" style="width:100%;height:200px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREEN: Analytics -->
+  <div class="screen" id="screen-analytics">
+    <div class="page-title"><span>אנליטיקס</span></div>
+    <div class="page-sub">Google Analytics 4</div>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-value" id="ga-sessions">--</div>
+        <div class="stat-label">🔵 סשנים</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="ga-users">--</div>
+        <div class="stat-label">👤 משתמשים</div>
+      </div>
+      <div class="stat-card" style="grid-column:span 2">
+        <div class="stat-value" id="ga-views">--</div>
+        <div class="stat-label">👁️ צפיות דף</div>
+      </div>
+    </div>
+
+    <div class="card card-glow">
+      <div class="card-header">
+        <div class="card-title">כתבות מובילות</div>
+        <span class="badge badge-blue">7 ימים</span>
+      </div>
+      <div id="top-articles">
+        <div class="shimmer" style="width:100%;height:150px;"></div>
+      </div>
+    </div>
+
+    <button class="btn btn-ghost" onclick="loadAnalytics()">🔄 רענן נתונים</button>
+  </div>
+
+  <!-- SCREEN: Users -->
+  <div class="screen" id="screen-users">
+    <div class="page-title"><span>ניהול</span> משתמשים</div>
+    <div class="page-sub">הרשאות וגישה</div>
+
+    <div class="card">
+      <div id="users-list">
+        <div class="shimmer" style="width:100%;height:200px;"></div>
+      </div>
+    </div>
+
+    <div class="section-title">ניהול מייל</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">📧 כתובות מורשות</div>
+        <label class="toggle">
+          <input type="checkbox" id="email-active" checked onchange="toggleEmail()">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div id="email-chips" style="margin-bottom:12px">
+        <div class="shimmer" style="width:100%;height:50px;"></div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <input class="input" id="new-email" placeholder="הוסף כתובת מייל" type="email" style="flex:1">
+        <button class="btn btn-primary" style="width:auto;padding:12px 16px" onclick="addEmail()">+</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Nav -->
+<nav class="nav">
+  <button class="nav-btn active" onclick="showScreen('dash',this)">
+    <span class="icon">🏠</span>
+    <span>בית</span>
+  </button>
+  <button class="nav-btn" onclick="showScreen('networks',this)">
+    <span class="icon">🌐</span>
+    <span>רשתות</span>
+  </button>
+  <button class="nav-btn" onclick="showScreen('analytics',this)">
+    <span class="icon">📊</span>
+    <span>אנליטיקס</span>
+  </button>
+  <button class="nav-btn" onclick="showScreen('log',this)">
+    <span class="icon">📋</span>
+    <span>לוג</span>
+  </button>
+  <button class="nav-btn" onclick="showScreen('users',this)">
+    <span class="icon">👥</span>
+    <span>משתמשים</span>
+  </button>
+  <button class="nav-btn" onclick="showScreen('settings',this)">
+    <span class="icon">⚙️</span>
+    <span>הגדרות</span>
+  </button>
+</nav>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// Telegram Web App init
+const tg = window.Telegram?.WebApp;
+if (tg) {
+  tg.ready();
+  tg.expand();
+}
+
+const BASE_URL = window.location.origin;
+
+// Navigation
+function showScreen(id, btn) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('screen-' + id).classList.add('active');
+  btn.classList.add('active');
+  // Load data on first visit
+  const loaders = {
+    'networks': loadNetworks,
+    'log': loadLog,
+    'analytics': loadAnalytics,
+    'users': loadUsers,
+    'settings': loadSettings,
+    'dash': loadDash,
+  };
+  if (loaders[id]) loaders[id]();
+}
+
+// Toast
+function showToast(msg, duration=2500) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), duration);
+}
+
+// API calls to bot
+async function api(path) {
+  try {
+    const r = await fetch(BASE_URL + path);
+    return await r.json();
+  } catch(e) {
+    return null;
+  }
+}
+
+// Send action to bot via Telegram
+function sendToBot(action, data) {
+  if (tg) {
+    tg.sendData(JSON.stringify({action, data}));
+  }
+}
+
+// Format numbers
+function fmt(n) {
+  if (!n && n !== 0) return '--';
+  if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n/1000).toFixed(1) + 'K';
+  return n.toString();
+}
+
+// Load Dashboard
+async function loadDash() {
+  // Load FB stats
+  const fb = await api('/api/stats/facebook');
+  if (fb) {
+    document.getElementById('stat-fb').textContent = fmt(fb.followers_count || fb.fan_count);
+  }
+  // Load IG stats
+  const ig = await api('/api/stats/instagram');
+  if (ig) {
+    document.getElementById('stat-ig').textContent = fmt(ig.followers_count);
+  }
+  // Load users
+  const users = await api('/api/users');
+  if (users) {
+    document.getElementById('stat-users').textContent = users.count || '--';
+  }
+  // Articles
+  const articles = await api('/api/articles/count');
+  if (articles) {
+    document.getElementById('stat-articles').textContent = articles.count || '--';
+  }
+  // Animate chart
+  setTimeout(() => {
+    const bars = document.querySelectorAll('.chart-bar');
+    bars.forEach((b, i) => {
+      setTimeout(() => {
+        b.style.height = b.style.height; // trigger repaint
+      }, i * 80);
+    });
+  }, 300);
+}
+
+// Load Networks
+async function loadNetworks() {
+  const fb = await api('/api/stats/facebook');
+  if (fb) {
+    document.getElementById('fb-fans').textContent = fmt(fb.fan_count);
+    document.getElementById('fb-followers').textContent = fmt(fb.followers_count);
+    const pct = fb.fan_count ? Math.min(100, Math.floor(fb.fan_count / 10000 * 100)) : 0;
+    document.getElementById('fb-progress').style.width = pct + '%';
+    document.getElementById('stat-fb').textContent = fmt(fb.followers_count || fb.fan_count);
+  } else {
+    document.getElementById('fb-fans').textContent = 'שגיאה';
+    document.getElementById('fb-followers').textContent = 'שגיאה';
+  }
+
+  const ig = await api('/api/stats/instagram');
+  if (ig) {
+    document.getElementById('ig-followers').textContent = fmt(ig.followers_count);
+    document.getElementById('ig-posts').textContent = fmt(ig.media_count);
+    document.getElementById('stat-ig').textContent = fmt(ig.followers_count);
+  }
+
+  // Load watermark settings
+  const wm = await api('/api/watermark');
+  if (wm) {
+    document.getElementById('wm-toggle').checked = wm.enabled;
+    document.getElementById('wm-text-input').value = wm.text || '';
+    document.getElementById('wm-text-preview').textContent = wm.text || '';
+    document.getElementById('wm-text-color').value = wm.text_color || '#FFFFFF';
+    document.getElementById('wm-bg-color').value = wm.bg_color !== 'none' ? wm.bg_color : '#000000';
+    document.getElementById('wm-size-range').value = wm.font_size || 40;
+    document.getElementById('wm-size-label').textContent = wm.font_size || 40;
+    updateColorSwatches();
+  }
+}
+
+function updateColorSwatches() {
+  const tc = document.getElementById('wm-text-color').value;
+  const bc = document.getElementById('wm-bg-color').value;
+  document.getElementById('wm-text-swatch').style.background = tc;
+  document.getElementById('wm-bg-swatch').style.background = bc;
+}
+
+document.addEventListener('input', e => {
+  if (e.target.id === 'wm-text-color' || e.target.id === 'wm-bg-color') updateColorSwatches();
+});
+
+async function saveWatermark() {
+  const settings = {
+    enabled: document.getElementById('wm-toggle').checked,
+    text: document.getElementById('wm-text-input').value,
+    text_color: document.getElementById('wm-text-color').value,
+    bg_color: document.getElementById('wm-bg-color').value,
+    font_size: parseInt(document.getElementById('wm-size-range').value),
+  };
+  const r = await fetch(BASE_URL + '/api/watermark', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(settings)
+  });
+  if (r.ok) {
+    showToast('✅ הגדרות הווטרמארק נשמרו!');
+    document.getElementById('wm-text-preview').textContent = settings.text;
+  } else {
+    showToast('❌ שגיאה בשמירה');
+  }
+}
+
+// Load Log
+async function loadLog() {
+  const log = await api('/api/log');
+  const el = document.getElementById('log-entries');
+  if (!log || !log.entries?.length) {
+    el.innerHTML = '<div style="text-align:center;color:var(--text2);padding:20px">אין פעולות עדיין</div>';
+    return;
+  }
+  el.innerHTML = log.entries.slice(0,50).map(e => `
+    <div class="log-entry">
+      <div style="flex:1">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div class="log-user">👤 ${e.user || 'לא ידוע'}</div>
+          <div class="log-time">${e.time || ''}</div>
+        </div>
+        <div class="log-action">${e.action || ''}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// Load Analytics
+async function loadAnalytics() {
+  const data = await api('/api/analytics');
+  if (!data) {
+    document.getElementById('ga-sessions').textContent = '--';
+    return;
+  }
+  document.getElementById('ga-sessions').textContent = fmt(data.sessions);
+  document.getElementById('ga-users').textContent = fmt(data.users);
+  document.getElementById('ga-views').textContent = fmt(data.views);
+
+  const el = document.getElementById('top-articles');
+  if (data.articles?.length) {
+    el.innerHTML = data.articles.map((a, i) => `
+      <div class="list-item">
+        <div class="list-item-left">
+          <div class="list-item-avatar" style="background:rgba(0,212,255,0.1);font-size:14px;font-weight:800;color:var(--accent)">${i+1}</div>
+          <div>
+            <div class="list-item-title">${a.title}</div>
+            <div class="list-item-sub">${fmt(a.views)} צפיות</div>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  }
+}
+
+// Load Users
+async function loadUsers() {
+  const data = await api('/api/users');
+  const el = document.getElementById('users-list');
+  if (!data?.users?.length) {
+    el.innerHTML = '<div style="text-align:center;color:var(--text2);padding:20px">אין משתמשים</div>';
+  } else {
+    const roleMap = {admin:'👑 מנהל', senior_editor:'✨ עורך ראשי', editor:'✏️ עורך'};
+    const badgeMap = {admin:'badge-yellow', senior_editor:'badge-purple', editor:'badge-blue'};
+    el.innerHTML = data.users.map(u => `
+      <div class="user-row">
+        <div class="user-avatar">${u.role==='admin'?'👑':u.role==='senior_editor'?'✨':'✏️'}</div>
+        <div class="user-info">
+          <div class="user-name">${u.name || u.id}</div>
+          <div class="user-id">${u.id}</div>
+        </div>
+        <span class="badge ${badgeMap[u.role]||'badge-blue'}">${roleMap[u.role]||u.role}</span>
+      </div>
+    `).join('');
+  }
+
+  // Load emails
+  const emailData = await api('/api/email');
+  if (emailData) {
+    document.getElementById('email-active').checked = emailData.active;
+    renderEmailChips(emailData.senders || []);
+  }
+}
+
+let emailList = [];
+function renderEmailChips(emails) {
+  emailList = emails;
+  const el = document.getElementById('email-chips');
+  if (!emails.length) {
+    el.innerHTML = '<div style="color:var(--text2);font-size:12px">אין כתובות מורשות</div>';
+    return;
+  }
+  el.innerHTML = emails.map(e => `
+    <span class="chip">📧 ${e}<span class="chip-remove" onclick="removeEmail('${e}')">×</span></span>
+  `).join('');
+}
+
+async function addEmail() {
+  const input = document.getElementById('new-email');
+  const email = input.value.trim();
+  if (!email || !email.includes('@')) { showToast('⚠️ כתובת לא תקינה'); return; }
+  const r = await fetch(BASE_URL + '/api/email/add', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({email})
+  });
+  if (r.ok) {
+    emailList.push(email);
+    renderEmailChips(emailList);
+    input.value = '';
+    showToast('✅ כתובת נוספה!');
+  }
+}
+
+async function removeEmail(email) {
+  const r = await fetch(BASE_URL + '/api/email/remove', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({email})
+  });
+  if (r.ok) {
+    emailList = emailList.filter(e => e !== email);
+    renderEmailChips(emailList);
+    showToast('🗑️ כתובת הוסרה');
+  }
+}
+
+async function toggleEmail() {
+  await fetch(BASE_URL + '/api/email/toggle', {method:'POST'});
+}
+
+// Load Settings
+async function loadSettings() {
+  const data = await api('/api/settings');
+  if (!data) return;
+
+  // Geresh words
+  const words = data.geresh_words || [];
+  document.getElementById('geresh-count').textContent = words.length + ' מילים';
+  renderGereshChips(words);
+
+  // Prompt
+  if (data.prompt) {
+    document.getElementById('gemini-prompt').value = data.prompt;
+  }
+}
+
+let gereshWords = [];
+function renderGereshChips(words) {
+  gereshWords = words;
+  document.getElementById('geresh-chips').innerHTML = words.map(w => `
+    <span class="chip">✳️ ${w}<span class="chip-remove" onclick="removeGeresh('${w}')">×</span></span>
+  `).join('');
+  document.getElementById('geresh-count').textContent = words.length + ' מילים';
+}
+
+async function addGeresh() {
+  const input = document.getElementById('new-geresh');
+  const word = input.value.trim();
+  if (!word) return;
+  const r = await fetch(BASE_URL + '/api/settings/geresh/add', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({word})
+  });
+  if (r.ok) {
+    gereshWords.push(word);
+    renderGereshChips(gereshWords);
+    input.value = '';
+    showToast('✅ מילה נוספה!');
+  }
+}
+
+async function removeGeresh(word) {
+  const r = await fetch(BASE_URL + '/api/settings/geresh/remove', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({word})
+  });
+  if (r.ok) {
+    gereshWords = gereshWords.filter(w => w !== word);
+    renderGereshChips(gereshWords);
+    showToast('🗑️ מילה הוסרה');
+  }
+}
+
+async function savePrompt() {
+  const prompt = document.getElementById('gemini-prompt').value;
+  const r = await fetch(BASE_URL + '/api/settings/prompt', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({prompt})
+  });
+  showToast(r.ok ? '✅ פרומפט נשמר!' : '❌ שגיאה');
+}
+
+// Init
+loadDash();
+</script>
+</body>
+</html>
+"""
+
+
 # ─── הגדרות ווטרמארק ────────────────────────────────────────
 watermark_settings = {
     "enabled": True,
@@ -148,18 +1388,12 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split('?')[0]
 
         if path == '/app':
-            # Mini App HTML
-            try:
-                with open('/home/claude/miniapp.html', 'rb') as f:
-                    content = f.read()
-                self.send_response(200)
-                self.send_header('Content-Type', 'text/html; charset=utf-8')
-                self.send_header('Content-Length', len(content))
-                self.end_headers()
-                self.wfile.write(content)
-            except:
-                self.send_response(404)
-                self.end_headers()
+            content_bytes = MINI_APP_HTML.encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', len(content_bytes))
+            self.end_headers()
+            self.wfile.write(content_bytes)
 
         elif path == '/api/stats/facebook':
             self._json(get_fb_stats())
