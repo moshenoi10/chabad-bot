@@ -252,6 +252,50 @@ def edit_message(chat_id, message_id, text, reply_markup=None):
     except Exception as e:
         print(f"שגיאה edit_message: {e}", flush=True)
 
+def send_status(chat_id, text):
+    """שולח הודעת סטטוס ומחזיר message_id לעדכונים עתידיים"""
+    try:
+        resp = requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            timeout=10
+        )
+        if resp.ok:
+            return resp.json().get("result", {}).get("message_id")
+    except Exception as e:
+        print(f"שגיאה send_status: {e}", flush=True)
+    return None
+
+def progress_bar(current, total, width=10):
+    """בונה פס התקדמות: ██████░░░░ 60%"""
+    pct = int(current / total * 100) if total > 0 else 0
+    filled = int(width * current / total) if total > 0 else 0
+    bar = "█" * filled + "░" * (width - filled)
+    return f"{bar} {pct}%"
+
+def loading_dots(step):
+    """מחזיר נקודות זזות לפי שלב"""
+    return "." * ((step % 3) + 1)
+
+# אייקונים קבועים לפעולות
+ICONS = {
+    "loading": "⏳",
+    "success": "✅",
+    "error": "❌",
+    "warning": "⚠️",
+    "upload": "📤",
+    "publish": "🚀",
+    "ai": "🤖",
+    "facebook": "📘",
+    "instagram": "📸",
+    "story": "📱",
+    "video": "🎬",
+    "image": "🖼",
+    "pdf": "📄",
+    "stats": "📊",
+    "refresh": "🔄",
+}
+
 def send_message(chat_id, text, reply_markup=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
@@ -380,8 +424,10 @@ def upload_to_vimeo(video_bytes, title="סרטון חדש", chat_id=None):
         size_mb = size // 1024 // 1024
         print(f"מתחיל העלאה ל-Vimeo: {size_mb}MB", flush=True)
 
-        if chat_id and size_mb > 10:
-            send_message(chat_id, f"⏳ מעלה סרטון ל-Vimeo ({size_mb}MB)...\nזה עשוי לקחת כמה דקות.")
+        # שלח הודעת סטטוס אחת ועדכן אותה
+        msg_id = None
+        if chat_id:
+            msg_id = send_status(chat_id, f"🎬 <b>מתחיל העלאה ל-Vimeo</b>\n📦 גודל: {size_mb}MB\n\n{progress_bar(0, 100)} ⏳")
 
         create_resp = requests.post(
             "https://api.vimeo.com/me/videos",
@@ -395,16 +441,18 @@ def upload_to_vimeo(video_bytes, title="סרטון חדש", chat_id=None):
         )
         if create_resp.status_code != 200:
             print(f"שגיאה יצירת Vimeo: {create_resp.text[:200]}", flush=True)
+            if msg_id:
+                edit_message(chat_id, msg_id, "❌ שגיאה ביצירת הסרטון ב-Vimeo")
             return None, None
 
         upload_link = create_resp.json()["upload"]["upload_link"]
         video_uri = create_resp.json()["uri"]
         video_id = video_uri.split("/")[-1]
 
-        chunk_size = 5 * 1024 * 1024  # 5MB chunks
+        chunk_size = 5 * 1024 * 1024
         offset = 0
         start_time = time.time()
-        last_update = 0
+        last_pct = 0
 
         while offset < size:
             chunk = video_bytes[offset:offset + chunk_size]
@@ -421,32 +469,43 @@ def upload_to_vimeo(video_bytes, title="סרטון חדש", chat_id=None):
             )
             if chunk_resp.status_code not in (204, 200):
                 print(f"שגיאה chunk Vimeo: {chunk_resp.status_code}", flush=True)
+                if msg_id:
+                    edit_message(chat_id, msg_id, "❌ שגיאה בהעלאה")
                 return None, None
 
             offset += len(chunk)
             elapsed = time.time() - start_time
-            progress = offset / size
-            
-            # שלח עדכון כל 20% או כל 30 שניות
-            if chat_id and size_mb > 10:
-                should_update = (progress - last_update >= 0.2) or (elapsed - last_update * elapsed >= 30)
-                if progress - last_update >= 0.19:
-                    last_update = progress
-                    remaining = (elapsed / progress * (1 - progress)) if progress > 0 else 0
-                    mins = int(remaining // 60)
-                    secs = int(remaining % 60)
-                    time_str = f"{mins}:{secs:02d} דקות" if mins > 0 else f"{secs} שניות"
-                    pct = int(progress * 100)
-                    bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
-                    send_message(chat_id, f"📤 מעלה ל-Vimeo: {pct}%\n{bar}\n⏱ זמן משוער: {time_str}")
+            pct = int(offset / size * 100)
+            print(f"Vimeo: {offset//1024//1024}MB / {size_mb}MB ({pct}%)", flush=True)
 
-            print(f"Vimeo: {offset//1024//1024}MB / {size_mb}MB ({int(progress*100)}%)", flush=True)
+            # עדכן כל 10%
+            if chat_id and msg_id and pct >= last_pct + 10:
+                last_pct = pct
+                remaining = (elapsed / pct * (100 - pct)) if pct > 0 else 0
+                mins = int(remaining // 60)
+                secs = int(remaining % 60)
+                time_str = f"{mins}:{secs:02d} דק׳" if mins > 0 else f"{secs} שנ׳"
+                edit_message(chat_id, msg_id,
+                    f"🎬 <b>מעלה ל-Vimeo...</b>\n\n"
+                    f"{progress_bar(pct, 100)}\n\n"
+                    f"📦 {offset//1024//1024}MB / {size_mb}MB\n"
+                    f"⏱ נותר: {time_str}"
+                )
 
         total_time = int(time.time() - start_time)
         mins = total_time // 60
         secs = total_time % 60
-        time_str = f"{mins}:{secs:02d}" if mins > 0 else f"{secs} שניות"
+        time_str = f"{mins}:{secs:02d}" if mins > 0 else f"{secs} שנ׳"
         print(f"✅ Vimeo {video_id} הועלה ב-{time_str}!", flush=True)
+
+        if chat_id and msg_id:
+            edit_message(chat_id, msg_id,
+                f"✅ <b>Vimeo הועלה בהצלחה!</b>\n\n"
+                f"{progress_bar(100, 100)}\n\n"
+                f"⏱ זמן: {time_str}\n"
+                f"🔗 vimeo.com/{video_id}"
+            )
+
         return f"https://vimeo.com/{video_id}", video_id
 
     except Exception as e:
@@ -1176,35 +1235,38 @@ def handle_drive_link(chat_id, user_id, url, draft):
     def _download():
         drive_id, drive_type = extract_drive_id(url)
         if not drive_id:
-            send_message(chat_id, "❌ לא זיהיתי לינק Google Drive תקין.")
+            send_message(chat_id, "⚠️ <b>לינק לא תקין</b>\n\nשלח לינק תקין מ-Google Drive.")
             return
 
         if drive_type == "file":
-            send_message(chat_id, "⏳ מוריד קובץ מ-Drive...")
+            send_message(chat_id, "☁️ <b>מוריד מ-Drive...</b>")
             content = download_drive_file(drive_id)
             if content:
                 draft.setdefault("gallery", []).append(content)
                 send_message(chat_id, f"✅ קובץ הורד! ({len(draft['gallery'])} תמונות)\n\nשלח עוד או /done:")
             else:
-                send_message(chat_id, "❌ לא הצלחתי להוריד. וודא שהקובץ פתוח לצפייה.")
+                send_message(chat_id, "⚠️ <b>שגיאת הורדה</b>\n\nוודא שהקובץ פתוח לצפייה ונסה שוב.")
 
         elif drive_type == "folder":
-            send_message(chat_id, "⏳ סורק תיקייה ב-Drive...")
+            msg_id = send_status(chat_id, "🔍 <b>סורק תיקייה ב-Drive...</b>")
             images, videos = list_drive_folder(drive_id)
             if not images:
-                send_message(chat_id, "❌ לא נמצאו תמונות בתיקייה.")
+                edit_message(chat_id, msg_id, "📭 לא נמצאו תמונות בתיקייה.")
                 return
-            send_message(chat_id, f"📁 נמצאו {len(images)} תמונות. מוריד...")
+            edit_message(chat_id, msg_id, f"📁 נמצאו <b>{len(images)}</b> תמונות\n\n{progress_bar(0, len(images))}")
             count = 0
             for i, img in enumerate(images):
                 content = download_drive_file(img["id"])
                 if content:
                     draft.setdefault("gallery", []).append(content)
                     count += 1
-                # הודעת התקדמות כל 10 תמונות
-                if (i + 1) % 10 == 0:
-                    send_message(chat_id, f"⏳ הורדתי {count}/{len(images)} תמונות...")
-            send_message(chat_id, f"✅ {count} תמונות הורדו!\n\nשלח עוד או /done:")
+                if (i + 1) % 5 == 0 or i == len(images) - 1:
+                    edit_message(chat_id, msg_id,
+                        f"☁️ <b>מוריד מ-Drive...</b>\n\n"
+                        f"{progress_bar(i+1, len(images))}\n"
+                        f"📸 {count}/{len(images)} תמונות"
+                    )
+            edit_message(chat_id, msg_id, f"✅ <b>{count} תמונות הורדו!</b>\n\nשלח עוד או /done:")
 
     t = threading.Thread(target=_download, daemon=True)
     t.start()
@@ -1238,7 +1300,7 @@ def handle_message(msg):
     perm = get_permission(user_id)
 
     if perm == "blocked":
-        send_message(chat_id, "❌ הגישה שלך חסומה.")
+        send_message(chat_id, "🚫 <b>הגישה חסומה</b>\n\nצור קשר עם המנהל.")
         return
 
     if perm is None:
@@ -1255,7 +1317,7 @@ def handle_message(msg):
     if text.startswith("/approve_") and is_admin(user_id):
         target_id = text.replace("/approve_", "")
         users_permissions[target_id] = "editor"
-        send_message(chat_id, f"✅ משתמש {target_id} אושר כעורך!")
+        send_message(chat_id, f"✅ <b>גישה אושרה!</b>\n\n👤 משתמש {target_id} הוגדר כ<b>עורך</b>")
         send_message(int(target_id), "✅ הגישה שלך אושרה! שלח /start להתחיל.", EDITOR_MENU)
         log_action(user_id, username, f"אישור עורך {target_id}")
         return
@@ -1263,7 +1325,7 @@ def handle_message(msg):
     if text.startswith("/approvesenior_") and is_admin(user_id):
         target_id = text.replace("/approvesenior_", "")
         users_permissions[target_id] = "senior_editor"
-        send_message(chat_id, f"✅ משתמש {target_id} אושר כעורך ראשי!")
+        send_message(chat_id, f"✅ <b>גישה אושרה!</b>\n\n✨ משתמש {target_id} הוגדר כ<b>עורך ראשי</b>")
         send_message(int(target_id), "✅ הגישה שלך אושרה כעורך ראשי! שלח /start להתחיל.", SENIOR_EDITOR_MENU)
         log_action(user_id, username, f"אישור עורך ראשי {target_id}")
         return
@@ -1278,7 +1340,7 @@ def handle_message(msg):
     if text.startswith("/makeadmin_") and user_id == SUPER_ADMIN_ID:
         target_id = text.replace("/makeadmin_", "")
         users_permissions[target_id] = "admin"
-        send_message(chat_id, f"✅ משתמש {target_id} הוגדר כמנהל!")
+        send_message(chat_id, f"✅ <b>גישה אושרה!</b>\n\n👑 משתמש {target_id} הוגדר כ<b>מנהל</b>")
         return
 
     if text == "👥 ניהול משתמשים" and is_admin(user_id):
@@ -1321,7 +1383,7 @@ def handle_message(msg):
         return
 
     if step == "analytics_page_input" and is_senior_editor(user_id):
-        send_message(chat_id, "⏳ מושך נתונים...")
+        send_message(chat_id, "📊 <b>מושך נתונים...</b>")
         send_message(chat_id, "לאיזה תקופה?", {
             "inline_keyboard": [
                 [{"text": "24 שעות", "callback_data": f"analytics_page_1_{text}"},
@@ -1421,7 +1483,7 @@ def handle_message(msg):
                 posts = r.json()
                 post_id = str(posts[0]["id"]) if posts else None
             if post_id:
-                send_message(chat_id, "⏳ מעלה תמונות...")
+                send_message(chat_id, "📤 <b>מעלה תמונות...</b>")
                 image_urls = []
                 for img_bytes in pending.get("images", []):
                     img_id, img_url = upload_image_to_wp(img_bytes, "email_img.jpg")
@@ -1431,7 +1493,7 @@ def handle_message(msg):
                     add_images_to_post(post_id, image_urls)
                     send_message(chat_id, f"✅ {len(image_urls)} תמונות נוספו!", get_menu(user_id))
                 else:
-                    send_message(chat_id, "❌ לא הצלחתי להעלות תמונות.")
+                    send_message(chat_id, "⚠️ <b>שגיאת העלאה</b>\n\nלא הצלחתי להעלות תמונות.")
             email_system["pending_email"] = {}
         draft["step"] = "idle"
         return
@@ -1439,10 +1501,13 @@ def handle_message(msg):
     if text in ("/start", "/new", "✍️ כתבה חדשה"):
         if text == "/start":
             menu = get_menu(user_id)
-            send_message(chat_id, "שלום! 👋 בחר פעולה:", menu)
+            perm = get_permission(user_id)
+            perm_emoji = {"admin": "👑", "senior_editor": "✨", "editor": "✏️"}.get(perm, "👤")
+            name = f"{perm_emoji} <b>עדכוני חב״ד</b>"
+            send_message(chat_id, f"{name}\n\nברוך הבא! בחר פעולה מהתפריט:", menu)
             return
         if not is_editor(user_id):
-            send_message(chat_id, "❌ אין לך הרשאה.")
+            send_message(chat_id, "⛔ <b>אין הרשאה</b>\n\nפנה למנהל המערכת.")
             return
         drafts[user_id] = {"step": "title", "gallery": []}
         send_message(chat_id, "📝 <b>כתבה חדשה</b>\n\nשלח את <b>כותרת</b> הכתבה:")
@@ -1450,7 +1515,7 @@ def handle_message(msg):
 
     if text in ("/smart", "🤖 העלאה חכמה"):
         if not is_senior_editor(user_id):
-            send_message(chat_id, "❌ אין לך הרשאה להעלאה חכמה.")
+            send_message(chat_id, "⛔ <b>אין הרשאה</b>\n\nנדרשת הרשאת עורך.")
             return
         drafts[user_id] = {"step": "smart_text", "gallery": []}
         send_message(chat_id, "🤖 <b>העלאה חכמה</b>\n\nשלח את הטקסט הגולמי של הכתבה:")
@@ -1482,7 +1547,7 @@ def handle_message(msg):
                 msg_text += f"• <a href='{p['link']}'>{p['title']['rendered']}</a>\n"
             send_message(chat_id, msg_text, get_menu(user_id))
         else:
-            send_message(chat_id, "❌ לא נמצאו כתבות.", get_menu(user_id))
+            send_message(chat_id, "📭 <b>אין כתבות</b>\n\nלא נמצאו כתבות במערכת.", get_menu(user_id))
         return
 
     if text == "📝 טיוטות":
@@ -1508,7 +1573,7 @@ def handle_message(msg):
 
     if text in ("/edit", "✏️ עריכת כתבה"):
         if not is_admin(user_id):
-            send_message(chat_id, "❌ אין לך הרשאה לערוך כתבות.")
+            send_message(chat_id, "⛔ <b>אין הרשאה</b>\n\nנדרשת הרשאת עורך.")
             return
         drafts[user_id] = {"step": "edit_url", "gallery": []}
         send_message(chat_id, "✏️ <b>עריכת כתבה</b>\n\nשלח את ה-URL של הכתבה:")
@@ -1516,7 +1581,7 @@ def handle_message(msg):
 
     if text in ("/delete", "🗑️ מחיקת כתבה"):
         if not is_senior_editor(user_id):
-            send_message(chat_id, "❌ אין לך הרשאה למחוק כתבות.")
+            send_message(chat_id, "⛔ <b>אין הרשאה</b>\n\nנדרשת הרשאת עורך ראשי.")
             return
         drafts[user_id] = {"step": "delete_url", "gallery": []}
         send_message(chat_id, "🗑️ <b>מחיקת כתבה</b>\n\nשלח את ה-URL של הכתבה למחיקה:")
@@ -1524,7 +1589,7 @@ def handle_message(msg):
 
     if text in ("/cancel", "❌ ביטול"):
         drafts[user_id] = {"step": "idle", "gallery": []}
-        send_message(chat_id, "❌ הפעולה בוטלה.", get_menu(user_id))
+        send_message(chat_id, "↩️ הפעולה בוטלה.", get_menu(user_id))
         return
 
     # טיפול בעריכות חכמות
@@ -1601,7 +1666,7 @@ def handle_message(msg):
         })
 
     elif step == "article_yt_smart_text":
-        send_message(chat_id, "⏳ Gemini מעבד...")
+        send_message(chat_id, "🤖 <b>מעבד עם AI...</b>\n\n⏳ זה לוקח כמה שניות")
         result = process_with_gemini(text)
         if result:
             draft["yt_title"] = result.get("title", draft.get("title", "סרטון"))
@@ -1622,10 +1687,10 @@ def handle_message(msg):
                         else:
                             send_message(chat_id, f"❌ שגיאה: {error}")
         else:
-            send_message(chat_id, "❌ שגיאה בעיבוד. שלח שוב.")
+            send_message(chat_id, "⚠️ <b>שגיאה בעיבוד</b>\n\nנסה לשלוח שוב.")
 
     elif step == "youtube_smart_text":
-        send_message(chat_id, "⏳ Gemini מעבד...")
+        send_message(chat_id, "🤖 <b>מעבד עם AI...</b>\n\n⏳ זה לוקח כמה שניות")
         result = process_with_gemini(text)
         if result:
             draft["yt_title"] = result.get("title", "")
@@ -1646,7 +1711,7 @@ def handle_message(msg):
                 ]
             })
         else:
-            send_message(chat_id, "❌ שגיאה בעיבוד. נסה שוב.", get_menu(user_id))
+            send_message(chat_id, "⚠️ <b>שגיאה בעיבוד</b>\n\nנסה שוב.", get_menu(user_id))
             drafts[user_id] = {"step": "idle", "gallery": []}
 
     elif step == "youtube_title":
@@ -1666,7 +1731,7 @@ def handle_message(msg):
 
     elif step == "youtube_video":
         if "video" in msg or "document" in msg:
-            send_message(chat_id, "⏳ מעלה סרטון ל-YouTube...")
+            send_message(chat_id, "🎬 <b>מעלה ל-YouTube...</b>\n\n⏳ זה עשוי לקחת כמה דקות")
             file_id = msg.get("video", msg.get("document", {})).get("file_id")
             if file_id:
                 video_bytes = get_file(file_id)
@@ -1686,8 +1751,32 @@ def handle_message(msg):
             send_message(chat_id, "⚠️ שלח קובץ סרטון:")
 
     elif step == "smart_text":
-        send_message(chat_id, "⏳ Gemini מעבד את הטקסט...")
+        # הודעה אחת עם אנימציה חיה
+        msg_id = send_status(chat_id, "🤖 <b>מעבד טקסט...</b>\n\n⏳ שולח ל-Gemini AI")
+
+        # אנימציה ברקע
+        stop_animation = [False]
+        def animate():
+            steps = [
+                "🔍 <b>מנתח טקסט...</b>",
+                "⚡ <b>מחלץ מידע...</b>",
+                "✍️ <b>יוצר כותרות...</b>",
+                "🎯 <b>בוחר קטגוריות...</b>",
+                "🚀 <b>כמעט מוכן...</b>",
+            ]
+            i = 0
+            while not stop_animation[0]:
+                time.sleep(3)
+                if not stop_animation[0]:
+                    edit_message(chat_id, msg_id, f"🤖 <b>מעבד טקסט...</b>\n\n{steps[i % len(steps)]}")
+                    i += 1
+
+        anim_thread = threading.Thread(target=animate, daemon=True)
+        anim_thread.start()
+
         result = process_with_gemini(text)
+        stop_animation[0] = True
+
         if result:
             body_clean = convert_whatsapp_format(result.get("body", text))
             draft.update({
@@ -1724,14 +1813,14 @@ def handle_message(msg):
                 ]
             })
         else:
-            # AI נכשל – שמור את הטקסט ושאל מה לעשות
             draft["body"] = text
             draft["step"] = "smart_text"
-            send_message(chat_id, "❌ ה-AI לא הצליח לעבד כרגע.\n\nמה תרצה לעשות?", {
+            edit_message(chat_id, msg_id,
+                "⚠️ <b>ה-AI לא הצליח לעבד</b>\n\nמה תרצה לעשות?", {
                 "inline_keyboard": [
                     [{"text": "🔄 נסה שוב", "callback_data": "smart_retry"}],
                     [{"text": "✍️ המשך ידנית", "callback_data": "smart_manual_fallback"}],
-                    [{"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+                    [{"text": "↩️ ביטול", "callback_data": "publish_cancel"}]
                 ]
             })
 
@@ -1862,7 +1951,7 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                 content = get_file(file_id)
                 print(f"📄 הורדה: {'הצלחה ' + str(len(content)) + ' bytes' if content else 'נכשל'}", flush=True)
                 if content:
-                    send_message(chat_id, "⏳ מעלה PDF לאתר...")
+                    send_message(chat_id, "📄 <b>מעלה PDF לאתר...</b>")
                     fname = file_name if file_name.endswith('.pdf') else file_name + '.pdf'
                     # שם בטוח לוורדפרס (ASCII בלבד)
                     safe_fname = f"doc_{int(time.time())}.pdf"
@@ -1980,7 +2069,7 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
 
     elif step == "confirm":
         if text == "/publish":
-            send_message(chat_id, "⏳ מפרסם לוורדפרס...")
+            send_message(chat_id, "🚀 <b>מפרסם לוורדפרס...</b>")
             resp = publish_to_wp(draft)
             if resp.status_code == 201:
                 post_url = resp.json().get("link", "")
@@ -2239,7 +2328,7 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                     send_message(chat_id, "❌ לינק Drive לא תקין.")
                     return
                 if drive_type == "folder":
-                    send_message(chat_id, "⏳ סורק תיקייה ב-Drive...")
+                    send_message(chat_id, "🔍 <b>סורק תיקייה ב-Drive...</b>")
                     images, _ = list_drive_folder(drive_id)
                     if not images:
                         send_message(chat_id, "❌ לא נמצאו תמונות.")
@@ -2677,7 +2766,7 @@ def _process_next_social_platform(chat_id, user_id, draft, drafts):
 
     if not queue:
         # סיים הכל
-        send_message(chat_id, "✅ <b>הפצה הושלמה!</b>", get_menu(user_id))
+        send_message(chat_id, "🎯 <b>הפצה הושלמה בהצלחה!</b>", get_menu(user_id))
         drafts[user_id] = {"step": "idle", "gallery": []}
         return
 
@@ -2707,7 +2796,7 @@ def _process_next_social_platform(chat_id, user_id, draft, drafts):
         send_message(chat_id, "🎵 <b>TikTok</b>\n\nשלח כותרת ו-hashtags (או /skip):")
 
     elif platform == "facebook":
-        send_message(chat_id, "⏳ מפרסם לפייסבוק...")
+        send_message(chat_id, "📘 <b>מפרסם לפייסבוק...</b>")
         text_content = social.get("text_content", "")
         link = social.get("link", "")
         msg_text = f"{text_content}\n{link}" if link else text_content
@@ -2715,11 +2804,11 @@ def _process_next_social_platform(chat_id, user_id, draft, drafts):
         if img:
             img = add_watermark(img)
         ok, result = post_to_facebook(msg_text, img)
-        send_message(chat_id, f"✅ פורסם בפייסבוק!" if ok else f"❌ פייסבוק: {result}")
+        send_message(chat_id, f"📘 ✅ <b>פורסם בפייסבוק!</b>" if ok else f"❌ פייסבוק: {result}")
         _process_next_social_platform(chat_id, user_id, draft, drafts)
 
     elif platform == "instagram":
-        send_message(chat_id, "⏳ מפרסם לאינסטגרם...")
+        send_message(chat_id, "📸 <b>מפרסם לאינסטגרם...</b>")
         img = social.get("image")
         if img:
             img = add_watermark(resize_for_instagram(img))
@@ -2729,7 +2818,7 @@ def _process_next_social_platform(chat_id, user_id, draft, drafts):
             # שמור כותרת גלובלית לשימוש בסטורי
             import builtins
             builtins.LAST_POST_TITLE = caption.split('\n')[0][:50] if caption else ""
-            send_message(chat_id, "✅ פורסם באינסטגרם!", {
+            send_message(chat_id, "📸 ✅ <b>פורסם באינסטגרם!</b>", {
                 "inline_keyboard": [[{"text": "📱 שתף לסטורי", "callback_data": f"ig_story_{result}"}]]
             })
         else:
@@ -2753,7 +2842,7 @@ def _process_next_social_platform(chat_id, user_id, draft, drafts):
         _process_next_social_platform(chat_id, user_id, draft, drafts)
 
     elif platform == "twitter":
-        send_message(chat_id, "⏳ מפרסם לטוויטר...")
+        send_message(chat_id, "🐦 <b>מפרסם לטוויטר...</b>")
         text_content = social.get("text_content", "")
         link = social.get("link", "")
         ok, result = post_to_twitter(text_content, link)
@@ -3046,43 +3135,46 @@ def handle_callback(cb):
         send_message(chat_id, f"תגיות נוכחיות: {', '.join(draft.get('tags',[]))}\n\nשלח תגיות חדשות מופרדות בפסיק:")
 
     elif cb_data == "publish_now":
-        send_message(chat_id, "⏳ מפרסם לוורדפרס...")
+        msg_id = send_status(chat_id, "🚀 <b>מפרסם כתבה...</b>\n\n⏳ שולח לוורדפרס")
         try:
             resp = publish_to_wp(draft, "publish")
         except Exception as e:
-            send_message(chat_id, f"❌ שגיאה בפרסום: {e}", get_menu(user_id))
+            edit_message(chat_id, msg_id, f"❌ <b>שגיאה בפרסום</b>\n\n{e}")
             drafts[user_id] = {"step": "idle", "gallery": []}
             return
         if resp.status_code == 201:
             post_url = resp.json().get("link", "")
             post_title = draft.get("title", "")
+            edit_message(chat_id, msg_id, "🚀 <b>מפרסם כתבה...</b>\n\n✅ עלתה לאתר\n⏳ שולח לערוץ טלגרם")
             notify_channel(post_title, draft.get("subtitle", ""), post_url)
             draft["last_post_url"] = post_url
             draft["last_post_title"] = post_title
-            # שמור גלובלית לשימוש בסטורי
             import builtins
             builtins.LAST_POST_TITLE = post_title
             builtins.LAST_POST_URL = post_url
-            send_message(chat_id, f"✅ <b>הכתבה פורסמה ונשלחה לערוץ!</b>\n🔗 {post_url}", {
+            edit_message(chat_id, msg_id,
+                f"✅ <b>הכתבה פורסמה!</b>\n\n"
+                f"📰 {post_title}\n"
+                f"🔗 {post_url}", {
                 "inline_keyboard": [
                     [{"text": "📘 פרסם בפייסבוק", "callback_data": "auto_share_fb"},
                      {"text": "📸 פרסם באינסטגרם", "callback_data": "auto_share_ig"}],
                     [{"text": "🌐 פרסם בכולם", "callback_data": "auto_share_all"}],
                     [{"text": "🐦 טוויטר", "callback_data": "share_twitter"},
-                     {"text": "✅ סיום", "callback_data": "publish_done"}]
+                     {"text": "🏠 סיום", "callback_data": "publish_done"}]
                 ]
             })
         else:
-            send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
+            edit_message(chat_id, msg_id, f"❌ <b>שגיאה בפרסום</b>\n\n{resp.text[:200]}")
             drafts[user_id] = {"step": "idle", "gallery": []}
 
     elif cb_data == "publish_draft":
-        send_message(chat_id, "⏳ שומר כטיוטה...")
+        msg_id = send_status(chat_id, "💾 <b>שומר כטיוטה...</b>")
         resp = publish_to_wp(draft, "draft")
         if resp.status_code == 201:
-            send_message(chat_id, "✅ <b>נשמר כטיוטה!</b>", get_menu(user_id))
+            edit_message(chat_id, msg_id, "✅ <b>נשמר כטיוטה!</b>\n\nתוכל לערוך ולפרסם מהאתר.")
         else:
-            send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
+            edit_message(chat_id, msg_id, f"❌ <b>שגיאה בשמירה</b>\n\n{resp.text[:200]}")
         drafts[user_id] = {"step": "idle", "gallery": []}
 
     elif cb_data == "publish_schedule":
@@ -3126,7 +3218,7 @@ def handle_callback(cb):
 
     elif cb_data == "publish_cancel":
         drafts[user_id] = {"step": "idle", "gallery": []}
-        send_message(chat_id, "❌ הפעולה בוטלה.", get_menu(user_id))
+        send_message(chat_id, "↩️ הפעולה בוטלה.", get_menu(user_id))
 
     elif cb_data == "cat_done":
         draft["step"] = "main_image"
@@ -3169,7 +3261,7 @@ def handle_callback(cb):
         days = cb_data.replace("analytics_top_", "")
         period = f"{days}daysAgo"
         period_name = {"1": "24 השעות האחרונות", "7": "7 הימים האחרונים", "30": "30 הימים האחרונים"}.get(days, "")
-        send_message(chat_id, "⏳ מושך נתונים...")
+        send_message(chat_id, "📊 <b>מושך נתונים...</b>")
         data = get_analytics_data(period)
         if data and data.get("rows"):
             msg = f"🏆 <b>חמש הכתבות הנצפות ביותר באתר ״עדכוני חב״ד״</b>\n<b>{period_name}:</b>\n\n"
@@ -3195,7 +3287,7 @@ def handle_callback(cb):
         days = cb_data.replace("analytics_visits_", "")
         period = f"{days}daysAgo"
         period_name = {"1": "24 השעות האחרונות", "7": "7 הימים האחרונים", "30": "30 הימים האחרונים"}.get(days, "")
-        send_message(chat_id, "⏳ מושך נתונים...")
+        send_message(chat_id, "📊 <b>מושך נתונים...</b>")
         data = get_analytics_totals(period)
         if data:
             msg = f"""📊 <b>סטטיסטיקות אתר ״עדכוני חב״ד״</b>
@@ -3332,7 +3424,7 @@ def handle_callback(cb):
                     ]
                 })
             else:
-                send_message(chat_id, "❌ שגיאה בעיבוד. נסה שוב.", get_menu(user_id))
+                send_message(chat_id, "⚠️ <b>שגיאה בעיבוד</b>\n\nנסה שוב.", get_menu(user_id))
             email_system["pending_email"] = {}
 
     elif cb_data == "email_reject":
@@ -3441,7 +3533,7 @@ def handle_callback(cb):
                     timeout=15
                 )
                 if pub.status_code == 200:
-                    edit_message(chat_id, msg_id, "✅ סטורי פורסם!")
+                    edit_message(chat_id, msg_id, "📱 ✅ <b>סטורי פורסם!</b>")
                 else:
                     edit_message(chat_id, msg_id, f"❌ שגיאה: {pub.text[:200]}")
             except Exception as e:
@@ -3541,7 +3633,7 @@ def handle_callback(cb):
         if not fb_token:
             send_message(chat_id, "❌ FB_PAGE_TOKEN חסר")
             return
-        send_message(chat_id, "⏳ מושך נתונים...")
+        send_message(chat_id, "📊 <b>מושך נתונים...</b>")
         try:
             # משוך נתוני דף בסיסיים
             resp = requests.get(
@@ -3571,7 +3663,7 @@ def handle_callback(cb):
         if not ig_user_id:
             send_message(chat_id, "❌ IG_USER_ID חסר")
             return
-        send_message(chat_id, "⏳ מושך נתונים...")
+        send_message(chat_id, "📊 <b>מושך נתונים...</b>")
         try:
             resp = requests.get(
                 f"https://graph.facebook.com/v18.0/{ig_user_id}",
@@ -3596,16 +3688,7 @@ def handle_callback(cb):
         send_message(chat_id, "🗑️ שלח לינק לפוסט בפייסבוק למחיקה:")
 
     elif cb_data == "social_delete_ig":
-        send_message(chat_id, """⚠️ <b>אינסטגרם לא מאפשר מחיקה דרך API</b>
-
-למחיקת הפוסט:
-1. כנס ל-Creator Studio:
-https://business.facebook.com/creatorstudio
-
-2. בחר את חשבון האינסטגרם
-3. מצא את הפוסט ומחק
-
-או ישירות באפליקציית אינסטגרם → הפוסט → ⋯ → מחק""")
+        send_message(chat_id, "⚠️ <b>אינסטגרם לא מאפשר מחיקה דרך API</b>\n\nלמחיקת הפוסט:\n1. כנס ל-Creator Studio:\nhttps://business.facebook.com/creatorstudio\n\n2. בחר את חשבון האינסטגרם\n3. מצא את הפוסט ומחק\n\nאו ישירות באפליקציית אינסטגרם → הפוסט → ⋯ → מחק")
 
     elif cb_data == "social_recent_posts":
         fb_token = os.environ.get("FB_PAGE_TOKEN","")
@@ -3661,28 +3744,23 @@ https://business.facebook.com/creatorstudio
         ig_text = f"{post_title}\n\n{clean_body}"
         
         def _auto_share():
-            # שלח הודעה אחת ועדכן אותה
-            status_resp = requests.post(
-                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-                json={"chat_id": chat_id, "text": "⏳ מפרסם ברשתות...", "parse_mode": "HTML"},
-                timeout=10
-            )
-            msg_id = status_resp.json().get("result", {}).get("message_id") if status_resp.ok else None
-
-            def update(text, markup=None):
-                if msg_id:
-                    edit_message(chat_id, msg_id, text, markup)
-                else:
-                    send_message(chat_id, text, markup)
-
+            # הודעה אחת שמתעדכנת לאורך כל התהליך
+            msg_id = send_status(chat_id, "🚀 <b>מתחיל הפצה לרשתות...</b>")
             status_lines = []
 
+            def update(extra="", markup=None):
+                text = "\n".join(status_lines)
+                if extra:
+                    text += ("\n" if text else "") + extra
+                edit_message(chat_id, msg_id, text or "⏳", markup)
+
             if cb_data in ("auto_share_fb", "auto_share_all"):
-                update("⏳ מעלה לפייסבוק...")
+                update("📘 <b>פייסבוק</b> – מעלה תמונות...")
                 wm_images = [add_watermark(img) for img in post_images] if post_images else []
                 if len(wm_images) > 1:
                     photo_ids = []
-                    for img in wm_images[:30]:  # פייסבוק מאפשר עד 30
+                    for i, img in enumerate(wm_images[:30]):
+                        update(f"📘 <b>פייסבוק</b> – {progress_bar(i+1, min(len(wm_images),30))}")
                         resp = requests.post(
                             f"https://graph.facebook.com/v18.0/{os.environ.get('FB_PAGE_ID')}/photos",
                             data={"published": "false", "access_token": os.environ.get("FB_PAGE_TOKEN")},
@@ -3712,19 +3790,21 @@ https://business.facebook.com/creatorstudio
 
                 if ok:
                     draft["last_fb_post_id"] = result
-                    status_lines.append("✅ פייסבוק")
+                    status_lines.append("📘 פייסבוק ✅")
                 else:
-                    status_lines.append(f"❌ פייסבוק נכשל")
-                update("\n".join(status_lines) or "⏳")
+                    status_lines.append("📘 פייסבוק ❌")
+                    update(markup={"inline_keyboard": [[{"text": "🔄 נסה שוב פייסבוק", "callback_data": "auto_share_fb"}]]})
+                    return
+                update()
 
                 if cb_data == "auto_share_fb":
+                    update(markup=None)
                     return
 
             if cb_data in ("auto_share_ig", "auto_share_all"):
-                update(("\n".join(status_lines) + "\n" if status_lines else "") + "⏳ מעלה לאינסטגרם...")
+                update("📸 <b>אינסטגרם</b> – מעלה...")
                 if not post_images:
-                    status_lines.append("⚠️ אינסטגרם – אין תמונה")
-                    update("\n".join(status_lines))
+                    status_lines.append("📸 אינסטגרם ⚠️ אין תמונה")
                 elif len(post_images) > 1:
                     ok, result = post_to_instagram_carousel(ig_text, [add_watermark(img) for img in post_images[:10]])
                 else:
@@ -3734,18 +3814,18 @@ https://business.facebook.com/creatorstudio
                     print(f"IG ok={ok}, result={result}", flush=True)
                     if ok:
                         draft["last_ig_post_id"] = result
-                        status_lines.append("✅ אינסטגרם")
-                        update("\n".join(status_lines), {
+                        status_lines.append("📸 אינסטגרם ✅")
+                        update(markup={
                             "inline_keyboard": [[{"text": "📱 שתף לסטורי", "callback_data": f"ig_story_{result}"}]]
                         })
                     else:
-                        status_lines.append(f"❌ אינסטגרם נכשל")
-                        update("\n".join(status_lines), {
-                            "inline_keyboard": [[{"text": "🔄 נסה שוב", "callback_data": "auto_share_ig"}]]
+                        status_lines.append("📸 אינסטגרם ❌")
+                        update(markup={
+                            "inline_keyboard": [[{"text": "🔄 נסה שוב אינסטגרם", "callback_data": "auto_share_ig"}]]
                         })
                     return
 
-            update("\n".join(status_lines) if status_lines else "✅ הושלם")
+            update()
 
         threading.Thread(target=_auto_share, daemon=True).start()
 
@@ -3784,7 +3864,7 @@ https://business.facebook.com/creatorstudio
     elif cb_data == "share_twitter":
         post_url = draft.get("last_post_url", "")
         post_title = draft.get("last_post_title", "")
-        send_message(chat_id, "⏳ מפרסם בטוויטר...")
+        send_message(chat_id, "🐦 <b>מפרסם לטוויטר...</b>")
         success, result = post_to_twitter(post_title, post_url)
         if success:
             send_message(chat_id, f"✅ פורסם בטוויטר!", get_menu(user_id))
@@ -4170,7 +4250,91 @@ def add_watermark(image_bytes):
         print(f"שגיאה watermark: {e}", flush=True)
         return image_bytes
 
-def create_story_template(post_image_bytes, title="", subtitle=""):
+def create_story_template(post_image_bytes, title=""):
+    """בונה תמונת סטורי עם תבנית עדכוני חב״ד"""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        import io
+
+        FONT_PATH = "/usr/share/fonts/truetype/freefont/FreeSerifBold.ttf"
+        TEMPLATE_PATH = "/home/claude/story_template.png"
+
+        # טען תבנית
+        if not os.path.exists(TEMPLATE_PATH):
+            # אם אין תבנית – צור פשוטה
+            story = Image.new('RGB', (1080, 1920), '#1A3A6B')
+            template = story.convert('RGBA')
+            IMG_LEFT, IMG_TOP, IMG_RIGHT, IMG_BOTTOM = 70, 400, 1010, 1350
+            TXT_LEFT, TXT_TOP, TXT_RIGHT, TXT_BOTTOM = 70, 1400, 1010, 1750
+        else:
+            template = Image.open(TEMPLATE_PATH).convert('RGBA')
+            # מיקומים מהתבנית האמיתית (3375x6000)
+            IMG_LEFT, IMG_TOP, IMG_RIGHT, IMG_BOTTOM = 100, 1469, 3274, 4000
+            TXT_LEFT, TXT_TOP, TXT_RIGHT, TXT_BOTTOM = 100, 4080, 3274, 5200
+
+        W, H = template.size
+        RADIUS = int(W * 0.045)
+
+        result = template.copy()
+
+        # הכנס תמונה עם פינות מעוגלות + שמור יחס
+        if post_image_bytes:
+            post_img = Image.open(io.BytesIO(post_image_bytes)).convert('RGBA')
+            img_w = IMG_RIGHT - IMG_LEFT
+            img_h = IMG_BOTTOM - IMG_TOP
+            pw, ph = post_img.size
+            ratio = min(img_w/pw, img_h/ph)
+            new_w, new_h = int(pw*ratio), int(ph*ratio)
+            resized = post_img.resize((new_w, new_h), Image.LANCZOS)
+
+            mask = Image.new('L', (new_w, new_h), 0)
+            ImageDraw.Draw(mask).rounded_rectangle([0, 0, new_w, new_h], radius=RADIUS, fill=255)
+
+            paste_x = IMG_LEFT + (img_w - new_w)//2
+            paste_y = IMG_TOP + (img_h - new_h)//2
+            result.paste(resized, (paste_x, paste_y), mask)
+
+        # כותרת
+        if title:
+            draw = ImageDraw.Draw(result)
+            txt_w = TXT_RIGHT - TXT_LEFT - 80
+            txt_h = TXT_BOTTOM - TXT_TOP - 40
+
+            for font_size in range(180, 60, -5):
+                try:
+                    font = ImageFont.truetype(FONT_PATH, font_size)
+                except:
+                    font = ImageFont.load_default()
+                words = title.split()
+                lines, line = [], ""
+                for word in words:
+                    test_line = (line + " " + word).strip()
+                    bbox = draw.textbbox((0,0), test_line, font=font)
+                    if bbox[2]-bbox[0] > txt_w:
+                        if line: lines.append(line)
+                        line = word
+                    else:
+                        line = test_line
+                if line: lines.append(line)
+                line_h = font_size + 20
+                total_h = len(lines) * line_h
+                if total_h <= txt_h:
+                    break
+
+            start_y = TXT_TOP + (txt_h - total_h)//2
+            for l in lines:
+                bbox = draw.textbbox((0,0), l, font=font)
+                tw = bbox[2]-bbox[0]
+                draw.text(((TXT_LEFT+TXT_RIGHT)//2 - tw//2, start_y), l, font=font, fill=(20, 55, 110, 255))
+                start_y += line_h
+
+        output = io.BytesIO()
+        result.convert('RGB').save(output, format='JPEG', quality=92)
+        return output.getvalue()
+
+    except Exception as e:
+        print(f"שגיאה story: {e}", flush=True)
+        return post_image_bytes
     """בונה תבנית סטורי 1080x1920 עם מסגרת כחול-לבן"""
     try:
         from PIL import Image, ImageDraw, ImageFont
@@ -4653,7 +4817,7 @@ def show_distribution_menu(chat_id, draft, post_url="", post_title=""):
              {"text": "📸 אינסטגרם", "callback_data": "dist_instagram"}],
             [{"text": "📱 טלגרם", "callback_data": "dist_telegram"},
              {"text": "🐦 טוויטר", "callback_data": "dist_twitter"}],
-            [{"text": "✅ סיום", "callback_data": "publish_done"}]
+            [{"text": "🏠 סיום", "callback_data": "publish_done"}]
         ]
     })
 
@@ -4859,10 +5023,25 @@ def auto_select_categories(title, body):
 <b>כתובות מורשות:</b>
 {senders}"""
 
+def download_story_template():
+    """מוריד תבנית סטורי מוורדפרס אם לא קיימת"""
+    template_path = "/home/claude/story_template.png"
+    template_url = os.environ.get("STORY_TEMPLATE_URL", "")
+    if not os.path.exists(template_path) and template_url:
+        try:
+            resp = requests.get(template_url, timeout=30)
+            if resp.status_code == 200:
+                with open(template_path, 'wb') as f:
+                    f.write(resp.content)
+                print(f"✅ תבנית סטורי הורדה", flush=True)
+        except Exception as e:
+            print(f"שגיאה הורדת תבנית: {e}", flush=True)
+
 def main():
     global offset
     print("🚀 בוט חבד מתחיל!", flush=True)
     load_drafts()
+    download_story_template()
 
     try:
         requests.post(
