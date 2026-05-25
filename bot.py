@@ -5850,25 +5850,36 @@ def create_story_template(post_image_bytes, title=""):
         return False, "IG_USER_ID או FB_PAGE_TOKEN חסרים"
     try:
         children = []
-        for img in images_list[:10]:
-            # התאם לאינסטגרם
+        for i, img in enumerate(images_list[:10]):
             img = resize_for_instagram(img)
-            # העלה לוורדפרס קודם כדי לקבל URL ציבורי
-            _, img_url = upload_image_to_wp(img, "ig_post.jpg")
+            img = add_watermark(img)
+            _, img_url = upload_image_to_wp(img, f"ig_carousel_{i}.jpg")
             if not img_url:
                 continue
             resp = requests.post(
                 f"https://graph.facebook.com/v18.0/{ig_user_id}/media",
-                data={
-                    "image_url": img_url,
-                    "is_carousel_item": "true",
-                    "access_token": fb_token
-                },
+                data={"image_url": img_url, "is_carousel_item": "true", "access_token": fb_token},
                 timeout=30
             )
-            print(f"IG carousel item: {resp.status_code} {resp.text[:100]}", flush=True)
-            if resp.status_code == 200:
-                children.append(resp.json().get("id"))
+            print(f"IG carousel item {i+1}: {resp.status_code} {resp.text[:100]}", flush=True)
+            if resp.status_code != 200:
+                continue
+            media_id = resp.json().get("id")
+            # המתן ל-FINISHED
+            for attempt in range(10):
+                time.sleep(3)
+                st = requests.get(
+                    f"https://graph.facebook.com/v18.0/{media_id}",
+                    params={"fields": "status_code", "access_token": fb_token}, timeout=10
+                )
+                if st.ok:
+                    status = st.json().get("status_code","")
+                    print(f"  carousel item {i+1} status: {status}", flush=True)
+                    if status == "FINISHED":
+                        children.append(media_id)
+                        break
+                    elif status == "ERROR":
+                        break
         if not children:
             return False, "לא הצלחתי להעלות תמונות לאינסטגרם"
         carousel_resp = requests.post(
@@ -6004,8 +6015,9 @@ def post_to_instagram(text, image_bytes):
             return False, create_resp.text[:200]
         media_id = create_resp.json().get("id")
         # המתן עד שהעיבוד מסתיים
-        for attempt in range(10):
-            time.sleep(3)
+        finished = False
+        for attempt in range(15):
+            time.sleep(4)
             status_resp = requests.get(
                 f"https://graph.facebook.com/v18.0/{media_id}",
                 params={"fields": "status_code", "access_token": fb_token},
@@ -6013,11 +6025,14 @@ def post_to_instagram(text, image_bytes):
             )
             if status_resp.status_code == 200:
                 status = status_resp.json().get("status_code", "")
-                print(f"IG status: {status}", flush=True)
+                print(f"IG status attempt {attempt+1}: {status}", flush=True)
                 if status == "FINISHED":
+                    finished = True
                     break
                 elif status == "ERROR":
-                    return False, "שגיאה בעיבוד התמונה"
+                    return False, "שגיאה בעיבוד התמונה באינסטגרם"
+        if not finished:
+            return False, "תמונה לא סיימה עיבוד – נסה שוב"
         pub_resp = requests.post(
             f"https://graph.facebook.com/v18.0/{ig_user_id}/media_publish",
             data={"creation_id": media_id, "access_token": fb_token},
