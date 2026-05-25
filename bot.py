@@ -145,7 +145,66 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path.startswith("/youtube/callback"):
+        path = self.path.split('?')[0]
+
+        if path == '/app':
+            # Mini App HTML
+            try:
+                with open('/home/claude/miniapp.html', 'rb') as f:
+                    content = f.read()
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.send_header('Content-Length', len(content))
+                self.end_headers()
+                self.wfile.write(content)
+            except:
+                self.send_response(404)
+                self.end_headers()
+
+        elif path == '/api/stats/facebook':
+            self._json(get_fb_stats())
+
+        elif path == '/api/stats/instagram':
+            self._json(get_ig_stats())
+
+        elif path == '/api/users':
+            users = [{"id": uid, "role": role, "name": uid}
+                    for uid, role in users_permissions.items()]
+            self._json({"users": users, "count": len(users)})
+
+        elif path == '/api/email':
+            self._json({"active": email_system["active"],
+                        "senders": email_system["allowed_senders"]})
+
+        elif path == '/api/watermark':
+            self._json({k: v for k, v in watermark_settings.items()
+                       if k != "logo_bytes"})
+
+        elif path == '/api/settings':
+            self._json({"geresh_words": GERESH_WORDS,
+                        "prompt": build_prompt("{text}").split("טקסט:")[0].strip()})
+
+        elif path == '/api/analytics':
+            data = get_analytics_data()
+            self._json(data or {})
+
+        elif path == '/api/log':
+            entries = [{"time": e.split("|")[0].strip(),
+                        "user": e.split("|")[2].strip() if "|" in e else "",
+                        "action": e.split("|")[3].strip() if e.count("|") >= 3 else e}
+                      for e in (action_log[-50:] if action_log else [])]
+            self._json({"entries": list(reversed(entries))})
+
+        elif path == '/api/articles/count':
+            try:
+                r = requests.get(f"{WP_URL}/posts?per_page=1&after={__import__('datetime').datetime.now().strftime('%Y-%m-01')}T00:00:00",
+                                auth=(WP_USER, WP_PASSWORD), timeout=5)
+                count = r.headers.get('X-WP-Total', '--') if r.ok else '--'
+                self._json({"count": count})
+            except:
+                self._json({"count": '--'})
+
+        elif path.startswith('/youtube/callback'):
             from urllib.parse import urlparse, parse_qs
             query = parse_qs(urlparse(self.path).query)
             code = query.get("code", [None])[0]
@@ -161,12 +220,133 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(400)
             self.end_headers()
             self.wfile.write(b"Error")
+
         else:
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"OK")
+
+    def do_POST(self):
+        length = int(self.headers.get('Content-Length', 0))
+        body = json.loads(self.rfile.read(length)) if length else {}
+        path = self.path.split('?')[0]
+
+        if path == '/api/watermark':
+            for k, v in body.items():
+                if k in watermark_settings and k != 'logo_bytes':
+                    watermark_settings[k] = v
+            self._json({"ok": True})
+
+        elif path == '/api/settings/geresh/add':
+            word = body.get('word', '').strip()
+            if word and word not in GERESH_WORDS:
+                GERESH_WORDS.append(word)
+            self._json({"ok": True})
+
+        elif path == '/api/settings/geresh/remove':
+            word = body.get('word', '')
+            if word in GERESH_WORDS:
+                GERESH_WORDS.remove(word)
+            self._json({"ok": True})
+
+        elif path == '/api/email/add':
+            email = body.get('email', '').strip().lower()
+            if email and email not in email_system["allowed_senders"]:
+                email_system["allowed_senders"].append(email)
+            self._json({"ok": True})
+
+        elif path == '/api/email/remove':
+            email = body.get('email', '')
+            if email in email_system["allowed_senders"]:
+                email_system["allowed_senders"].remove(email)
+            self._json({"ok": True})
+
+        elif path == '/api/email/toggle':
+            email_system["active"] = not email_system["active"]
+            self._json({"ok": True, "active": email_system["active"]})
+
+        elif path == '/api/settings/prompt':
+            import builtins
+            builtins.CUSTOM_PROMPT = body.get('prompt', '')
+            self._json({"ok": True})
+
+        else:
+            self._json({"ok": False})
+
+    def _json(self, data):
+        content = json.dumps(data, ensure_ascii=False).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Content-Length', len(content))
+        self.end_headers()
+        self.wfile.write(content)
+
     def log_message(self, format, *args):
         pass
+
+def get_fb_stats():
+    """מושך סטטיסטיקות פייסבוק"""
+    try:
+        fb_token = os.environ.get("FB_PAGE_TOKEN","")
+        fb_page_id = os.environ.get("FB_PAGE_ID","")
+        if not fb_token: return {}
+        resp = requests.get(
+            f"https://graph.facebook.com/v18.0/{fb_page_id}",
+            params={"fields": "fan_count,followers_count,name", "access_token": fb_token},
+            timeout=10
+        )
+        return resp.json() if resp.ok else {}
+    except:
+        return {}
+
+def get_ig_stats():
+    """מושך סטטיסטיקות אינסטגרם"""
+    try:
+        fb_token = os.environ.get("FB_PAGE_TOKEN","")
+        ig_user_id = os.environ.get("IG_USER_ID","")
+        if not fb_token: return {}
+        resp = requests.get(
+            f"https://graph.facebook.com/v18.0/{ig_user_id}",
+            params={"fields": "followers_count,media_count,name", "access_token": fb_token},
+            timeout=10
+        )
+        return resp.json() if resp.ok else {}
+    except:
+        return {}
+
+def get_analytics_data():
+    """מושך נתוני Google Analytics"""
+    try:
+        import json as _json
+        sa_json = os.environ.get("GA_SERVICE_ACCOUNT_JSON","")
+        property_id = os.environ.get("GA_PROPERTY_ID","")
+        if not sa_json or not property_id:
+            return None
+        import google.oauth2.service_account as sa
+        import googleapiclient.discovery as discovery
+        creds = sa.Credentials.from_service_account_info(
+            _json.loads(sa_json),
+            scopes=["https://www.googleapis.com/auth/analytics.readonly"]
+        )
+        service = discovery.build("analyticsdata", "v1beta", credentials=creds)
+        body = {
+            "dateRanges": [{"startDate": "7daysAgo", "endDate": "today"}],
+            "metrics": [{"name": "sessions"}, {"name": "totalUsers"}, {"name": "screenPageViews"}],
+            "dimensions": [{"name": "pagePath"}],
+            "limit": 5,
+            "orderBys": [{"metric": {"metricName": "screenPageViews"}, "desc": True}]
+        }
+        resp = service.properties().runReport(property=f"properties/{property_id}", body=body).execute()
+        totals = resp.get("totals",[{}])[0].get("metricValues",[])
+        return {
+            "sessions": int(totals[0].get("value",0)) if totals else 0,
+            "users": int(totals[1].get("value",0)) if len(totals)>1 else 0,
+            "views": int(totals[2].get("value",0)) if len(totals)>2 else 0,
+            "articles": []
+        }
+    except:
+        return None
 
 def run_server():
     port = int(os.environ.get("PORT", 10000))
@@ -1504,7 +1684,14 @@ def handle_message(msg):
             perm = get_permission(user_id)
             perm_emoji = {"admin": "👑", "senior_editor": "✨", "editor": "✏️"}.get(perm, "👤")
             name = f"{perm_emoji} <b>עדכוני חב״ד</b>"
-            send_message(chat_id, f"{name}\n\nברוך הבא! בחר פעולה מהתפריט:", menu)
+            app_url = f"https://chabad-bot.onrender.com/app"
+            send_message(chat_id, f"{name}\n\nברוך הבא! בחר פעולה מהתפריט:", {
+                **menu,
+                "inline_keyboard": [[{
+                    "text": "🚀 מרכז שליטה",
+                    "web_app": {"url": app_url}
+                }]]
+            } if is_senior_editor(user_id) else menu)
             return
         if not is_editor(user_id):
             send_message(chat_id, "⛔ <b>אין הרשאה</b>\n\nפנה למנהל המערכת.")
