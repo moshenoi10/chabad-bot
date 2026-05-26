@@ -1310,33 +1310,54 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 def get_analytics_data(days=7):
-    """מושך נתוני Google Analytics לפי תקופה"""
+    """מושך נתוני Google Analytics לפי תקופה – דרך REST API"""
     try:
         import json as _json
         sa_json = os.environ.get("GA_SERVICE_ACCOUNT_JSON","")
         property_id = os.environ.get("GA_PROPERTY_ID","")
         if not sa_json or not property_id:
             return None
-        import google.oauth2.service_account as sa
-        import googleapiclient.discovery as discovery
-        creds = sa.Credentials.from_service_account_info(
-            _json.loads(sa_json),
-            scopes=["https://www.googleapis.com/auth/analytics.readonly"]
-        )
-        service = discovery.build("analyticsdata", "v1beta", credentials=creds)
-        period = f"{days}daysAgo" if days > 1 else "today"
+
+        # קבל access token דרך JWT
+        import base64, time as _time, hmac, hashlib
+        sa = _json.loads(sa_json)
+        now = int(_time.time())
+        header = base64.urlsafe_b64encode(_json.dumps({"alg":"RS256","typ":"JWT"}).encode()).rstrip(b'=').decode()
+        payload = base64.urlsafe_b64encode(_json.dumps({
+            "iss": sa["client_email"],
+            "scope": "https://www.googleapis.com/auth/analytics.readonly",
+            "aud": "https://oauth2.googleapis.com/token",
+            "exp": now + 3600, "iat": now
+        }).encode()).rstrip(b'=').decode()
+
+        from cryptography.hazmat.primitives import serialization, hashes
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.backends import default_backend
+        key = serialization.load_pem_private_key(sa["private_key"].encode(), password=None, backend=default_backend())
+        sig = base64.urlsafe_b64encode(key.sign(f"{header}.{payload}".encode(), padding.PKCS1v15(), hashes.SHA256())).rstrip(b'=').decode()
+        jwt = f"{header}.{payload}.{sig}"
+
+        token_resp = requests.post("https://oauth2.googleapis.com/token",
+            data={"grant_type":"urn:ietf:params:oauth:grant-type:jwt-bearer","assertion":jwt}, timeout=15)
+        if not token_resp.ok:
+            print(f"GA token error: {token_resp.text[:200]}", flush=True)
+            return None
+        token = token_resp.json().get("access_token")
+
+        period = f"{days}daysAgo"
         body = {
             "dateRanges": [{"startDate": period, "endDate": "today"}],
-            "metrics": [
-                {"name": "sessions"},
-                {"name": "totalUsers"},
-                {"name": "screenPageViews"}
-            ]
+            "metrics": [{"name":"sessions"},{"name":"totalUsers"},{"name":"screenPageViews"}]
         }
-        resp = service.properties().runReport(
-            property=f"properties/{property_id}", body=body
-        ).execute()
-        totals = resp.get("totals",[{}])[0].get("metricValues",[])
+        resp = requests.post(
+            f"https://analyticsdata.googleapis.com/v1beta/properties/{property_id}:runReport",
+            headers={"Authorization": f"Bearer {token}"},
+            json=body, timeout=15
+        )
+        if not resp.ok:
+            print(f"GA error: {resp.text[:200]}", flush=True)
+            return None
+        totals = resp.json().get("totals",[{}])[0].get("metricValues",[])
         return {
             "sessions": int(totals[0].get("value",0)) if totals else 0,
             "users": int(totals[1].get("value",0)) if len(totals)>1 else 0,
@@ -1349,43 +1370,59 @@ def get_analytics_data(days=7):
 def get_analytics_top_articles(days=7):
     """מושך 5 הכתבות הנצפות ביותר"""
     try:
-        import json as _json
+        import json as _json, base64, time as _time
         sa_json = os.environ.get("GA_SERVICE_ACCOUNT_JSON","")
         property_id = os.environ.get("GA_PROPERTY_ID","")
         if not sa_json or not property_id:
             return None
-        import google.oauth2.service_account as sa
-        import googleapiclient.discovery as discovery
-        creds = sa.Credentials.from_service_account_info(
-            _json.loads(sa_json),
-            scopes=["https://www.googleapis.com/auth/analytics.readonly"]
-        )
-        service = discovery.build("analyticsdata", "v1beta", credentials=creds)
-        period = f"{days}daysAgo" if days > 1 else "today"
+
+        sa = _json.loads(sa_json)
+        now = int(_time.time())
+        header = base64.urlsafe_b64encode(_json.dumps({"alg":"RS256","typ":"JWT"}).encode()).rstrip(b'=').decode()
+        payload_data = base64.urlsafe_b64encode(_json.dumps({
+            "iss": sa["client_email"],
+            "scope": "https://www.googleapis.com/auth/analytics.readonly",
+            "aud": "https://oauth2.googleapis.com/token",
+            "exp": now + 3600, "iat": now
+        }).encode()).rstrip(b'=').decode()
+
+        from cryptography.hazmat.primitives import serialization, hashes
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.backends import default_backend
+        key = serialization.load_pem_private_key(sa["private_key"].encode(), password=None, backend=default_backend())
+        sig = base64.urlsafe_b64encode(key.sign(f"{header}.{payload_data}".encode(), padding.PKCS1v15(), hashes.SHA256())).rstrip(b'=').decode()
+        jwt = f"{header}.{payload_data}.{sig}"
+        token_resp = requests.post("https://oauth2.googleapis.com/token",
+            data={"grant_type":"urn:ietf:params:oauth:grant-type:jwt-bearer","assertion":jwt}, timeout=15)
+        if not token_resp.ok:
+            return None
+        token = token_resp.json().get("access_token")
+
+        period = f"{days}daysAgo"
         body = {
             "dateRanges": [{"startDate": period, "endDate": "today"}],
-            "dimensions": [{"name": "pageTitle"}, {"name": "pagePath"}],
-            "metrics": [{"name": "screenPageViews"}],
-            "orderBys": [{"metric": {"metricName": "screenPageViews"}, "desc": True}],
+            "dimensions": [{"name":"pageTitle"},{"name":"pagePath"}],
+            "metrics": [{"name":"screenPageViews"}],
+            "orderBys": [{"metric":{"metricName":"screenPageViews"},"desc":True}],
             "limit": 5
         }
-        resp = service.properties().runReport(
-            property=f"properties/{property_id}", body=body
-        ).execute()
-        wp_url = os.environ.get("WP_SITE_URL", "https://chabadupdates.com")
+        resp = requests.post(
+            f"https://analyticsdata.googleapis.com/v1beta/properties/{property_id}:runReport",
+            headers={"Authorization": f"Bearer {token}"},
+            json=body, timeout=15
+        )
+        if not resp.ok:
+            return None
+        wp_url = "https://chabadupdates.com"
         results = []
-        for row in resp.get("rows", []):
-            dims = row.get("dimensionValues", [])
-            mets = row.get("metricValues", [])
+        for row in resp.json().get("rows",[]):
+            dims = row.get("dimensionValues",[])
+            mets = row.get("metricValues",[])
             title = dims[0].get("value","") if dims else ""
             path = dims[1].get("value","") if len(dims)>1 else ""
             views = int(mets[0].get("value",0)) if mets else 0
             if title and title != "(not set)":
-                results.append({
-                    "title": title,
-                    "url": wp_url + path,
-                    "views": views
-                })
+                results.append({"title": title, "url": wp_url+path, "views": views})
         return results
     except Exception as e:
         print(f"שגיאה Top Articles: {e}", flush=True)
@@ -1394,43 +1431,57 @@ def get_analytics_top_articles(days=7):
 def get_analytics_for_url(url, days=30):
     """מושך נתוני צפיות לכתבה ספציפית"""
     try:
-        import json as _json
+        import json as _json, base64, time as _time
         from urllib.parse import urlparse
         sa_json = os.environ.get("GA_SERVICE_ACCOUNT_JSON","")
         property_id = os.environ.get("GA_PROPERTY_ID","")
         if not sa_json or not property_id:
             return None
-        import google.oauth2.service_account as sa
-        import googleapiclient.discovery as discovery
-        creds = sa.Credentials.from_service_account_info(
-            _json.loads(sa_json),
-            scopes=["https://www.googleapis.com/auth/analytics.readonly"]
-        )
-        service = discovery.build("analyticsdata", "v1beta", credentials=creds)
+
+        sa = _json.loads(sa_json)
+        now = int(_time.time())
+        header = base64.urlsafe_b64encode(_json.dumps({"alg":"RS256","typ":"JWT"}).encode()).rstrip(b'=').decode()
+        payload_data = base64.urlsafe_b64encode(_json.dumps({
+            "iss": sa["client_email"],
+            "scope": "https://www.googleapis.com/auth/analytics.readonly",
+            "aud": "https://oauth2.googleapis.com/token",
+            "exp": now + 3600, "iat": now
+        }).encode()).rstrip(b'=').decode()
+
+        from cryptography.hazmat.primitives import serialization, hashes
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.backends import default_backend
+        key = serialization.load_pem_private_key(sa["private_key"].encode(), password=None, backend=default_backend())
+        sig = base64.urlsafe_b64encode(key.sign(f"{header}.{payload_data}".encode(), padding.PKCS1v15(), hashes.SHA256())).rstrip(b'=').decode()
+        jwt = f"{header}.{payload_data}.{sig}"
+        token_resp = requests.post("https://oauth2.googleapis.com/token",
+            data={"grant_type":"urn:ietf:params:oauth:grant-type:jwt-bearer","assertion":jwt}, timeout=15)
+        if not token_resp.ok:
+            return None
+        token = token_resp.json().get("access_token")
+
         path = urlparse(url).path
         body = {
-            "dateRanges": [{"startDate": "30daysAgo", "endDate": "today"}],
-            "dimensions": [{"name": "pagePath"}],
-            "metrics": [{"name": "screenPageViews"}, {"name": "totalUsers"}],
+            "dateRanges": [{"startDate": f"{days}daysAgo", "endDate": "today"}],
+            "dimensions": [{"name":"pagePath"}],
+            "metrics": [{"name":"screenPageViews"},{"name":"totalUsers"}],
             "dimensionFilter": {
-                "filter": {
-                    "fieldName": "pagePath",
-                    "stringFilter": {"matchType": "EXACT", "value": path}
-                }
+                "filter": {"fieldName":"pagePath","stringFilter":{"matchType":"EXACT","value":path}}
             }
         }
-        resp = service.properties().runReport(
-            property=f"properties/{property_id}", body=body
-        ).execute()
-        rows = resp.get("rows", [])
+        resp = requests.post(
+            f"https://analyticsdata.googleapis.com/v1beta/properties/{property_id}:runReport",
+            headers={"Authorization": f"Bearer {token}"},
+            json=body, timeout=15
+        )
+        if not resp.ok:
+            return None
+        rows = resp.json().get("rows",[])
         if rows:
-            mets = rows[0].get("metricValues", [])
-            return {
-                "views": int(mets[0].get("value",0)) if mets else 0,
-                "users": int(mets[1].get("value",0)) if len(mets)>1 else 0,
-                "path": path
-            }
-        return {"views": 0, "users": 0, "path": path}
+            mets = rows[0].get("metricValues",[])
+            return {"views": int(mets[0].get("value",0)) if mets else 0,
+                    "users": int(mets[1].get("value",0)) if len(mets)>1 else 0}
+        return {"views": 0, "users": 0}
     except Exception as e:
         print(f"שגיאה URL Analytics: {e}", flush=True)
         return None
@@ -1579,13 +1630,15 @@ def edit_message(chat_id, message_id, text, reply_markup=None):
     except Exception as e:
         print(f"שגיאה edit_message: {e}", flush=True)
 
-def send_status(chat_id, text):
+def send_status(chat_id, text, reply_markup=None):
     """שולח הודעת סטטוס ומחזיר message_id לעדכונים עתידיים"""
     try:
+        data = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+        if reply_markup:
+            data["reply_markup"] = json.dumps(reply_markup)
         resp = requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
-            timeout=10
+            json=data, timeout=10
         )
         if resp.ok:
             return resp.json().get("result", {}).get("message_id")
