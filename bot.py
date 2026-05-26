@@ -6037,29 +6037,32 @@ def post_to_facebook(text, image_bytes=None, link=None):
         return False, str(e)
 
 def upload_pdf_to_wp(pdf_bytes, filename):
-    """מעלה PDF לוורדפרס ומחזיר (id, url)"""
+    """מעלה PDF לוורדפרס"""
     try:
-        import re as _re
-        # שם קובץ בטוח – רק ASCII
-        safe_name = _re.sub(r'[^\w\-.]', '_', filename)
-        if not safe_name.endswith('.pdf'):
-            safe_name += '.pdf'
+        import time as _time
+        # שם קובץ ASCII בלבד
+        safe_name = f"doc_{int(_time.time())}.pdf"
         url = f"{WP_URL}/media"
         resp = requests.post(url,
-            headers={"Content-Disposition": f'attachment; filename="{safe_name}"',
-                     "Content-Type": "application/pdf"},
+            headers={
+                "Content-Disposition": f'attachment; filename="{safe_name}"',
+                "Content-Type": "application/pdf"
+            },
             data=pdf_bytes,
             auth=(WP_USER, WP_PASSWORD), timeout=60)
         if resp.status_code == 201:
             data = resp.json()
-            # עדכן כותרת לשם העברי
             media_id = data.get("id")
-            if media_id and safe_name != filename:
+            pdf_url = data.get("source_url","")
+            # עדכן כותרת לשם המקורי
+            display_name = filename.replace('.pdf','').replace('_',' ')
+            if media_id:
                 requests.post(f"{WP_URL}/media/{media_id}",
-                    json={"title": filename.replace('.pdf','')},
+                    json={"title": display_name, "alt_text": display_name},
                     auth=(WP_USER, WP_PASSWORD), timeout=10)
-            return media_id, data.get("source_url","")
-        print(f"PDF upload error: {resp.status_code} {resp.text[:100]}", flush=True)
+            print(f"✅ PDF הועלה: {pdf_url}", flush=True)
+            return media_id, pdf_url
+        print(f"PDF upload error: {resp.status_code} {resp.text[:200]}", flush=True)
         return None, None
     except Exception as e:
         print(f"שגיאה upload_pdf: {e}", flush=True)
