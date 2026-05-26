@@ -1309,6 +1309,132 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
+def get_analytics_data(days=7):
+    """מושך נתוני Google Analytics לפי תקופה"""
+    try:
+        import json as _json
+        sa_json = os.environ.get("GA_SERVICE_ACCOUNT_JSON","")
+        property_id = os.environ.get("GA_PROPERTY_ID","")
+        if not sa_json or not property_id:
+            return None
+        import google.oauth2.service_account as sa
+        import googleapiclient.discovery as discovery
+        creds = sa.Credentials.from_service_account_info(
+            _json.loads(sa_json),
+            scopes=["https://www.googleapis.com/auth/analytics.readonly"]
+        )
+        service = discovery.build("analyticsdata", "v1beta", credentials=creds)
+        period = f"{days}daysAgo" if days > 1 else "today"
+        body = {
+            "dateRanges": [{"startDate": period, "endDate": "today"}],
+            "metrics": [
+                {"name": "sessions"},
+                {"name": "totalUsers"},
+                {"name": "screenPageViews"}
+            ]
+        }
+        resp = service.properties().runReport(
+            property=f"properties/{property_id}", body=body
+        ).execute()
+        totals = resp.get("totals",[{}])[0].get("metricValues",[])
+        return {
+            "sessions": int(totals[0].get("value",0)) if totals else 0,
+            "users": int(totals[1].get("value",0)) if len(totals)>1 else 0,
+            "views": int(totals[2].get("value",0)) if len(totals)>2 else 0,
+        }
+    except Exception as e:
+        print(f"שגיאה Analytics: {e}", flush=True)
+        return None
+
+def get_analytics_top_articles(days=7):
+    """מושך 5 הכתבות הנצפות ביותר"""
+    try:
+        import json as _json
+        sa_json = os.environ.get("GA_SERVICE_ACCOUNT_JSON","")
+        property_id = os.environ.get("GA_PROPERTY_ID","")
+        if not sa_json or not property_id:
+            return None
+        import google.oauth2.service_account as sa
+        import googleapiclient.discovery as discovery
+        creds = sa.Credentials.from_service_account_info(
+            _json.loads(sa_json),
+            scopes=["https://www.googleapis.com/auth/analytics.readonly"]
+        )
+        service = discovery.build("analyticsdata", "v1beta", credentials=creds)
+        period = f"{days}daysAgo" if days > 1 else "today"
+        body = {
+            "dateRanges": [{"startDate": period, "endDate": "today"}],
+            "dimensions": [{"name": "pageTitle"}, {"name": "pagePath"}],
+            "metrics": [{"name": "screenPageViews"}],
+            "orderBys": [{"metric": {"metricName": "screenPageViews"}, "desc": True}],
+            "limit": 5
+        }
+        resp = service.properties().runReport(
+            property=f"properties/{property_id}", body=body
+        ).execute()
+        wp_url = os.environ.get("WP_SITE_URL", "https://chabadupdates.com")
+        results = []
+        for row in resp.get("rows", []):
+            dims = row.get("dimensionValues", [])
+            mets = row.get("metricValues", [])
+            title = dims[0].get("value","") if dims else ""
+            path = dims[1].get("value","") if len(dims)>1 else ""
+            views = int(mets[0].get("value",0)) if mets else 0
+            if title and title != "(not set)":
+                results.append({
+                    "title": title,
+                    "url": wp_url + path,
+                    "views": views
+                })
+        return results
+    except Exception as e:
+        print(f"שגיאה Top Articles: {e}", flush=True)
+        return None
+
+def get_analytics_for_url(url, days=30):
+    """מושך נתוני צפיות לכתבה ספציפית"""
+    try:
+        import json as _json
+        from urllib.parse import urlparse
+        sa_json = os.environ.get("GA_SERVICE_ACCOUNT_JSON","")
+        property_id = os.environ.get("GA_PROPERTY_ID","")
+        if not sa_json or not property_id:
+            return None
+        import google.oauth2.service_account as sa
+        import googleapiclient.discovery as discovery
+        creds = sa.Credentials.from_service_account_info(
+            _json.loads(sa_json),
+            scopes=["https://www.googleapis.com/auth/analytics.readonly"]
+        )
+        service = discovery.build("analyticsdata", "v1beta", credentials=creds)
+        path = urlparse(url).path
+        body = {
+            "dateRanges": [{"startDate": "30daysAgo", "endDate": "today"}],
+            "dimensions": [{"name": "pagePath"}],
+            "metrics": [{"name": "screenPageViews"}, {"name": "totalUsers"}],
+            "dimensionFilter": {
+                "filter": {
+                    "fieldName": "pagePath",
+                    "stringFilter": {"matchType": "EXACT", "value": path}
+                }
+            }
+        }
+        resp = service.properties().runReport(
+            property=f"properties/{property_id}", body=body
+        ).execute()
+        rows = resp.get("rows", [])
+        if rows:
+            mets = rows[0].get("metricValues", [])
+            return {
+                "views": int(mets[0].get("value",0)) if mets else 0,
+                "users": int(mets[1].get("value",0)) if len(mets)>1 else 0,
+                "path": path
+            }
+        return {"views": 0, "users": 0, "path": path}
+    except Exception as e:
+        print(f"שגיאה URL Analytics: {e}", flush=True)
+        return None
+
 def get_fb_stats():
     """מושך סטטיסטיקות פייסבוק"""
     try:
@@ -1406,11 +1532,11 @@ offset = 0
 ADMIN_MENU = {
     "keyboard": [
         [{"text": "✍️ כתבה חדשה"}, {"text": "🤖 העלאה חכמה"}],
-        [{"text": "🎉 מזל טוב"}, {"text": "🎬 העלאה ליוטיוב"}],
-        [{"text": "✏️ עריכת כתבה"}, {"text": "🗑️ מחיקת כתבה"}],
-        [{"text": "📋 כתבות אחרונות"}, {"text": "📝 טיוטות"}],
-        [{"text": "📢 הפצת תוכן"}, {"text": "🎥 הפצת וידאו"}],
-        [{"text": "⚙️ פעולות נוספות"}],
+        [{"text": "⚡ העלאה חכמה מהירה"}, {"text": "🎉 מזל טוב"}],
+        [{"text": "🎬 העלאה ליוטיוב"}, {"text": "✏️ עריכת כתבה"}],
+        [{"text": "🗑️ מחיקת כתבה"}, {"text": "📋 כתבות אחרונות"}],
+        [{"text": "📝 טיוטות"}, {"text": "📢 הפצת תוכן"}],
+        [{"text": "🎥 הפצת וידאו"}, {"text": "⚙️ פעולות נוספות"}],
     ],
     "resize_keyboard": True,
     "persistent": True
@@ -1419,11 +1545,11 @@ ADMIN_MENU = {
 SENIOR_EDITOR_MENU = {
     "keyboard": [
         [{"text": "✍️ כתבה חדשה"}, {"text": "🤖 העלאה חכמה"}],
-        [{"text": "🎉 מזל טוב"}, {"text": "🎬 העלאה ליוטיוב"}],
-        [{"text": "✏️ עריכת כתבה"}, {"text": "🗑️ מחיקת כתבה"}],
-        [{"text": "📋 כתבות אחרונות"}, {"text": "📝 טיוטות"}],
-        [{"text": "📢 הפצת תוכן"}, {"text": "🎥 הפצת וידאו"}],
-        [{"text": "⚙️ פעולות נוספות"}],
+        [{"text": "⚡ העלאה חכמה מהירה"}, {"text": "🎉 מזל טוב"}],
+        [{"text": "🎬 העלאה ליוטיוב"}, {"text": "✏️ עריכת כתבה"}],
+        [{"text": "🗑️ מחיקת כתבה"}, {"text": "📋 כתבות אחרונות"}],
+        [{"text": "📝 טיוטות"}, {"text": "📢 הפצת תוכן"}],
+        [{"text": "🎥 הפצת וידאו"}, {"text": "⚙️ פעולות נוספות"}],
     ],
     "resize_keyboard": True,
     "persistent": True
@@ -2177,30 +2303,34 @@ def auto_detect_geresh(text):
             print(f"📝 נוסף לרשימת גרשיים: {normalized}", flush=True)
 
 def fix_geresh(text):
-    """מנקה בעיות גרשיים בטקסט שהגיע מ-AI"""
+    """מנקה גרשיים בטקסט – מוחק כל ״ שלא שייך למילה מוכרת"""
     import re
     if not text:
         return text
-    # שלב 1: תקן ״" לפני אות → רווח
-    text = re.sub(r'״"([א-ת])', r'״ \1', text)
-    # שלב 2: החלף " רגיל בין אותיות עבריות ב-״
+
+    # שלב 1: נרמל גרשיים – " רגיל בין עבריות → ״
     text = re.sub(r'([א-ת])"([א-ת])', r'\1״\2', text)
-    text = re.sub(r'([א-ת])"([\s,.\-:!?•]|$)', r'\1״\2', text)
-    # שלב 3: נקה ״״ כפול
-    text = text.replace('״״', '״')
-    # שלב 4: שמור מילים מוכרות עם placeholder
-    pre_placeholders = {}
+
+    # שלב 2: שמור placeholder לכל מילה מוכרת ברשימה
+    placeholders = {}
     for i, word in enumerate(GERESH_WORDS):
-        pattern = r'(?<![א-ת])' + re.escape(word) + r'(?![א-ת])'
+        pattern = r'(?<![א-ת])' + re.escape(word) + r'(?![א-ת״])'
         if re.search(pattern, text):
-            ph = f"__PRE{i}__"
-            pre_placeholders[ph] = word
+            ph = f"__GW{i}__"
+            placeholders[ph] = word
             text = re.sub(pattern, ph, text)
-    # שלב 5: כל ״ שדבוק לאות הבאה – הוסף רווח
-    text = re.sub(r'(״)([א-ת])', r'״ \2', text)
-    # שלב 6: שחזר מילים מוכרות
-    for ph, word in pre_placeholders.items():
+
+    # שלב 3: מחק כל ״ שנותר – הוא לא שייך לאף מילה מוכרת
+    text = text.replace('״', '')
+    text = text.replace('"', '')  # גם מרכאות רגילות
+
+    # שלב 4: שחזר מילים מוכרות
+    for ph, word in placeholders.items():
         text = text.replace(ph, word)
+
+    # שלב 5: נקה רווחים כפולים
+    text = re.sub(r' +', ' ', text)
+
     return text
 
 def build_groq_prompt(text):
@@ -2243,10 +2373,11 @@ def build_prompt(text):
 תגיות:
 - 5-8 מילות מפתח מהטקסט
 
-גרשיים – כלל ברזל:
-- גרש עברי ״ מותר רק במילים שבטקסט המקורי כתובות עם " כמו חב"ד, ל"ג, משב"ק
-- אסור לשים ״ על שמות, ציטוטים, כותרות ספרים, שמות מקומות
-- ציטוטים: כתוב בלי מרכאות בכלל
+גרשיים – כלל ברזל מוחלט:
+- גרש ״ מותר רק במילים שבטקסט המקורי כתובות עם " ביניהן, כגון: חב"ד, ל"ג, ח"כ, יו"ר, מנכ"ל
+- אסור בהחלט לשים ״ על שמות פרטיים, שמות מקומות, כותרות ספרים, ציטוטים, שמות ישיבות, שמות רחובות
+- ציטוטים: כתוב ללא מרכאות בכלל
+- אם ספק – אל תשים ״
 
 החזר JSON בלבד ללא שום טקסט נוסף:
 {{"title":"...","subtitle":"...","red_title":"...","body":"...","tags":["...","...","...","...","..."]}}
@@ -2641,6 +2772,32 @@ def handle_message(msg):
                 [{"text": "🌐 ניהול רשתות", "callback_data": "mgmt_networks"}],
             ]
         send_message(chat_id, "⚙️ <b>פעולות נוספות</b>", keyboard)
+        return
+
+    if text == "⚡ העלאה חכמה מהירה" and is_editor(user_id):
+        draft["step"] = "quick_upload_collect"
+        draft["quick_texts"] = []
+        draft["gallery"] = []
+        draft["quick_videos"] = []
+        draft["quick_pdfs"] = []
+        draft["quick_audio"] = []
+        msg_id = send_status(chat_id,
+            "⚡ <b>העלאה חכמה מהירה</b>\n\n"
+            "שלח הכל בבת אחת:\n"
+            "📝 טקסט גולמי\n"
+            "🖼 תמונות\n"
+            "🎬 וידאו\n"
+            "📄 PDF\n"
+            "🎵 קבצי שמע\n\n"
+            "כשתסיים לחץ <b>✅ סיום</b>", {
+            "inline_keyboard": [[{"text": "✅ סיום – עבד!",
+                                   "callback_data": "quick_upload_done"}]]
+        })
+        draft["quick_status_msg_id"] = msg_id
+        return
+
+    if text == "⚡ העלאה חכמה מהירה" and not is_editor(user_id):
+        send_message(chat_id, "⛔ <b>אין הרשאה</b>")
         return
 
     if text == "📢 הפצת תוכן" and is_editor(user_id):
@@ -3714,13 +3871,82 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             send_message(chat_id, "⚠️ שלח קובץ וידאו או לינק Drive:")
         return True
 
+    elif step == "quick_upload_collect":
+        msg_id = draft.get("quick_status_msg_id")
+        collected = []
+        if text and text not in ("✅ סיום", "/done"):
+            draft["quick_texts"].append(text)
+            collected.append("📝 טקסט")
+        if "photo" in msg:
+            photo = msg["photo"][-1]
+            content = get_file(photo["file_id"])
+            if content:
+                draft["gallery"].append(content)
+                if not draft.get("main_image"):
+                    draft["main_image"] = content
+                collected.append(f"🖼 תמונה ({len(draft['gallery'])})")
+        if "document" in msg:
+            doc = msg["document"]
+            mime = doc.get("mime_type","")
+            content = get_file(doc["file_id"])
+            if content:
+                if "pdf" in mime:
+                    draft["quick_pdfs"].append({"bytes": content, "name": doc.get("file_name","doc.pdf")})
+                    collected.append("📄 PDF")
+                elif "audio" in mime or "ogg" in mime:
+                    draft["quick_audio"].append({"bytes": content, "name": doc.get("file_name","audio.mp3")})
+                    collected.append("🎵 שמע")
+                else:
+                    draft["gallery"].append(content)
+                    collected.append("📎 קובץ")
+        if "audio" in msg or "voice" in msg:
+            obj = msg.get("audio") or msg.get("voice")
+            content = get_file(obj["file_id"])
+            if content:
+                draft["quick_audio"].append({"bytes": content, "name": "audio.ogg"})
+                collected.append("🎵 שמע")
+        if "video" in msg:
+            content = get_file(msg["video"]["file_id"])
+            if content:
+                draft["quick_videos"].append(content)
+                collected.append("🎬 וידאו")
+
+        # עדכן הודעת סטטוס
+        if collected and msg_id:
+            summary = []
+            if draft["quick_texts"]: summary.append(f"📝 {len(draft['quick_texts'])} טקסטים")
+            if draft["gallery"]: summary.append(f"🖼 {len(draft['gallery'])} תמונות")
+            if draft["quick_videos"]: summary.append(f"🎬 {len(draft['quick_videos'])} סרטונים")
+            if draft["quick_pdfs"]: summary.append(f"📄 {len(draft['quick_pdfs'])} PDF")
+            if draft["quick_audio"]: summary.append(f"🎵 {len(draft['quick_audio'])} שמע")
+            edit_message(chat_id, msg_id,
+                f"⚡ <b>מקבל חומרים...</b>\n\n" + "\n".join(summary) + "\n\nכשתסיים לחץ <b>✅ סיום</b>", {
+                "inline_keyboard": [[{"text": "✅ סיום – עבד!", "callback_data": "quick_upload_done"}]]
+            })
+        return True
+
+    elif step == "analytics_url_input":
+        msg_id = send_status(chat_id, "⏳ בודק צפיות לכתבה...")
+        def _check_url(u=text, m=msg_id):
+            data = get_analytics_for_url(u)
+            if data:
+                edit_message(chat_id, m, f"""🔍 <b>סטטיסטיקות כתבה</b>
+
+🔗 {u}
+
+👁 צפיות (30 יום): <b>{data.get('views','--')}</b>
+👤 משתמשים: <b>{data.get('users','--')}</b>""")
+            else:
+                edit_message(chat_id, m, "❌ לא הצלחתי למצוא נתונים לכתבה זו.")
+        threading.Thread(target=_check_url, daemon=True).start()
+        draft["step"] = "idle"
+        return True
+
     elif step == "wm_text_input":
         watermark_settings["text"] = text.strip()
         send_message(chat_id, f"✅ טקסט עודכן: <b>{text.strip()}</b>")
         draft["step"] = "idle"
         return True
-
-    elif step == "wm_fontsize_input":
         try:
             size = int(text.strip())
             if 10 <= size <= 200:
@@ -4584,62 +4810,65 @@ def handle_callback(cb):
     elif cb_data == "email_approve":
         pending = email_system.get("pending_email", {})
         if pending.get("type") == "article":
-            send_message(chat_id, "⏳ Gemini מעבד את המייל...")
-            body = pending.get("body", "")
-            result = process_with_gemini(body)
+            msg_id = send_status(chat_id, "🤖 <b>מעבד מייל עם AI...</b>")
+            body_text = pending.get("body", "")
+            result = process_with_gemini(body_text)
             if result:
                 new_draft = {
                     "step": "smart_preview",
                     "title": result.get("title", ""),
                     "subtitle": result.get("subtitle", ""),
                     "red_title": result.get("red_title", ""),
-                    "body": convert_whatsapp_format(result.get("body", body)),
+                    "body": convert_whatsapp_format(result.get("body", body_text)),
                     "tags": result.get("tags", []),
                     "gallery": [],
                     "categories": [],
                     "cat_names": [],
                     "from_email": True
                 }
-                # בחר קטגוריות אוטומטית
                 cats, cat_names = auto_select_categories(new_draft["title"], new_draft["body"])
                 new_draft["categories"] = cats
                 new_draft["cat_names"] = cat_names
-                # הוסף תמונות מהמייל
+                # תמונות
                 images = pending.get("images", [])
                 if images:
                     new_draft["main_image"] = images[0]
-                    new_draft["gallery"] = images[1:]
-                # העלה סרטונים ל-Vimeo
+                    new_draft["gallery"] = list(images[1:])
+                # PDF
+                pdfs = pending.get("pdfs", [])
+                if pdfs:
+                    edit_message(chat_id, msg_id, f"📄 <b>מעלה {len(pdfs)} קבצי PDF...</b>")
+                    for pdf in pdfs:
+                        _, pdf_url = upload_pdf_to_wp(pdf["bytes"], pdf["name"])
+                        if pdf_url:
+                            new_draft.setdefault("pdfs", []).append({"url": pdf_url, "name": pdf["name"]})
+                # סרטונים
                 videos = pending.get("videos", [])
                 if videos:
-                    send_message(chat_id, f"⏳ מעלה {len(videos)} סרטונים ל-Vimeo...")
+                    edit_message(chat_id, msg_id, f"🎬 <b>מעלה {len(videos)} סרטונים ל-Vimeo...</b>")
                     vimeo_urls = []
-                    vimeo_ids = []
                     for i, vid_bytes in enumerate(videos):
-                        result_v = upload_to_vimeo(vid_bytes, new_draft.get("title", f"סרטון {i+1}"), chat_id)
-                        if result_v and isinstance(result_v, tuple):
-                            url, vid_id = result_v
+                        res_v = upload_to_vimeo(vid_bytes, new_draft.get("title", f"סרטון {i+1}"), chat_id)
+                        if res_v and isinstance(res_v, tuple):
+                            url, vid_id = res_v
                             if url:
                                 vimeo_urls.append(url)
-                                vimeo_ids.append(vid_id)
                     if vimeo_urls:
                         new_draft["videos"] = vimeo_urls
-                        new_draft["vimeo_ids"] = vimeo_ids
-                        send_message(chat_id, f"✅ {len(vimeo_urls)} סרטונים עלו ל-Vimeo!")
                 drafts[user_id] = new_draft
                 import re
                 body_preview = re.sub(r'<[^>]+>', '', new_draft["body"])[:300]
-                preview = f"""📧 <b>כתבה ממייל – תצוגה מקדימה:</b>
+                edit_message(chat_id, msg_id, f"""📧 <b>כתבה ממייל – תצוגה מקדימה:</b>
 
 <b>כותרת:</b> {new_draft['title']}
 <b>כותרת משנה:</b> {new_draft['subtitle']}
 <b>כותרת אדומה:</b> {new_draft['red_title']}
+<b>קטגוריות:</b> {', '.join(new_draft.get('cat_names',[]))}
 <b>תגיות:</b> {', '.join(new_draft['tags'])}
-<b>תמונות:</b> {len(images)}
+<b>תמונות:</b> {len(images)} | <b>PDF:</b> {len(pdfs)}
 
 <b>גוף:</b>
-{body_preview}{'...' if len(new_draft['body']) > 300 else ''}"""
-                send_message(chat_id, preview, {
+{body_preview}{'...' if len(new_draft['body']) > 300 else ''}""", {
                     "inline_keyboard": [
                         [{"text": "✅ מאשר, המשך", "callback_data": "smart_approve"}],
                         [{"text": "✨ שפר כותרות", "callback_data": "smart_improve_titles"}],
@@ -4649,7 +4878,13 @@ def handle_callback(cb):
                     ]
                 })
             else:
-                send_message(chat_id, "⚠️ <b>שגיאה בעיבוד</b>\n\nנסה שוב.", get_menu(user_id))
+                edit_message(chat_id, msg_id, "⚠️ <b>AI לא הצליח לעבד</b>\n\nמה תרצה לעשות?", {
+                    "inline_keyboard": [
+                        [{"text": "🔄 נסה שוב", "callback_data": "email_approve"}],
+                        [{"text": "❌ ביטול", "callback_data": "email_reject"}]
+                    ]
+                })
+                return  # שמור pending_email לניסיון חוזר
             email_system["pending_email"] = {}
 
     elif cb_data == "email_reject":
@@ -4808,19 +5043,53 @@ def handle_callback(cb):
         })
 
     elif cb_data == "mgmt_analytics":
-        send_message(chat_id, "⏳ מושך נתוני Analytics...")
-        def _load_analytics():
-            data = get_analytics_data()
+        send_message(chat_id, "📈 <b>אנליטיקס</b>\n\nבחר תקופה:", {
+            "inline_keyboard": [
+                [{"text": "📅 היום", "callback_data": "analytics_1"},
+                 {"text": "📅 שבוע", "callback_data": "analytics_7"}],
+                [{"text": "📅 חודש", "callback_data": "analytics_30"},
+                 {"text": "📅 שנה", "callback_data": "analytics_365"}],
+                [{"text": "🏆 5 הנצפות – היום", "callback_data": "top5_1"},
+                 {"text": "🏆 5 הנצפות – שבוע", "callback_data": "top5_7"}],
+                [{"text": "🏆 5 הנצפות – חודש", "callback_data": "top5_30"}],
+                [{"text": "🔍 בדוק כתבה ספציפית", "callback_data": "analytics_specific"}]
+            ]
+        })
+
+    elif cb_data.startswith("analytics_") and not cb_data.startswith("analytics_specific"):
+        days = int(cb_data.replace("analytics_", ""))
+        period_names = {1:"היום", 7:"שבוע אחרון", 30:"חודש אחרון", 365:"שנה אחרונה"}
+        msg_id = send_status(chat_id, f"⏳ מושך נתוני {period_names.get(days,'')}...")
+        def _load(d=days, m=msg_id, p=period_names.get(days,'')):
+            data = get_analytics_data(d)
             if data:
-                msg = f"""📈 <b>Google Analytics – 7 ימים</b>
+                edit_message(chat_id, m, f"""📈 <b>אנליטיקס – {p}</b>
 
 🔵 סשנים: <b>{data.get('sessions','--')}</b>
 👤 משתמשים: <b>{data.get('users','--')}</b>
-👁 צפיות: <b>{data.get('views','--')}</b>"""
-                send_message(chat_id, msg)
+👁 צפיות: <b>{data.get('views','--')}</b>""")
             else:
-                send_message(chat_id, "❌ לא הצלחתי למשוך נתונים.")
-        threading.Thread(target=_load_analytics, daemon=True).start()
+                edit_message(chat_id, m, "❌ לא הצלחתי למשוך נתונים.\n\nוודא שמשתנה GA_SERVICE_ACCOUNT_JSON מוגדר ב-Render.")
+        threading.Thread(target=_load, daemon=True).start()
+
+    elif cb_data.startswith("top5_"):
+        days = int(cb_data.replace("top5_", ""))
+        period_names = {1:"היום", 7:"שבוע", 30:"חודש"}
+        msg_id = send_status(chat_id, f"⏳ מושך 5 הכתבות הנצפות – {period_names.get(days,'')}...")
+        def _top5(d=days, m=msg_id, p=period_names.get(days,'')):
+            data = get_analytics_top_articles(d)
+            if data:
+                msg = f"🏆 <b>5 הכתבות הנצפות – {p}:</b>\n\n"
+                for i, art in enumerate(data[:5], 1):
+                    msg += f"{i}. <b>{art['title']}</b>\n   👁 {art['views']} צפיות\n   🔗 {art['url']}\n\n"
+                edit_message(chat_id, m, msg)
+            else:
+                edit_message(chat_id, m, "❌ לא הצלחתי למשוך נתונים.")
+        threading.Thread(target=_top5, daemon=True).start()
+
+    elif cb_data == "analytics_specific":
+        draft["step"] = "analytics_url_input"
+        send_message(chat_id, "🔍 שלח את ה-URL של הכתבה לבדיקה:")
 
     elif cb_data == "mgmt_networks":
         fb_ok = "✅" if os.environ.get("FB_PAGE_TOKEN") else "❌"
@@ -4834,6 +5103,84 @@ def handle_callback(cb):
                 [{"text": "🖼 הגדרות ווטרמארק", "callback_data": "watermark_settings"}]
             ]
         })
+
+    elif cb_data == "quick_upload_done":
+        msg_id = draft.get("quick_status_msg_id") or send_status(chat_id, "⚡ מעבד...")
+        texts = draft.get("quick_texts", [])
+        videos = draft.get("quick_videos", [])
+        pdfs = draft.get("quick_pdfs", [])
+        audio = draft.get("quick_audio", [])
+
+        if not texts:
+            edit_message(chat_id, msg_id, "⚠️ לא קיבלתי טקסט. שלח שוב עם טקסט.", {
+                "inline_keyboard": [[{"text": "↩️ חזרה", "callback_data": "publish_cancel"}]]
+            })
+            return
+
+        def _process():
+            # שלב 1 – עיבוד AI
+            edit_message(chat_id, msg_id, "🤖 <b>מעבד עם AI...</b>\n\n🔍 מנתח טקסט...")
+            full_text = "\n\n".join(texts)
+            stop = [False]
+            steps_an = ["🔍 מנתח טקסט...", "⚡ מחלץ מידע...", "✍️ יוצר כותרות...", "🎯 בוחר קטגוריות...", "🚀 כמעט מוכן..."]
+            def _anim():
+                i = 0
+                while not stop[0]:
+                    time.sleep(3)
+                    if not stop[0]:
+                        edit_message(chat_id, msg_id, f"🤖 <b>מעבד עם AI...</b>\n\n{steps_an[i % len(steps_an)]}")
+                        i += 1
+            threading.Thread(target=_anim, daemon=True).start()
+            result = process_with_gemini(full_text)
+            stop[0] = True
+
+            if not result:
+                edit_message(chat_id, msg_id, "⚠️ <b>AI לא הצליח לעבד</b>\n\nמה תרצה לעשות?", {
+                    "inline_keyboard": [
+                        [{"text": "🔄 נסה שוב", "callback_data": "quick_upload_done"}],
+                        [{"text": "↩️ ביטול", "callback_data": "publish_cancel"}]
+                    ]
+                })
+                return
+
+            # שמור תוצאות ב-draft
+            draft["title"] = result.get("title","")
+            draft["subtitle"] = result.get("subtitle","")
+            draft["red_title"] = result.get("red_title","")
+            draft["body"] = result.get("body","")
+            draft["tags"] = result.get("tags",[])
+            cats, cat_names = auto_select_categories(draft["title"], draft["body"])
+            draft["categories"] = cats
+            draft["cat_names"] = cat_names
+
+            # שלב 2 – העלאת מדיה
+            if videos:
+                edit_message(chat_id, msg_id, "🎬 <b>מעלה וידאו ל-Vimeo...</b>")
+                for vid in videos[:1]:
+                    vimeo_url, vimeo_id = upload_to_vimeo(vid, draft["title"], chat_id=None)
+                    if vimeo_url:
+                        draft["vimeo_url"] = vimeo_url
+                        draft["vimeo_id"] = vimeo_id
+
+            if pdfs:
+                edit_message(chat_id, msg_id, "📄 <b>מעלה PDF...</b>")
+                for pdf in pdfs:
+                    _, pdf_url = upload_pdf_to_wp(pdf["bytes"], pdf["name"])
+                    if pdf_url:
+                        draft.setdefault("pdfs", []).append({"url": pdf_url, "name": pdf["name"]})
+
+            if audio:
+                edit_message(chat_id, msg_id, "🎵 <b>מעלה שמע...</b>")
+                for aud in audio:
+                    _, aud_url = upload_audio_to_wp(aud["bytes"], aud["name"])
+                    if aud_url:
+                        draft.setdefault("audio_files", []).append({"url": aud_url, "name": aud["name"]})
+
+            # שלב 3 – תצוגה מקדימה
+            draft["step"] = "idle"
+            show_smart_preview(chat_id, draft)
+
+        threading.Thread(target=_process, daemon=True).start()
 
     elif cb_data == "watermark_settings":
         wm = watermark_settings
@@ -6194,17 +6541,63 @@ def check_emails():
             body = ""
             images = []
             videos = []
+            pdfs = []
+            drive_urls = []
 
             for part in msg.walk():
                 ctype = part.get_content_type()
+                disposition = part.get("Content-Disposition", "")
+
                 if ctype == "text/plain" and not body:
                     payload = part.get_payload(decode=True)
                     if payload:
-                        body = payload.decode("utf-8", errors="ignore")
+                        raw = payload.decode("utf-8", errors="ignore")
+                        # חלץ לינקי Drive מהטקסט
+                        import re as _re
+                        drive_links = _re.findall(r'https://drive\.google\.com/\S+', raw)
+                        drive_urls.extend(drive_links)
+                        body = raw
+
+                elif ctype == "text/html":
+                    payload = part.get_payload(decode=True)
+                    if payload:
+                        html = payload.decode("utf-8", errors="ignore")
+                        import re as _re
+                        # חלץ לינקי Drive מה-HTML
+                        drive_links = _re.findall(r'https://drive\.google\.com/\S+?(?="|\s|<)', html)
+                        drive_urls.extend(drive_links)
+
                 elif ctype.startswith("image/"):
-                    images.append(part.get_payload(decode=True))
+                    data = part.get_payload(decode=True)
+                    if data:
+                        images.append(data)
+
                 elif ctype.startswith("video/"):
-                    videos.append(part.get_payload(decode=True))
+                    data = part.get_payload(decode=True)
+                    if data:
+                        videos.append(data)
+
+                elif ctype == "application/pdf" or "pdf" in disposition.lower():
+                    data = part.get_payload(decode=True)
+                    fname = part.get_filename() or "document.pdf"
+                    if data:
+                        pdfs.append({"bytes": data, "name": fname})
+
+            # הורד תמונות מ-Drive אם יש
+            for drive_url in drive_urls[:5]:
+                try:
+                    file_id_match = __import__('re').search(r'/d/([a-zA-Z0-9_-]+)', drive_url)
+                    if file_id_match:
+                        fid = file_id_match.group(1)
+                        dl_url = f"https://drive.google.com/uc?export=download&id={fid}"
+                        r = requests.get(dl_url, timeout=20, allow_redirects=True)
+                        ct = r.headers.get("content-type","")
+                        if r.status_code == 200 and "image" in ct:
+                            images.append(r.content)
+                        elif r.status_code == 200 and "video" in ct:
+                            videos.append(r.content)
+                except Exception as e:
+                    print(f"שגיאה הורדת Drive: {e}", flush=True)
 
             # זיהוי כותרות מיוחדות
             if "הוספת תמונות" in subject or "הוספת תמונה" in subject:
@@ -6244,13 +6637,21 @@ def check_emails():
                     "subject": subject,
                     "body": body,
                     "images": images,
-                    "videos": videos
+                    "videos": videos,
+                    "pdfs": pdfs,
+                    "sender": sender_email
                 }
                 preview = body[:200] + "..." if len(body) > 200 else body
+                attachments_info = []
+                if images: attachments_info.append(f"🖼 {len(images)} תמונות")
+                if videos: attachments_info.append(f"🎬 {len(videos)} סרטונים")
+                if pdfs: attachments_info.append(f"📄 {len(pdfs)} PDF")
+                if drive_urls: attachments_info.append(f"☁️ {len(drive_urls)} קבצי Drive")
+                attachments_str = " | ".join(attachments_info) if attachments_info else "ללא קבצים מצורפים"
                 send_message(SUPER_ADMIN_ID,
                     f"📧 <b>מייל חדש מ-{sender_email}</b>\n"
                     f"<b>כותרת:</b> {subject}\n"
-                    f"<b>תמונות:</b> {len(images)} | <b>סרטונים:</b> {len(videos)}\n\n"
+                    f"<b>קבצים:</b> {attachments_str}\n\n"
                     f"<b>תוכן:</b>\n{preview}\n\n"
                     f"האם להכין כתבה?", {
                     "inline_keyboard": [[
