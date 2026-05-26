@@ -5132,9 +5132,9 @@ def handle_callback(cb):
         def _top5(d=days, m=msg_id, p=period_names.get(days,'')):
             data = get_analytics_top_articles(d)
             if data:
-                msg = f"🏆 <b>5 הכתבות הנצפות – {p}:</b>\n\n"
+                msg = f"🏆 <b>5 הכתבות הנצפות ביותר באתר עדכוני חב״ד ב{p} האחרון:</b>\n\n"
                 for i, art in enumerate(data[:5], 1):
-                    msg += f"{i}. <b>{art['title']}</b>\n   👁 {art['views']} צפיות\n   🔗 {art['url']}\n\n"
+                    msg += f"{i}. {art['title']}\n{art['url']}\n\n"
                 edit_message(chat_id, m, msg)
             else:
                 edit_message(chat_id, m, "❌ לא הצלחתי למשוך נתונים.")
@@ -5229,9 +5229,46 @@ def handle_callback(cb):
                     if aud_url:
                         draft.setdefault("audio_files", []).append({"url": aud_url, "name": aud["name"]})
 
-            # שלב 3 – תצוגה מקדימה
-            draft["step"] = "idle"
-            show_smart_preview(chat_id, draft)
+            # שלב 3 – תצוגה מקדימה ישירה ללא בקשת מדיה נוספת
+            draft["step"] = "smart_preview"
+            cats, cat_names = auto_select_categories(draft["title"], draft["body"])
+            draft["categories"] = cats
+            draft["cat_names"] = cat_names
+
+            import re as _re
+            body_preview = _re.sub(r'<[^>]+>', '', draft.get("body",""))[:300]
+            def esc(s): return str(s).replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+
+            summary = []
+            if draft.get("gallery"): summary.append(f"🖼 {len(draft['gallery'])} תמונות")
+            if draft.get("quick_videos"): summary.append(f"🎬 {len(draft['quick_videos'])} סרטונים")
+            if draft.get("quick_pdfs"): summary.append(f"📄 {len(draft['quick_pdfs'])} PDF")
+            if draft.get("quick_audio"): summary.append(f"🎵 {len(draft['quick_audio'])} שמע")
+
+            preview_text = f"""🤖 <b>תצוגה מקדימה:</b>
+
+<b>כותרת:</b> {esc(draft['title'])}
+<b>כותרת משנה:</b> {esc(draft['subtitle'])}
+<b>כותרת אדומה:</b> {esc(draft['red_title'])}
+<b>קטגוריות:</b> {esc(', '.join(cat_names))}
+<b>תגיות:</b> {esc(', '.join(draft.get('tags',[])))}
+{('📎 ' + ' | '.join(summary)) if summary else ''}
+
+<b>גוף:</b>
+{esc(body_preview)}{'...' if len(draft.get('body','')) > 300 else ''}"""
+
+            edit_message(chat_id, msg_id, preview_text, {
+                "inline_keyboard": [
+                    [{"text": "✅ מאשר, פרסם", "callback_data": "smart_approve"}],
+                    [{"text": "✨ שפר כותרות", "callback_data": "smart_improve_titles"}],
+                    [{"text": "✏️ ערוך כותרת", "callback_data": "smart_edit_title"},
+                     {"text": "✏️ ערוך כותרת משנה", "callback_data": "smart_edit_subtitle"}],
+                    [{"text": "✏️ ערוך כותרת אדומה", "callback_data": "smart_edit_red"},
+                     {"text": "✏️ ערוך גוף", "callback_data": "smart_edit_body"}],
+                    [{"text": "🔄 שנה קטגוריות", "callback_data": "smart_change_cats"}],
+                    [{"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+                ]
+            })
 
         threading.Thread(target=_process, daemon=True).start()
 
