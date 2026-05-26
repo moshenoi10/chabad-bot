@@ -1486,6 +1486,101 @@ def get_analytics_for_url(url, days=30):
         print(f"שגיאה URL Analytics: {e}", flush=True)
         return None
 
+def _run_monthly_report(chat_id, year, month):
+    """בונה דוח חודשי של כתבות ומזל טובים"""
+    from datetime import datetime, timedelta
+    import calendar
+
+    hebrew_months = {1:"ינואר",2:"פברואר",3:"מרץ",4:"אפריל",5:"מאי",6:"יוני",
+                    7:"יולי",8:"אוגוסט",9:"ספטמבר",10:"אוקטובר",11:"נובמבר",12:"דצמבר"}
+
+    msg_id = send_status(chat_id, f"📅 <b>מכין דוח {hebrew_months[month]} {year}...</b>")
+
+    try:
+        # גבולות החודש
+        first_day = datetime(year, month, 1)
+        last_day = datetime(year, month, calendar.monthrange(year, month)[1], 23, 59, 59)
+
+        after = first_day.strftime("%Y-%m-%dT00:00:00")
+        before = last_day.strftime("%Y-%m-%dT23:59:59")
+
+        # משוך כל הכתבות של החודש
+        all_posts = []
+        page = 1
+        while True:
+            resp = requests.get(f"{WP_URL}/posts",
+                params={"after": after, "before": before, "per_page": 100,
+                        "page": page, "_fields": "id,title,date,categories,status",
+                        "status": "publish"},
+                auth=(WP_USER, WP_PASSWORD), timeout=15)
+            if not resp.ok or not resp.json():
+                break
+            all_posts.extend(resp.json())
+            if len(resp.json()) < 100:
+                break
+            page += 1
+
+        # הפרד כתבות רגילות ממזל טובים (לפי קטגוריה)
+        # קטגוריית מזל טוב – נחפש בכותרת
+        mazaltov_posts = []
+        regular_posts = []
+        for p in all_posts:
+            title = p.get("title",{}).get("rendered","")
+            if "מזל טוב" in title or "בר מצוה" in title or "נישואין" in title or "לידה" in title:
+                mazaltov_posts.append(p)
+            else:
+                regular_posts.append(p)
+
+        # ארגן לפי יום
+        days_data = {}
+        for p in all_posts:
+            date_str = p["date"][:10]  # YYYY-MM-DD
+            day = int(date_str[8:10])
+            if day not in days_data:
+                days_data[day] = {"regular": 0, "mazaltov": 0, "posts": []}
+            title = p.get("title",{}).get("rendered","")
+            if any(kw in title for kw in ["מזל טוב","בר מצוה","נישואין","לידה"]):
+                days_data[day]["mazaltov"] += 1
+            else:
+                days_data[day]["regular"] += 1
+            days_data[day]["posts"].append(title)
+
+        # בנה הדוח
+        total_regular = len(regular_posts)
+        total_mazaltov = len(mazaltov_posts)
+        total = len(all_posts)
+
+        if total == 0:
+            edit_message(chat_id, msg_id,
+                f"📅 <b>דוח {hebrew_months[month]} {year}</b>\n\nלא נמצאו כתבות בחודש זה.")
+            return
+
+        report = f"📅 <b>פירוט כתבות שפורסמו באתר עדכוני חב״ד\nחודש {hebrew_months[month]} {year}:</b>\n\n"
+
+        for day in sorted(days_data.keys()):
+            d = days_data[day]
+            date_display = f"{day:02d}.{month:02d}.{str(year)[2:]}"
+            parts = []
+            if d["regular"] > 0:
+                parts.append(f"{d['regular']} כתב{'ה' if d['regular']==1 else 'ות'}")
+            if d["mazaltov"] > 0:
+                parts.append(f"{d['mazaltov']} מזל טוב{'ים' if d['mazaltov']>1 else ''}")
+            if parts:
+                report += f"<b>{date_display}</b> – {' ו-'.join(parts)}\n"
+
+        report += f"\n━━━━━━━━━━━━━━━\n"
+        report += f"📊 <b>סה״כ {hebrew_months[month]} {year}:</b>\n"
+        report += f"📰 {total_regular} כתב{'ה' if total_regular==1 else 'ות'}\n"
+        if total_mazaltov:
+            report += f"🎉 {total_mazaltov} מזל טוב{'ים' if total_mazaltov>1 else ''}\n"
+        report += f"✅ סה״כ: {total} פרסומים"
+
+        edit_message(chat_id, msg_id, report)
+
+    except Exception as e:
+        print(f"שגיאה monthly report: {e}", flush=True)
+        edit_message(chat_id, msg_id, f"❌ שגיאה ביצירת הדוח: {e}")
+
 def get_fb_stats():
     """מושך סטטיסטיקות פייסבוק"""
     try:
@@ -2824,6 +2919,9 @@ def handle_message(msg):
                  {"text": "📈 אנליטיקס", "callback_data": "mgmt_analytics"}],
                 [{"text": "🌐 ניהול רשתות", "callback_data": "mgmt_networks"}],
             ]
+        keyboard["inline_keyboard"] += [
+            [{"text": "📅 דוח חודשי", "callback_data": "monthly_report"}],
+        ]
         send_message(chat_id, "⚙️ <b>פעולות נוספות</b>", keyboard)
         return
 
@@ -2834,6 +2932,7 @@ def handle_message(msg):
         draft["quick_videos"] = []
         draft["quick_pdfs"] = []
         draft["quick_audio"] = []
+        draft["from_quick"] = True
         msg_id = send_status(chat_id,
             "⚡ <b>העלאה חכמה מהירה</b>\n\n"
             "שלח הכל בבת אחת:\n"
@@ -3978,6 +4077,18 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             })
         return True
 
+    elif step == "report_month_input":
+        import re as _re
+        match = _re.match(r'^(\d{1,2})[/\-\.](\d{4})$', text.strip())
+        if match:
+            month, year = int(match.group(1)), int(match.group(2))
+            if 1 <= month <= 12:
+                _run_monthly_report(chat_id, year, month)
+                draft["step"] = "idle"
+                return True
+        send_message(chat_id, "⚠️ פורמט לא תקין. שלח כך: <code>05/2026</code>")
+        return True
+
     elif step == "analytics_url_input":
         msg_id = send_status(chat_id, "⏳ בודק צפיות לכתבה...")
         def _check_url(u=text, m=msg_id):
@@ -4516,12 +4627,12 @@ def handle_callback(cb):
                         send_message(chat_id, f"❌ שגיאה: {error}")
 
     elif cb_data == "smart_approve":
-        # קטגוריות כבר נבחרו בתצוגה המקדימה
         if not draft.get("categories"):
             cats, cat_names = auto_select_categories(draft.get("title",""), draft.get("body",""))
             draft["categories"] = cats
             draft["cat_names"] = cat_names
-        if draft.get("from_email"):
+        # העלאה מהירה או ממייל – ישר לסיכום
+        if draft.get("from_email") or draft.get("from_quick"):
             draft["step"] = "confirm"
             _show_summary(chat_id, draft)
         else:
@@ -5053,6 +5164,35 @@ def handle_callback(cb):
                 edit_message(chat_id, msg_id, f"❌ שגיאה: {e}")
 
         threading.Thread(target=_post_story, daemon=True).start()
+
+    elif cb_data == "monthly_report":
+        # בחר חודש
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        months = []
+        for i in range(6):
+            d = datetime(now.year, now.month, 1) - timedelta(days=i*28)
+            d = datetime(d.year, d.month, 1)
+            months.append(d)
+
+        hebrew_months = {1:"ינואר",2:"פברואר",3:"מרץ",4:"אפריל",5:"מאי",6:"יוני",
+                        7:"יולי",8:"אוגוסט",9:"ספטמבר",10:"אוקטובר",11:"נובמבר",12:"דצמבר"}
+
+        keyboard = {"inline_keyboard": [
+            [{"text": f"📅 {hebrew_months[d.month]} {d.year}",
+              "callback_data": f"report_{d.year}_{d.month}"}]
+            for d in months
+        ] + [[{"text": "✏️ הכנס חודש ידנית", "callback_data": "report_manual"}]]}
+        send_message(chat_id, "📅 <b>דוח חודשי</b>\n\nבחר חודש:", keyboard)
+
+    elif cb_data.startswith("report_") and cb_data != "report_manual":
+        parts = cb_data.split("_")
+        year, month = int(parts[1]), int(parts[2])
+        _run_monthly_report(chat_id, year, month)
+
+    elif cb_data == "report_manual":
+        draft["step"] = "report_month_input"
+        send_message(chat_id, "📅 שלח חודש ושנה בפורמט:\n<code>MM/YYYY</code>\n\nלדוגמה: <code>05/2026</code>")
 
     elif cb_data == "mgmt_users":
         # ניהול משתמשים
@@ -5899,15 +6039,26 @@ def post_to_facebook(text, image_bytes=None, link=None):
 def upload_pdf_to_wp(pdf_bytes, filename):
     """מעלה PDF לוורדפרס ומחזיר (id, url)"""
     try:
+        import re as _re
+        # שם קובץ בטוח – רק ASCII
+        safe_name = _re.sub(r'[^\w\-.]', '_', filename)
+        if not safe_name.endswith('.pdf'):
+            safe_name += '.pdf'
         url = f"{WP_URL}/media"
-        headers = {
-            "Content-Disposition": f"attachment; filename*=UTF-8''{requests.utils.quote(filename)}",
-            "Content-Type": "application/pdf"
-        }
-        resp = requests.post(url, headers=headers, data=pdf_bytes,
-                           auth=(WP_USER, WP_PASSWORD), timeout=60)
+        resp = requests.post(url,
+            headers={"Content-Disposition": f'attachment; filename="{safe_name}"',
+                     "Content-Type": "application/pdf"},
+            data=pdf_bytes,
+            auth=(WP_USER, WP_PASSWORD), timeout=60)
         if resp.status_code == 201:
-            return resp.json().get("id"), resp.json().get("source_url","")
+            data = resp.json()
+            # עדכן כותרת לשם העברי
+            media_id = data.get("id")
+            if media_id and safe_name != filename:
+                requests.post(f"{WP_URL}/media/{media_id}",
+                    json={"title": filename.replace('.pdf','')},
+                    auth=(WP_USER, WP_PASSWORD), timeout=10)
+            return media_id, data.get("source_url","")
         print(f"PDF upload error: {resp.status_code} {resp.text[:100]}", flush=True)
         return None, None
     except Exception as e:
