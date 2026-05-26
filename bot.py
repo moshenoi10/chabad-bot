@@ -5158,7 +5158,9 @@ def handle_callback(cb):
         })
 
     elif cb_data == "quick_upload_done":
-        msg_id = draft.get("quick_status_msg_id") or send_status(chat_id, "⚡ מעבד...")
+        # שלח הודעה חדשה
+        msg_id = send_status(chat_id, "⚡ <b>מתחיל עיבוד...</b>")
+        draft["quick_status_msg_id"] = msg_id
         texts = draft.get("quick_texts", [])
         videos = draft.get("quick_videos", [])
         pdfs = draft.get("quick_pdfs", [])
@@ -5220,14 +5222,14 @@ def handle_callback(cb):
                 for pdf in pdfs:
                     _, pdf_url = upload_pdf_to_wp(pdf["bytes"], pdf["name"])
                     if pdf_url:
-                        draft.setdefault("pdfs", []).append({"url": pdf_url, "name": pdf["name"]})
+                        draft.setdefault("pdf_files_uploaded", []).append({"url": pdf_url, "name": pdf["name"]})
 
             if audio:
                 edit_message(chat_id, msg_id, "🎵 <b>מעלה שמע...</b>")
                 for aud in audio:
                     _, aud_url = upload_audio_to_wp(aud["bytes"], aud["name"])
                     if aud_url:
-                        draft.setdefault("audio_files", []).append({"url": aud_url, "name": aud["name"]})
+                        draft.setdefault("audio_files_uploaded", []).append({"url": aud_url, "name": aud["name"]})
 
             # שלב 3 – תצוגה מקדימה ישירה ללא בקשת מדיה נוספת
             draft["step"] = "smart_preview"
@@ -5893,6 +5895,41 @@ def post_to_facebook(text, image_bytes=None, link=None):
         return False, resp.text[:200]
     except Exception as e:
         return False, str(e)
+
+def upload_pdf_to_wp(pdf_bytes, filename):
+    """מעלה PDF לוורדפרס ומחזיר (id, url)"""
+    try:
+        url = f"{WP_URL}/media"
+        headers = {
+            "Content-Disposition": f"attachment; filename*=UTF-8''{requests.utils.quote(filename)}",
+            "Content-Type": "application/pdf"
+        }
+        resp = requests.post(url, headers=headers, data=pdf_bytes,
+                           auth=(WP_USER, WP_PASSWORD), timeout=60)
+        if resp.status_code == 201:
+            return resp.json().get("id"), resp.json().get("source_url","")
+        print(f"PDF upload error: {resp.status_code} {resp.text[:100]}", flush=True)
+        return None, None
+    except Exception as e:
+        print(f"שגיאה upload_pdf: {e}", flush=True)
+        return None, None
+
+def upload_audio_to_wp(audio_bytes, filename):
+    """מעלה קובץ שמע לוורדפרס"""
+    try:
+        url = f"{WP_URL}/media"
+        headers = {
+            "Content-Disposition": f"attachment; filename*=UTF-8''{requests.utils.quote(filename)}",
+            "Content-Type": "audio/mpeg"
+        }
+        resp = requests.post(url, headers=headers, data=audio_bytes,
+                           auth=(WP_USER, WP_PASSWORD), timeout=60)
+        if resp.status_code == 201:
+            return resp.json().get("id"), resp.json().get("source_url","")
+        return None, None
+    except Exception as e:
+        print(f"שגיאה upload_audio: {e}", flush=True)
+        return None, None
 
 def resize_for_instagram(image_bytes):
     """מכין תמונה לאינסטגרם"""
