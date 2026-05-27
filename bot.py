@@ -3648,7 +3648,8 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                     [{"text": "כותרת אדומה", "callback_data": "edit_red_title"},
                      {"text": "תמונה ראשית", "callback_data": "edit_image"}],
                     [{"text": "הוספת תמונות", "callback_data": "edit_gallery"},
-                     {"text": "הוספת סרטון", "callback_data": "edit_video"}]
+                     {"text": "הוספת סרטון", "callback_data": "edit_video"}],
+                    [{"text": "📄 הוספת PDF", "callback_data": "edit_pdf"}]
                 ]
             })
         except Exception as e:
@@ -3895,6 +3896,36 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             send_message(chat_id, "⚠️ שלח לינק תקין מ-Google Drive:")
         return True
 
+    elif step == "edit_pdf_upload":
+        if "document" in msg:
+            doc = msg["document"]
+            mime = doc.get("mime_type","")
+            if "pdf" in mime or doc.get("file_name","").endswith(".pdf"):
+                post_id = draft.get("edit_id")
+                content_bytes = get_file(doc["file_id"])
+                fname = doc.get("file_name","document.pdf")
+                if content_bytes:
+                    msg_id = send_status(chat_id, "📄 <b>מעלה PDF...</b>")
+                    _, pdf_url = upload_pdf_to_wp(content_bytes, fname)
+                    if pdf_url:
+                        r = requests.get(f"{WP_URL}/posts/{post_id}?context=edit",
+                                        auth=(WP_USER, WP_PASSWORD), timeout=10)
+                        if r.ok:
+                            existing = r.json().get("content",{}).get("raw","")
+                            new_content = existing + f'\n\n<div class="wp-block-file"><object data="{pdf_url}" type="application/pdf" width="100%" height="600px"><a href="{pdf_url}">{fname}</a></object></div>'
+                            requests.post(f"{WP_URL}/posts/{post_id}",
+                                json={"content": new_content},
+                                auth=(WP_USER, WP_PASSWORD), timeout=10)
+                        edit_message(chat_id, msg_id, "✅ <b>PDF הוטמע בכתבה!</b>\n\nשלח עוד PDF או /done:")
+                    else:
+                        edit_message(chat_id, msg_id, "❌ שגיאה בהעלאה. נסה שוב.")
+            else:
+                send_message(chat_id, "⚠️ שלח קובץ PDF בלבד.")
+        elif text == "/done":
+            draft["step"] = "idle"
+            send_message(chat_id, "✅ סיום!", get_menu(user_id))
+        return True
+
     elif step == "edit_gallery_upload":
         if "photo" in msg:
             media_group_id = msg.get("media_group_id")
@@ -3919,20 +3950,32 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             content_bytes = get_file(file_id)
             if content_bytes:
                 if mime == "application/pdf":
-                    url = f"{WP_URL}/media"
-                    fname = doc.get('file_name', 'doc.pdf')
-                    headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{requests.utils.quote(fname)}",
-                              "Content-Type": "application/pdf"}
-                    resp = requests.post(url, headers=headers, data=content_bytes,
-                                       auth=(WP_USER, WP_PASSWORD), timeout=30)
+                    import time as _t
+                    safe_name = f"doc_{int(_t.time())}.pdf"
+                    fname = doc.get('file_name', 'document.pdf')
+                    resp = requests.post(f"{WP_URL}/media",
+                        headers={"Content-Disposition": f'attachment; filename="{safe_name}"',
+                                 "Content-Type": "application/pdf"},
+                        data=content_bytes,
+                        auth=(WP_USER, WP_PASSWORD), timeout=60)
                     if resp.status_code == 201:
-                        pdf_url = resp.json()["source_url"]
-                        r = requests.get(f"{WP_URL}/posts/{post_id}?context=edit", auth=(WP_USER, WP_PASSWORD), timeout=10)
+                        media_id = resp.json().get("id")
+                        pdf_url = resp.json().get("source_url","")
+                        # עדכן כותרת
+                        if media_id:
+                            requests.post(f"{WP_URL}/media/{media_id}",
+                                json={"title": fname.replace('.pdf','')},
+                                auth=(WP_USER, WP_PASSWORD), timeout=10)
+                        # הטמע בכתבה
+                        r = requests.get(f"{WP_URL}/posts/{post_id}?context=edit",
+                                        auth=(WP_USER, WP_PASSWORD), timeout=10)
                         if r.status_code == 200:
                             existing = r.json().get("content", {}).get("raw", "")
                             new_content = existing + f'\n\n<div class="wp-block-file"><object data="{pdf_url}" type="application/pdf" width="100%" height="600px"><a href="{pdf_url}">{fname}</a></object></div>'
-                            requests.post(f"{WP_URL}/posts/{post_id}", json={"content": new_content}, auth=(WP_USER, WP_PASSWORD), timeout=10)
-                        send_message(chat_id, "✅ PDF נוסף! שלח עוד או /done:")
+                            requests.post(f"{WP_URL}/posts/{post_id}",
+                                json={"content": new_content},
+                                auth=(WP_USER, WP_PASSWORD), timeout=10)
+                        send_message(chat_id, f"✅ PDF הוטמע בכתבה! שלח עוד קבצים או /done:")
                 elif mime and mime.startswith("audio/"):
                     url = f"{WP_URL}/media"
                     fname = doc.get('file_name', 'audio.mp3')
@@ -5415,7 +5458,7 @@ def handle_callback(cb):
                 for pdf in pdfs:
                     _, pdf_url = upload_pdf_to_wp(pdf["bytes"], pdf["name"])
                     if pdf_url:
-                        draft.setdefault("pdf_files_uploaded", []).append({"url": pdf_url, "name": pdf["name"]})
+                        draft.setdefault("pdf_embeds", []).append({"url": pdf_url, "name": pdf["name"]})
 
             if audio:
                 edit_message(chat_id, msg_id, "🎵 <b>מעלה שמע...</b>")
@@ -5829,6 +5872,10 @@ def handle_callback(cb):
     elif cb_data == "edit_image":
         draft["step"] = "edit_image_upload"
         send_message(chat_id, "שלח את התמונה הראשית החדשה:")
+
+    elif cb_data == "edit_pdf":
+        draft["step"] = "edit_pdf_upload"
+        send_message(chat_id, "📄 שלח קובץ PDF ואני אוסיף אותו לכתבה:")
 
     elif cb_data == "edit_gallery":
         draft["step"] = "edit_gallery_upload"
