@@ -2456,10 +2456,10 @@ def fix_geresh(text):
     if not text:
         return text
 
-    # שלב 1: נרמל גרשיים – " רגיל בין עבריות → ״
+    # שלב 1: נרמל " רגיל בין עבריות → ״
     text = re.sub(r'([א-ת])"([א-ת])', r'\1״\2', text)
 
-    # שלב 2: שמור placeholder לכל מילה מוכרת ברשימה
+    # שלב 2: שמור placeholder לכל מילה מוכרת
     placeholders = {}
     for i, word in enumerate(GERESH_WORDS):
         pattern = r'(?<![א-ת])' + re.escape(word) + r'(?![א-ת״])'
@@ -2468,16 +2468,23 @@ def fix_geresh(text):
             placeholders[ph] = word
             text = re.sub(pattern, ph, text)
 
-    # שלב 3: מחק כל ״ שנותר – הוא לא שייך לאף מילה מוכרת
+    # שלב 3: מחק ״ שנותר – אבל הוסף רווח במקומו אם צריך
+    # ״ בין שתי אותיות → רווח
+    text = re.sub(r'([א-ת])״([א-ת])', r'\1 \2', text)
+    # ״ בסוף מילה → הסר
+    text = re.sub(r'([א-ת])״', r'\1', text)
+    # כל ״ שנשאר → הסר
     text = text.replace('״', '')
-    text = text.replace('"', '')  # גם מרכאות רגילות
+    # גם " רגיל שנשאר
+    text = re.sub(r'([א-ת])"([א-ת])', r'\1 \2', text)
+    text = re.sub(r'([א-ת])"', r'\1', text)
 
     # שלב 4: שחזר מילים מוכרות
     for ph, word in placeholders.items():
         text = text.replace(ph, word)
 
     # שלב 5: נקה רווחים כפולים
-    text = re.sub(r' +', ' ', text)
+    text = re.sub(r'  +', ' ', text)
 
     return text
 
@@ -4045,6 +4052,9 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                 if "pdf" in mime:
                     draft["quick_pdfs"].append({"bytes": content, "name": doc.get("file_name","doc.pdf")})
                     collected.append("📄 PDF")
+                elif "video" in mime:
+                    draft["quick_videos"].append(content)
+                    collected.append("🎬 וידאו")
                 elif "audio" in mime or "ogg" in mime:
                     draft["quick_audio"].append({"bytes": content, "name": doc.get("file_name","audio.mp3")})
                     collected.append("🎵 שמע")
@@ -4467,42 +4477,67 @@ def _process_next_social_platform(chat_id, user_id, draft, drafts):
 def _add_videos_to_post(chat_id, user_id, draft, drafts, videos, service="vimeo"):
     """מוסיף סרטונים לכתבה קיימת"""
     post_id = draft.get("edit_id")
-    
+
     def _do_upload():
-        r = requests.get(f"{WP_URL}/posts/{post_id}?context=edit", auth=(WP_USER, WP_PASSWORD), timeout=10)
+        r = requests.get(f"{WP_URL}/posts/{post_id}?context=edit",
+                        auth=(WP_USER, WP_PASSWORD), timeout=10)
         if r.status_code != 200:
             send_message(chat_id, "❌ לא מצאתי את הכתבה.")
             return
+
         existing_content = r.json().get("content", {}).get("raw", "")
         new_content = existing_content
         count = 0
-        
-        for vid in videos:
+        total_files = len([v for v in videos if v["type"] == "file"])
+
+        # הודעה אחת שמתעדכנת
+        msg_id = send_status(chat_id, f"⏳ מעלה {total_files} סרטונים...")
+
+        for i, vid in enumerate(videos):
             if vid["type"] == "url":
                 url = vid["url"]
                 if "vimeo.com" in url:
-                    vid_id = url.split("/")[-1].split("?")[0]
+                    vid_id = url.rstrip('/').split("/")[-1].split("?")[0]
                     new_content += f'\n\n<div style="padding:56.25% 0 0 0;position:relative;"><iframe src="https://player.vimeo.com/video/{vid_id}" frameborder="0" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe></div><script src="https://player.vimeo.com/api/player.js"></script>\n'
                 elif "youtube.com" in url or "youtu.be" in url:
                     new_content += f'\n\n<!-- wp:embed {{"url":"{url}"}} -->\n<figure class="wp-block-embed"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n<!-- /wp:embed -->'
                 count += 1
+
             elif vid["type"] == "file":
-                send_message(chat_id, f"⏳ מעלה סרטון ל-{service}...")
+                file_idx = [j for j,v in enumerate(videos) if v["type"]=="file"].index(i) + 1 if i < len(videos) else 1
+                edit_message(chat_id, msg_id,
+                    f"🎬 <b>מעלה סרטון {file_idx}/{total_files}...</b>\n\n{progress_bar(file_idx-1, total_files)}")
+
                 if service in ("vimeo", "all"):
-                    vimeo_url, _ = upload_to_vimeo(vid["bytes"], draft.get("edit_title", "סרטון"), chat_id)
+                    vimeo_url, _ = upload_to_vimeo(
+                        vid["bytes"],
+                        draft.get("edit_title", "סרטון"),
+                        chat_id=None  # לא שולח הודעות נפרדות
+                    )
                     if vimeo_url:
-                        vid_id = vimeo_url.split("/")[-1]
+                        vid_id = vimeo_url.rstrip('/').split("/")[-1]
                         new_content += f'\n\n<div style="padding:56.25% 0 0 0;position:relative;"><iframe src="https://player.vimeo.com/video/{vid_id}" frameborder="0" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe></div><script src="https://player.vimeo.com/api/player.js"></script>\n'
                         count += 1
-                if service in ("youtube", "all"):
-                    # YouTube דורש כותרת
-                    send_message(chat_id, f"✅ Vimeo הועלה! מעלה גם ל-YouTube...")
-        
-        requests.post(f"{WP_URL}/posts/{post_id}", json={"content": new_content},
-                     auth=(WP_USER, WP_PASSWORD), timeout=10)
-        send_message(chat_id, f"✅ {count} סרטונים נוספו לכתבה!", get_menu(user_id))
+                        edit_message(chat_id, msg_id,
+                            f"🎬 <b>מעלה סרטונים...</b>\n\n{progress_bar(file_idx, total_files)}\n✅ סרטון {file_idx} הועלה")
+                    else:
+                        edit_message(chat_id, msg_id,
+                            f"⚠️ סרטון {file_idx} נכשל, ממשיך...")
+
+        # עדכן את הכתבה
+        edit_message(chat_id, msg_id, f"⏳ שומר שינויים בכתבה...")
+        resp = requests.post(f"{WP_URL}/posts/{post_id}",
+                    json={"content": new_content},
+                    auth=(WP_USER, WP_PASSWORD), timeout=15)
+
+        if resp.ok:
+            edit_message(chat_id, msg_id,
+                f"✅ <b>{count} סרטונים נוספו לכתבה בהצלחה!</b>", get_menu(user_id))
+        else:
+            edit_message(chat_id, msg_id, f"❌ שגיאה בשמירה: {resp.text[:100]}")
+
         drafts[user_id] = {"step": "idle", "gallery": []}
-    
+
     threading.Thread(target=_do_upload, daemon=True).start()
 
 def handle_callback(cb):
@@ -5350,12 +5385,30 @@ def handle_callback(cb):
 
             # שלב 2 – העלאת מדיה
             if videos:
-                edit_message(chat_id, msg_id, "🎬 <b>מעלה וידאו ל-Vimeo...</b>")
-                for vid in videos[:1]:
-                    vimeo_url, vimeo_id = upload_to_vimeo(vid, draft["title"], chat_id=None)
+                vimeo_urls = []
+                for i, vid in enumerate(videos):
+                    edit_message(chat_id, msg_id,
+                        f"🎬 <b>מעלה סרטון {i+1}/{len(videos)} ל-Vimeo...</b>\n\n{progress_bar(i, len(videos))}")
+                    vimeo_url, vimeo_id = upload_to_vimeo(
+                        vid, f"{draft.get('title','סרטון')} {i+1}" if len(videos)>1 else draft.get('title','סרטון'),
+                        chat_id=chat_id
+                    )
                     if vimeo_url:
-                        draft["vimeo_url"] = vimeo_url
-                        draft["vimeo_id"] = vimeo_id
+                        vimeo_urls.append(vimeo_url)
+                        print(f"✅ Vimeo {i+1}: {vimeo_url}", flush=True)
+                    else:
+                        print(f"❌ Vimeo {i+1} נכשל", flush=True)
+                if vimeo_urls:
+                    draft["vimeo_urls"] = vimeo_urls
+                    draft["vimeo_url"] = vimeo_urls[0]
+                    # הטמע כל הסרטונים בגוף הכתבה
+                    vimeo_embeds = ""
+                    for vurl in vimeo_urls:
+                        vid_id = vurl.rstrip('/').split('/')[-1]
+                        vimeo_embeds += f'\n\n<div style="padding:56.25% 0 0 0;position:relative;"><iframe src="https://player.vimeo.com/video/{vid_id}" frameborder="0" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe></div><script src="https://player.vimeo.com/api/player.js"></script>\n'
+                    draft["body"] = draft.get("body","") + vimeo_embeds
+                    edit_message(chat_id, msg_id,
+                        f"✅ <b>{len(vimeo_urls)}/{len(videos)} סרטונים עלו ל-Vimeo והוטמעו בכתבה</b>")
 
             if pdfs:
                 edit_message(chat_id, msg_id, "📄 <b>מעלה PDF...</b>")
