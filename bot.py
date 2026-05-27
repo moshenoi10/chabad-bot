@@ -2550,15 +2550,20 @@ def process_with_gemini(text):
     text = prepare_text_for_ai(text)
     prompt = build_prompt(text)
     try:
-        for attempt in range(2):
+        for attempt in range(3):
             print(f"Gemini ניסיון {attempt+1}...", flush=True)
-            resp = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}",
-                json={"contents": [{"parts": [{"text": prompt}]}]},
-                timeout=60
-            )
+            try:
+                resp = requests.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}",
+                    json={"contents": [{"parts": [{"text": prompt}]}]},
+                    timeout=120
+                )
+            except requests.exceptions.Timeout:
+                print(f"Gemini timeout ניסיון {attempt+1}, מנסה שוב...", flush=True)
+                if attempt < 2: time.sleep(5)
+                continue
             if resp.status_code in (429, 503):
-                if attempt == 0:
+                if attempt < 2:
                     print(f"Gemini 429, ממתין 20 שניות...", flush=True)
                     time.sleep(20)
                     continue
@@ -2577,10 +2582,9 @@ def process_with_gemini(text):
             break
     except Exception as e:
         print(f"שגיאה Gemini exception: {e}", flush=True)
-    
-    # גיבוי – Groq
-    print("עובר ל-Groq כגיבוי...", flush=True)
-    return process_with_groq(text)
+
+    # לא עובר ל-Groq – מחזיר None והמשתמש יקבל הודעת שגיאה
+    return None
 
 def improve_titles_with_ai(draft):
     text = draft.get("body", "")
@@ -2726,7 +2730,7 @@ def handle_drive_link(chat_id, user_id, url, draft):
             return
 
         if drive_type == "file":
-            send_message(chat_id, "☁️ <b>מוריד מ-Drive...</b>")
+            msg_id = send_status(chat_id, "☁️ <b>מוריד מ-Drive...</b>")
             content = download_drive_file(drive_id)
             if content:
                 draft.setdefault("gallery", []).append(content)
@@ -2933,13 +2937,24 @@ def handle_message(msg):
         return
 
     if text == "⚡ העלאה חכמה מהירה" and is_editor(user_id):
-        draft["step"] = "quick_upload_collect"
-        draft["quick_texts"] = []
-        draft["gallery"] = []
-        draft["quick_videos"] = []
-        draft["quick_pdfs"] = []
-        draft["quick_audio"] = []
-        draft["from_quick"] = True
+        # אפס draft לחלוטין
+        drafts[user_id] = {
+            "step": "quick_upload_collect",
+            "quick_texts": [],
+            "gallery": [],
+            "quick_videos": [],
+            "quick_pdfs": [],
+            "quick_audio": [],
+            "main_image": None,
+            "from_quick": True,
+            "categories": [],
+            "cat_names": [],
+            "tags": [],
+            "vimeo_url": None,
+            "vimeo_urls": [],
+            "pdf_embeds": [],
+        }
+        draft = drafts[user_id]
         msg_id = send_status(chat_id,
             "⚡ <b>העלאה חכמה מהירה</b>\n\n"
             "שלח הכל בבת אחת:\n"
@@ -3017,7 +3032,7 @@ def handle_message(msg):
                 posts = r.json()
                 post_id = str(posts[0]["id"]) if posts else None
             if post_id:
-                send_message(chat_id, "📤 <b>מעלה תמונות...</b>")
+                msg_id = send_status(chat_id, "📤 <b>מעלה תמונות...</b>")
                 image_urls = []
                 for img_bytes in pending.get("images", []):
                     img_id, img_url = upload_image_to_wp(img_bytes, "email_img.jpg")
@@ -3025,9 +3040,9 @@ def handle_message(msg):
                         image_urls.append(img_url)
                 if image_urls:
                     add_images_to_post(post_id, image_urls)
-                    send_message(chat_id, f"✅ {len(image_urls)} תמונות נוספו!", get_menu(user_id))
+                    edit_message(chat_id, msg_id, f"✅ <b>{len(image_urls)} תמונות נוספו!</b>")
                 else:
-                    send_message(chat_id, "⚠️ <b>שגיאת העלאה</b>\n\nלא הצלחתי להעלות תמונות.")
+                    edit_message(chat_id, msg_id, "⚠️ <b>שגיאת העלאה</b>\n\nלא הצלחתי להעלות תמונות.")
             email_system["pending_email"] = {}
         draft["step"] = "idle"
         return
@@ -3050,7 +3065,11 @@ def handle_message(msg):
         if not is_editor(user_id):
             send_message(chat_id, "⛔ <b>אין הרשאה</b>\n\nפנה למנהל המערכת.")
             return
-        drafts[user_id] = {"step": "title", "gallery": []}
+        drafts[user_id] = {
+            "step": "title", "gallery": [], "main_image": None,
+            "categories": [], "cat_names": [], "tags": [],
+            "vimeo_url": None, "pdf_embeds": [], "audio_files": []
+        }
         send_message(chat_id, "📝 <b>כתבה חדשה</b>\n\nשלח את <b>כותרת</b> הכתבה:")
         return
 
@@ -3058,7 +3077,11 @@ def handle_message(msg):
         if not is_senior_editor(user_id):
             send_message(chat_id, "⛔ <b>אין הרשאה</b>\n\nנדרשת הרשאת עורך.")
             return
-        drafts[user_id] = {"step": "smart_text", "gallery": []}
+        drafts[user_id] = {
+            "step": "smart_text", "gallery": [], "main_image": None,
+            "categories": [], "cat_names": [], "tags": [],
+            "vimeo_url": None, "pdf_embeds": [], "audio_files": []
+        }
         send_message(chat_id, "🤖 <b>העלאה חכמה</b>\n\nשלח את הטקסט הגולמי של הכתבה:")
         return
 
@@ -3207,7 +3230,7 @@ def handle_message(msg):
         })
 
     elif step == "article_yt_smart_text":
-        send_message(chat_id, "🤖 <b>מעבד עם AI...</b>\n\n⏳ זה לוקח כמה שניות")
+        msg_id = send_status(chat_id, "🤖 <b>מעבד עם AI...</b>\n\n⏳ זה לוקח כמה שניות")
         result = process_with_gemini(text)
         if result:
             draft["yt_title"] = result.get("title", draft.get("title", "סרטון"))
@@ -3216,22 +3239,22 @@ def handle_message(msg):
             if file_id:
                 if not youtube_tokens.get("access_token"):
                     auth_url = get_youtube_auth_url()
-                    send_message(chat_id, f"🔑 צריך להתחבר ל-YouTube:\n<a href='{auth_url}'>לחץ כאן</a>")
+                    edit_message(chat_id, msg_id, f"🔑 צריך להתחבר ל-YouTube:\n<a href='{auth_url}'>לחץ כאן</a>")
                 else:
-                    send_message(chat_id, f"⏳ מעלה ל-YouTube עם כותרת:\n<b>{draft['yt_title']}</b>")
+                    msg_id = send_status(chat_id, f"⏳ מעלה ל-YouTube עם כותרת:\n<b>{draft['yt_title']}</b>")
                     video_bytes = get_file(file_id)
                     if video_bytes:
                         url, error = upload_to_youtube(video_bytes, draft["yt_title"], "", draft["yt_tags"])
                         if url:
                             draft.setdefault("videos", []).append(url)
-                            send_message(chat_id, f"✅ עלה ל-YouTube!\n🔗 {url}\n\nשלח סרטון נוסף או /done:")
+                            edit_message(chat_id, msg_id, f"✅ <b>עלה ל-YouTube!</b>\n🔗 {url}\n\nשלח סרטון נוסף או /done:")
                         else:
-                            send_message(chat_id, f"❌ שגיאה: {error}")
+                            edit_message(chat_id, msg_id, f"❌ שגיאה: {error}")
         else:
-            send_message(chat_id, "⚠️ <b>שגיאה בעיבוד</b>\n\nנסה לשלוח שוב.")
+            edit_message(chat_id, msg_id, "⚠️ <b>שגיאה בעיבוד</b>\n\nנסה לשלוח שוב.")
 
     elif step == "youtube_smart_text":
-        send_message(chat_id, "🤖 <b>מעבד עם AI...</b>\n\n⏳ זה לוקח כמה שניות")
+        msg_id = send_status(chat_id, "🤖 <b>מעבד עם AI...</b>\n\n⏳ זה לוקח כמה שניות")
         result = process_with_gemini(text)
         if result:
             draft["yt_title"] = result.get("title", "")
@@ -3272,7 +3295,7 @@ def handle_message(msg):
 
     elif step == "youtube_video":
         if "video" in msg or "document" in msg:
-            send_message(chat_id, "🎬 <b>מעלה ל-YouTube...</b>\n\n⏳ זה עשוי לקחת כמה דקות")
+            msg_id = send_status(chat_id, "🎬 <b>מעלה ל-YouTube...</b>\n\n⏳ זה עשוי לקחת כמה דקות")
             file_id = msg.get("video", msg.get("document", {})).get("file_id")
             if file_id:
                 video_bytes = get_file(file_id)
@@ -3441,16 +3464,16 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             dt = datetime.strptime(text.strip(), "%d/%m/%Y %H:%M")
             iso_date = dt.strftime("%Y-%m-%dT%H:%M:00")
             draft["schedule_date"] = iso_date
-            send_message(chat_id, "⏳ מתזמן פרסום...")
+            msg_id = send_status(chat_id, "⏳ מתזמן פרסום...")
             try:
                 resp = publish_to_wp(draft, "future", iso_date)
             except Exception as e:
-                send_message(chat_id, f"❌ שגיאה בפרסום: {e}")
+                edit_message(chat_id, msg_id, f"❌ שגיאה בפרסום: {e}")
                 return True
             if resp.status_code == 201:
-                send_message(chat_id, f"✅ <b>הכתבה מתוזמנת לפרסום ב-{text}!</b>", get_menu(user_id))
+                edit_message(chat_id, msg_id, f"✅ <b>הכתבה מתוזמנת לפרסום ב-{text}!</b>")
             else:
-                send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
+                edit_message(chat_id, msg_id, f"❌ שגיאה: {resp.text[:200]}")
             drafts[user_id] = {"step": "idle", "gallery": []}
         except ValueError:
             send_message(chat_id, "⚠️ פורמט שגוי. נסה שוב:\n<code>DD/MM/YYYY HH:MM</code>")
@@ -3492,7 +3515,7 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                 content = get_file(file_id)
                 print(f"📄 הורדה: {'הצלחה ' + str(len(content)) + ' bytes' if content else 'נכשל'}", flush=True)
                 if content:
-                    send_message(chat_id, "📄 <b>מעלה PDF לאתר...</b>")
+                    msg_id = send_status(chat_id, "📄 <b>מעלה PDF לאתר...</b>")
                     fname = file_name if file_name.endswith('.pdf') else file_name + '.pdf'
                     # שם בטוח לוורדפרס (ASCII בלבד)
                     safe_fname = f"doc_{int(time.time())}.pdf"
@@ -3541,7 +3564,7 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
         elif text and text.startswith("http") and "drive.google.com" in text:
             drive_id, drive_type = extract_drive_id(text)
             if drive_id:
-                send_message(chat_id, "⏳ מוריד תמונות מ-Drive...")
+                msg_id = send_status(chat_id, "⏳ מוריד תמונות מ-Drive...")
                 if drive_type == "folder":
                     images, _ = list_drive_folder(drive_id)
                     count = 0
@@ -3551,8 +3574,8 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                             draft.setdefault("gallery", []).append(content)
                             count += 1
                         if (i + 1) % 10 == 0:
-                            send_message(chat_id, f"⏳ הורדתי {count}/{len(images)} תמונות...")
-                    send_message(chat_id, f"✅ {count} תמונות הורדו!\n\nשלח עוד או /done:")
+                            edit_message(chat_id, msg_id, f"☁️ <b>מוריד מ-Drive...</b>\n\n{progress_bar(count, len(images))} {count}/{len(images)}")
+                    edit_message(chat_id, msg_id, f"✅ <b>{count} תמונות הורדו!</b>\n\nשלח עוד או /done:")
                 elif drive_type == "file":
                     content = download_drive_file(drive_id)
                     if content:
@@ -3610,15 +3633,15 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
 
     elif step == "confirm":
         if text == "/publish":
-            send_message(chat_id, "🚀 <b>מפרסם לוורדפרס...</b>")
+            msg_id = send_status(chat_id, "🚀 <b>מפרסם לוורדפרס...</b>")
             resp = publish_to_wp(draft)
             if resp.status_code == 201:
                 post_url = resp.json().get("link", "")
-                send_message(chat_id, f"✅ <b>הכתבה פורסמה!</b>\n🔗 {post_url}", get_menu(user_id))
                 notify_channel(draft.get("title", ""), draft.get("subtitle", ""), post_url)
                 drafts[user_id] = {"step": "idle", "gallery": []}
+                edit_message(chat_id, msg_id, f"✅ <b>הכתבה פורסמה!</b>\n🔗 {post_url}")
             else:
-                send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
+                edit_message(chat_id, msg_id, f"❌ שגיאה: {resp.text[:200]}")
         else:
             send_message(chat_id, "שלח /publish לפרסום או /cancel לביטול")
         return True
@@ -3653,7 +3676,7 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                 ]
             })
         except Exception as e:
-            send_message(chat_id, f"❌ שגיאה: {e}")
+            edit_message(chat_id, msg_id, f"❌ שגיאה: {e}")
         return True
 
     elif step == "edit_field_value":
@@ -3783,14 +3806,14 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                 ]]
             })
         except Exception as e:
-            send_message(chat_id, f"❌ שגיאה: {e}")
+            edit_message(chat_id, msg_id, f"❌ שגיאה: {e}")
         return True
 
     elif step == "mazaltov_image":
         if "photo" in msg:
             content = get_file(msg["photo"][-1]["file_id"])
             if content:
-                send_message(chat_id, "⏳ מעלה לאתר...")
+                msg_id = send_status(chat_id, "⏳ מעלה לאתר...")
                 featured_id, _ = upload_image_to_wp(content, "mazaltov.jpg")
                 post_data = {
                     "title": "מזל טוב",
@@ -3824,7 +3847,7 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             if not images:
                 send_message(chat_id, "⚠️ לא התקבלו תמונות.")
                 return True
-            send_message(chat_id, f"⏳ מעלה {len(images)} כתבות מזל טוב...")
+            msg_id = send_status(chat_id, f"⏳ מעלה {len(images)} כתבות מזל טוב...")
             success = 0
             for i, img in enumerate(images):
                 featured_id, _ = upload_image_to_wp(img, f"mazaltov_{i}.jpg")
@@ -3882,7 +3905,7 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                             draft.setdefault("gallery", []).append(img_bytes)
                             count += 1
                         if (i + 1) % 10 == 0:
-                            send_message(chat_id, f"⏳ {count}/{len(images)} תמונות...")
+                            edit_message(chat_id, msg_id, f"📤 <b>מעלה תמונות...</b>\n\n{progress_bar(count, len(images))}")
                     draft["step"] = "gallery"
                     send_message(chat_id, f"✅ {count} תמונות הורדו! שלח עוד או /done:")
                 elif drive_type == "file":
@@ -3995,7 +4018,7 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             post_id = draft.get("edit_id")
             pending = draft.get("edit_gallery_pending", [])
             if pending:
-                send_message(chat_id, f"⏳ מעלה {len(pending)} תמונות...")
+                msg_id = send_status(chat_id, f"⏳ מעלה {len(pending)} תמונות...")
                 image_urls = []
                 for fid in pending:
                     img_bytes = get_file(fid)
@@ -4005,7 +4028,7 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                             image_urls.append(img_url)
                 if image_urls:
                     add_images_to_post(post_id, image_urls)
-                    send_message(chat_id, f"✅ {len(image_urls)} תמונות נוספו!", get_menu(user_id))
+                    edit_message(chat_id, msg_id, f"✅ <b>{len(image_urls)} תמונות נוספו!</b>")
                 draft["edit_gallery_pending"] = []
             drafts[user_id] = {"step": "idle", "gallery": []}
         else:
@@ -4054,7 +4077,7 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                 else:
                     send_message(chat_id, "❌ לא הצלחתי להוריד את הסרטון.")
         elif text and "drive.google.com" in text:
-            send_message(chat_id, "⏳ מוריד מ-Drive...")
+            msg_id = send_status(chat_id, "⏳ מוריד מ-Drive...")
             def _dl_social():
                 drive_id, drive_type = extract_drive_id(text)
                 if drive_id and drive_type == "file":
@@ -4065,7 +4088,7 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                         draft["step"] = "social_video_platforms"
                         _show_social_video_platforms(chat_id)
                     else:
-                        send_message(chat_id, "❌ לא הצלחתי להוריד.")
+                        edit_message(chat_id, msg_id, "❌ לא הצלחתי להוריד.")
                 else:
                     send_message(chat_id, "❌ שלח לינק לקובץ בודד מ-Drive.")
             threading.Thread(target=_dl_social, daemon=True).start()
@@ -4447,15 +4470,15 @@ def _process_next_social_platform(chat_id, user_id, draft, drafts):
         send_message(chat_id, "▶️ <b>YouTube</b>\n\nשלח כותרת לסרטון:")
 
     elif platform == "vimeo":
-        send_message(chat_id, "⏳ מעלה ל-Vimeo...")
+        msg_id = send_status(chat_id, "⏳ מעלה ל-Vimeo...")
         def _upload_vimeo():
             vb = social.get("video_bytes")
             if vb:
                 url, vid_id = upload_to_vimeo(vb, social.get("yt_title", "סרטון"), chat_id)
                 if url:
-                    send_message(chat_id, f"✅ Vimeo: {url}")
+                    edit_message(chat_id, msg_id, f"✅ <b>Vimeo: {url}</b>")
                 else:
-                    send_message(chat_id, "❌ שגיאה ב-Vimeo")
+                    edit_message(chat_id, msg_id, "❌ שגיאה ב-Vimeo")
             _process_next_social_platform(chat_id, user_id, draft, drafts)
         threading.Thread(target=_upload_vimeo, daemon=True).start()
 
@@ -4464,7 +4487,7 @@ def _process_next_social_platform(chat_id, user_id, draft, drafts):
         send_message(chat_id, "🎵 <b>TikTok</b>\n\nשלח כותרת ו-hashtags (או /skip):")
 
     elif platform == "facebook":
-        send_message(chat_id, "📘 <b>מפרסם לפייסבוק...</b>")
+        msg_id = send_status(chat_id, "📘 <b>מפרסם לפייסבוק...</b>")
         text_content = social.get("text_content", "")
         link = social.get("link", "")
         msg_text = f"{text_content}\n{link}" if link else text_content
@@ -4472,21 +4495,20 @@ def _process_next_social_platform(chat_id, user_id, draft, drafts):
         if img:
             img = add_watermark(img)
         ok, result = post_to_facebook(msg_text, img)
-        send_message(chat_id, f"📘 ✅ <b>פורסם בפייסבוק!</b>" if ok else f"❌ פייסבוק: {result}")
+        edit_message(chat_id, msg_id, f"📘 ✅ <b>פורסם בפייסבוק!</b>" if ok else f"❌ פייסבוק: {result}")
         _process_next_social_platform(chat_id, user_id, draft, drafts)
 
     elif platform == "instagram":
-        send_message(chat_id, "📸 <b>מפרסם לאינסטגרם...</b>")
+        msg_id = send_status(chat_id, "📸 <b>מפרסם לאינסטגרם...</b>")
         img = social.get("image")
         if img:
             img = add_watermark(resize_for_instagram(img))
         caption = social.get("text_content", "")
         ok, result = post_to_instagram(caption, img)
         if ok:
-            # שמור כותרת גלובלית לשימוש בסטורי
             import builtins
             builtins.LAST_POST_TITLE = caption.split('\n')[0][:50] if caption else ""
-            send_message(chat_id, "📸 ✅ <b>פורסם באינסטגרם!</b>", {
+            edit_message(chat_id, msg_id, "📸 ✅ <b>פורסם באינסטגרם!</b>", {
                 "inline_keyboard": [[{"text": "📱 שתף לסטורי", "callback_data": f"ig_story_{result}"}]]
             })
         else:
@@ -4494,7 +4516,7 @@ def _process_next_social_platform(chat_id, user_id, draft, drafts):
         _process_next_social_platform(chat_id, user_id, draft, drafts)
 
     elif platform == "telegram":
-        send_message(chat_id, "⏳ שולח לערוץ...")
+        msg_id = send_status(chat_id, "⏳ שולח לערוץ...")
         text_content = social.get("text_content", "")
         link = social.get("link", "")
         msg_text = f"{text_content}\n{link}" if link else text_content
@@ -4504,17 +4526,17 @@ def _process_next_social_platform(chat_id, user_id, draft, drafts):
                 json={"chat_id": CHANNEL_ID, "text": msg_text},
                 timeout=10
             )
-            send_message(chat_id, "✅ נשלח לערוץ טלגרם!")
+            edit_message(chat_id, msg_id, "✅ נשלח לערוץ טלגרם!")
         except:
             send_message(chat_id, "❌ שגיאה בשליחה לערוץ")
         _process_next_social_platform(chat_id, user_id, draft, drafts)
 
     elif platform == "twitter":
-        send_message(chat_id, "🐦 <b>מפרסם לטוויטר...</b>")
+        msg_id = send_status(chat_id, "🐦 <b>מפרסם לטוויטר...</b>")
         text_content = social.get("text_content", "")
         link = social.get("link", "")
         ok, result = post_to_twitter(text_content, link)
-        send_message(chat_id, f"✅ פורסם בטוויטר!" if ok else f"❌ טוויטר: {result}")
+        edit_message(chat_id, msg_id, f"✅ פורסם בטוויטר!" if ok else f"❌ טוויטר: {result}")
         _process_next_social_platform(chat_id, user_id, draft, drafts)
 
 def _add_videos_to_post(chat_id, user_id, draft, drafts, videos, service="vimeo"):
@@ -4638,7 +4660,7 @@ def handle_callback(cb):
 
     elif cb_data == "upload_group_vimeo":
         files = draft.get("pending_group_files", [])
-        send_message(chat_id, f"⏳ מעלה {len(files)} סרטונים ל-Vimeo...")
+        msg_id = send_status(chat_id, f"⏳ מעלה {len(files)} סרטונים ל-Vimeo...")
         success = 0
         for i, fid in enumerate(files):
             video_bytes = get_file(fid)
@@ -4649,7 +4671,7 @@ def handle_callback(cb):
                     draft.setdefault("vimeo_ids", []).append(vid_id)
                     success += 1
         draft["pending_group_files"] = []
-        send_message(chat_id, f"✅ הועלו {success}/{len(files)} סרטונים ל-Vimeo!\n\nשלח /done לסיום או סרטון נוסף:")
+        edit_message(chat_id, msg_id, f"✅ <b>הועלו {success}/{len(files)} סרטונים ל-Vimeo!</b>\n\nשלח /done לסיום או סרטון נוסף:")
 
     elif cb_data == "upload_group_youtube":
         files = draft.get("pending_group_files", [])
@@ -4657,7 +4679,7 @@ def handle_callback(cb):
             auth_url = get_youtube_auth_url()
             send_message(chat_id, f"🔑 צריך להתחבר ל-YouTube:\n<a href='{auth_url}'>לחץ כאן</a>")
         else:
-            send_message(chat_id, f"⏳ מעלה {len(files)} סרטונים ל-YouTube...")
+            msg_id = send_status(chat_id, f"⏳ מעלה {len(files)} סרטונים ל-YouTube...")
             success = 0
             for i, fid in enumerate(files):
                 video_bytes = get_file(fid)
@@ -4667,21 +4689,21 @@ def handle_callback(cb):
                         draft.setdefault("videos", []).append(url)
                         success += 1
             draft["pending_group_files"] = []
-            send_message(chat_id, f"✅ הועלו {success}/{len(files)} סרטונים ל-YouTube!\n\nשלח /done לסיום או סרטון נוסף:")
+            edit_message(chat_id, msg_id, f"✅ <b>הועלו {success}/{len(files)} סרטונים ל-YouTube!</b>\n\nשלח /done לסיום או סרטון נוסף:")
 
     elif cb_data == "upload_vimeo":
         file_id = draft.get("pending_video_file_id")
         if file_id:
-            send_message(chat_id, "⏳ מעלה ל-Vimeo...")
+            msg_id = send_status(chat_id, "⏳ מעלה ל-Vimeo...")
             video_bytes = get_file(file_id)
             if video_bytes:
                 vimeo_url, vid_id = upload_to_vimeo(video_bytes, draft.get("title", "סרטון"), chat_id)
                 if vimeo_url:
                     draft.setdefault("videos", []).append(vimeo_url)
                     draft.setdefault("vimeo_ids", []).append(vid_id)
-                    send_message(chat_id, f"✅ עלה ל-Vimeo!\n\nשלח סרטון נוסף או /done:")
+                    edit_message(chat_id, msg_id, f"✅ <b>עלה ל-Vimeo!</b>\n\nשלח סרטון נוסף או /done:")
                 else:
-                    send_message(chat_id, "❌ שגיאה בהעלאה ל-Vimeo")
+                    edit_message(chat_id, msg_id, "❌ שגיאה בהעלאה ל-Vimeo")
 
     elif cb_data == "upload_youtube_smart":
         draft["step"] = "article_yt_smart_text"
@@ -4720,11 +4742,54 @@ def handle_callback(cb):
                                      {"text": "⏭️ דלג", "callback_data": "skip_main_image"}]]
             })
 
+    elif cb_data == "smart_retry_auto":
+        msg_id = send_status(chat_id, "⏳ <b>ממתין 3 דקות ומנסה שוב...</b>\n\nתוכל להמשיך בינתיים בפעולות אחרות.")
+        text_to_retry = draft.get("body") or draft.get("quick_texts", [""])[0] if draft.get("quick_texts") else ""
+        def _retry_later(t=text_to_retry, m=msg_id):
+            time.sleep(180)
+            edit_message(chat_id, m, "🤖 <b>מנסה שוב...</b>")
+            result = process_with_gemini(t)
+            if result:
+                draft["title"] = result.get("title","")
+                draft["subtitle"] = result.get("subtitle","")
+                draft["red_title"] = result.get("red_title","")
+                draft["body"] = result.get("body","")
+                draft["tags"] = result.get("tags",[])
+                cats, cat_names = auto_select_categories(draft["title"], draft["body"])
+                draft["categories"] = cats
+                draft["cat_names"] = cat_names
+                draft["step"] = "smart_preview"
+                import re as _re
+                def esc(s): return str(s).replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+                body_p = _re.sub(r'<[^>]+>','',draft.get("body",""))[:300]
+                edit_message(chat_id, m, f"""✅ <b>AI הצליח! תצוגה מקדימה:</b>
+
+<b>כותרת:</b> {esc(draft['title'])}
+<b>כותרת משנה:</b> {esc(draft['subtitle'])}
+<b>קטגוריות:</b> {esc(', '.join(cat_names))}
+
+<b>גוף:</b>
+{esc(body_p)}...""", {
+                    "inline_keyboard": [
+                        [{"text": "✅ מאשר, פרסם", "callback_data": "smart_approve"}],
+                        [{"text": "✨ שפר כותרות", "callback_data": "smart_improve_titles"}],
+                        [{"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+                    ]
+                })
+            else:
+                edit_message(chat_id, m, "❌ <b>AI עדיין לא זמין</b>\n\nנסה שוב מאוחר יותר.", {
+                    "inline_keyboard": [
+                        [{"text": "🔄 נסה שוב", "callback_data": "smart_retry"}],
+                        [{"text": "✍️ עבור להעלאה ידנית", "callback_data": "smart_manual_fallback"}]
+                    ]
+                })
+        threading.Thread(target=_retry_later, daemon=True).start()
+
     elif cb_data == "smart_retry":
         draft["step"] = "smart_text"
         saved_text = draft.get("body", "")
         if saved_text:
-            send_message(chat_id, "⏳ מנסה שוב...")
+            msg_id = send_status(chat_id, "⏳ מנסה שוב...")
             result = process_with_gemini(saved_text)
             if result:
                 body_clean = convert_whatsapp_format(result.get("body", saved_text))
@@ -4895,7 +4960,7 @@ def handle_callback(cb):
             from datetime import datetime
             dt = datetime.strptime(time_str, "%d/%m/%Y %H:%M")
             iso_date = dt.strftime("%Y-%m-%dT%H:%M:00")
-            send_message(chat_id, "⏳ מתזמן פרסום...")
+            msg_id = send_status(chat_id, "⏳ מתזמן פרסום...")
             try:
                 resp = publish_to_wp(draft, "future", iso_date)
             except Exception as e:
@@ -4907,7 +4972,7 @@ def handle_callback(cb):
                 send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
             drafts[user_id] = {"step": "idle", "gallery": []}
         except Exception as e:
-            send_message(chat_id, f"❌ שגיאה: {e}")
+            edit_message(chat_id, msg_id, f"❌ שגיאה: {e}")
 
     elif cb_data == "publish_cancel":
         drafts[user_id] = {"step": "idle", "gallery": []}
@@ -5022,9 +5087,9 @@ def handle_callback(cb):
         send_message(chat_id, f"מערכת המייל {status}!", get_menu(user_id))
 
     elif cb_data == "email_check_now":
-        send_message(chat_id, "⏳ בודק מיילים...")
+        msg_id = send_status(chat_id, "⏳ בודק מיילים...")
         threading.Thread(target=check_emails, daemon=True).start()
-        send_message(chat_id, "✅ בדיקה הופעלה! תקבל הודעה אם יש מיילים חדשים.")
+        edit_message(chat_id, msg_id, "✅ בדיקה הופעלה! תקבל הודעה אם יש מיילים חדשים.")
 
     elif cb_data == "email_change_interval":
         draft["step"] = "email_interval_input"
@@ -5624,7 +5689,7 @@ def handle_callback(cb):
             else:
                 send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
         except Exception as e:
-            send_message(chat_id, f"❌ שגיאה: {e}")
+            edit_message(chat_id, msg_id, f"❌ שגיאה: {e}")
 
     elif cb_data == "social_stats_ig":
         ig_user_id = os.environ.get("IG_USER_ID","")
@@ -5650,7 +5715,7 @@ def handle_callback(cb):
             else:
                 send_message(chat_id, f"❌ שגיאה: {resp.text[:200]}")
         except Exception as e:
-            send_message(chat_id, f"❌ שגיאה: {e}")
+            edit_message(chat_id, msg_id, f"❌ שגיאה: {e}")
 
     elif cb_data == "social_delete_fb":
         draft["step"] = "social_delete_fb_input"
@@ -5663,7 +5728,7 @@ def handle_callback(cb):
         fb_token = os.environ.get("FB_PAGE_TOKEN","")
         fb_page_id = os.environ.get("FB_PAGE_ID","")
         ig_user_id = os.environ.get("IG_USER_ID","")
-        send_message(chat_id, "⏳ מושך פוסטים אחרונים...")
+        msg_id = send_status(chat_id, "⏳ מושך פוסטים אחרונים...")
         msg = ""
         # פייסבוק
         try:
@@ -5833,12 +5898,12 @@ def handle_callback(cb):
     elif cb_data == "share_twitter":
         post_url = draft.get("last_post_url", "")
         post_title = draft.get("last_post_title", "")
-        send_message(chat_id, "🐦 <b>מפרסם לטוויטר...</b>")
+        msg_id = send_status(chat_id, "🐦 <b>מפרסם לטוויטר...</b>")
         success, result = post_to_twitter(post_title, post_url)
         if success:
-            send_message(chat_id, f"✅ פורסם בטוויטר!", get_menu(user_id))
+            edit_message(chat_id, msg_id, f"✅ <b>פורסם בטוויטר!</b>")
         else:
-            send_message(chat_id, f"❌ שגיאה בטוויטר: {result}", get_menu(user_id))
+            edit_message(chat_id, msg_id, f"❌ שגיאה בטוויטר: {result}")
         drafts[user_id] = {"step": "idle", "gallery": []}
 
     elif cb_data == "publish_done":
