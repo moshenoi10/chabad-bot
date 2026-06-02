@@ -25,13 +25,18 @@ EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "")
 
 # ─── מערכת מייל ────────────────────────────────────────
 email_system = {
-    "active": True,              # האם המערכת פעילה
-    "interval": 1800,            # כל כמה שניות לבדוק (ברירת מחדל: 30 דקות)
-    "allowed_senders": ["mnoishtat@gmail.com"],  # כתובות מורשות
-    "last_check": 0,             # זמן הבדיקה האחרונה
-    "seen_ids": set(),           # מיילים שכבר טופלו
-    "pending_email": {}          # מייל ממתין לאישור
+    "active": True,
+    "interval": 1800,
+    "allowed_senders": ["mnoishtat@gmail.com"],
+    "last_check": 0,
+    "seen_ids": set(),
+    "pending_email": {}
 }
+
+whatsapp_settings = {
+    "active": True,  # האם שליחה אוטומטית פעילה
+}
+
 youtube_tokens = {}
 
 # ─── מילים עם גרש ─────────────────────────────────────────
@@ -1581,6 +1586,34 @@ def _run_monthly_report(chat_id, year, month):
         print(f"שגיאה monthly report: {e}", flush=True)
         edit_message(chat_id, msg_id, f"❌ שגיאה ביצירת הדוח: {e}")
 
+def send_whatsapp(message, image_url=None):
+    """שולח הודעה לקבוצת וואטסאפ דרך Green API"""
+    instance_id = os.environ.get("GREENAPI_ID", "")
+    token = os.environ.get("GREENAPI_TOKEN", "")
+    group_id = os.environ.get("WHATSAPP_GROUP_ID", "")
+    if not instance_id or not token or not group_id:
+        print("⚠️ Green API לא מוגדר", flush=True)
+        return False
+    try:
+        base_url = f"https://7107.api.greenapi.com/waInstance{instance_id}"
+        if image_url:
+            url = f"{base_url}/sendFileByUrl/{token}"
+            payload = {
+                "chatId": group_id,
+                "urlFile": image_url,
+                "fileName": "image.jpg",
+                "caption": message
+            }
+        else:
+            url = f"{base_url}/sendMessage/{token}"
+            payload = {"chatId": group_id, "message": message}
+        resp = requests.post(url, json=payload, timeout=15)
+        print(f"WhatsApp Green API: {resp.status_code} {resp.text[:100]}", flush=True)
+        return resp.status_code == 200
+    except Exception as e:
+        print(f"שגיאה WhatsApp: {e}", flush=True)
+        return False
+
 def get_fb_stats():
     """מושך סטטיסטיקות פייסבוק"""
     try:
@@ -2762,7 +2795,7 @@ def handle_drive_link(chat_id, user_id, url, draft):
     t = threading.Thread(target=_download, daemon=True)
     t.start()
 
-def _show_summary(chat_id, draft):
+def _show_summary(chat_id, draft, msg_id=None):
     summary = f"""📋 <b>סיכום:</b>
 
 <b>כותרת:</b> {draft.get('title','')}
@@ -2773,14 +2806,20 @@ def _show_summary(chat_id, draft):
 <b>תמונה ראשית:</b> {'✅' if draft.get('main_image') else '❌'}
 <b>גלריה:</b> {len(draft.get('gallery',[]))} תמונות
 <b>וידאו:</b> {draft.get('video_url') or 'אין'}"""
-    send_message(chat_id, summary, {
+    keyboard = {
         "inline_keyboard": [
             [{"text": "🚀 פרסם עכשיו", "callback_data": "publish_now"},
              {"text": "⏰ תזמן פרסום", "callback_data": "publish_schedule"}],
             [{"text": "💾 שמור כטיוטה", "callback_data": "publish_draft"},
              {"text": "❌ ביטול", "callback_data": "publish_cancel"}]
         ]
-    })
+    }
+    if msg_id:
+        edit_message(chat_id, msg_id, summary, keyboard)
+        draft["summary_msg_id"] = msg_id
+    else:
+        new_msg_id = send_status(chat_id, summary, keyboard)
+        draft["summary_msg_id"] = new_msg_id
 
 def handle_message(msg):
     chat_id = msg["chat"]["id"]
@@ -2932,6 +2971,8 @@ def handle_message(msg):
             ]
         keyboard["inline_keyboard"] += [
             [{"text": "📅 דוח חודשי", "callback_data": "monthly_report"}],
+            [{"text": "💬 WhatsApp – " + ("✅ פעיל" if whatsapp_settings["active"] else "❌ כבוי"),
+              "callback_data": "toggle_whatsapp"}],
         ]
         send_message(chat_id, "⚙️ <b>פעולות נוספות</b>", keyboard)
         return
@@ -3388,13 +3429,12 @@ def handle_message(msg):
                 ]
             })
 
-def show_smart_preview(chat_id, draft):
+def show_smart_preview(chat_id, draft, msg_id=None):
     """מציג תצוגה מקדימה מלאה עם קטגוריות שכבר נבחרו"""
     import re as _re
     body_preview = _re.sub(r'<[^>]+>', '', draft.get("body",""))[:300]
     def esc(s): return str(s).replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
 
-    # בחר קטגוריות אוטומטית אם עדיין לא נבחרו
     if not draft.get("categories"):
         cats, cat_names = auto_select_categories(draft.get("title",""), draft.get("body",""))
         draft["categories"] = cats
@@ -3411,7 +3451,7 @@ def show_smart_preview(chat_id, draft):
 
 <b>גוף:</b>
 {esc(body_preview)}{'...' if len(draft.get('body','')) > 300 else ''}"""
-    send_message(chat_id, preview, {
+    keyboard = {
         "inline_keyboard": [
             [{"text": "✅ מאשר, המשך", "callback_data": "smart_approve"}],
             [{"text": "✨ שפר כותרות", "callback_data": "smart_improve_titles"}],
@@ -3423,34 +3463,40 @@ def show_smart_preview(chat_id, draft):
              {"text": "🔄 שנה קטגוריות", "callback_data": "change_categories"}],
             [{"text": "❌ ביטול", "callback_data": "publish_cancel"}]
         ]
-    })
+    }
+    if msg_id:
+        edit_message(chat_id, msg_id, preview, keyboard)
+        draft["summary_msg_id"] = msg_id
+    else:
+        new_id = send_status(chat_id, preview, keyboard)
+        draft["summary_msg_id"] = new_id
 
 def handle_smart_edit_inputs(chat_id, user_id, step, text, draft, drafts):
     """מטפל בכניסות עריכה חכמה - נקרא מתוך handle_message"""
     if step == "smart_edit_subtitle_input":
         draft["subtitle"] = text
         draft["step"] = "smart_preview"
-        show_smart_preview(chat_id, draft)
+        show_smart_preview(chat_id, draft, msg_id=draft.get("summary_msg_id"))
         return True
     elif step == "smart_edit_title_input":
         draft["title"] = text
         draft["step"] = "smart_preview"
-        show_smart_preview(chat_id, draft)
+        show_smart_preview(chat_id, draft, msg_id=draft.get("summary_msg_id"))
         return True
     elif step == "smart_edit_red_title_input":
         draft["red_title"] = text
         draft["step"] = "smart_preview"
-        show_smart_preview(chat_id, draft)
+        show_smart_preview(chat_id, draft, msg_id=draft.get("summary_msg_id"))
         return True
     elif step == "smart_edit_body_input":
         draft["body"] = text
         draft["step"] = "smart_preview"
-        show_smart_preview(chat_id, draft)
+        show_smart_preview(chat_id, draft, msg_id=draft.get("summary_msg_id"))
         return True
     elif step == "smart_edit_tags_input":
         draft["tags"] = [t.strip() for t in text.split(",")]
         draft["step"] = "smart_preview"
-        show_smart_preview(chat_id, draft)
+        show_smart_preview(chat_id, draft, msg_id=draft.get("summary_msg_id"))
         return True
     return False
 
@@ -3637,7 +3683,10 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             resp = publish_to_wp(draft)
             if resp.status_code == 201:
                 post_url = resp.json().get("link", "")
-                notify_channel(draft.get("title", ""), draft.get("subtitle", ""), post_url)
+                post_title2 = draft.get("title","")
+                notify_channel(post_title2, draft.get("subtitle", ""), post_url)
+                if os.environ.get("WHATSAPP_GROUP_ID") and whatsapp_settings["active"]:
+                    threading.Thread(target=send_whatsapp, args=(f"*{post_title2}*\n\n{post_url}",), daemon=True).start()
                 drafts[user_id] = {"step": "idle", "gallery": []}
                 edit_message(chat_id, msg_id, f"✅ <b>הכתבה פורסמה!</b>\n🔗 {post_url}")
             else:
@@ -4731,10 +4780,11 @@ def handle_callback(cb):
             cats, cat_names = auto_select_categories(draft.get("title",""), draft.get("body",""))
             draft["categories"] = cats
             draft["cat_names"] = cat_names
-        # העלאה מהירה או ממייל – ישר לסיכום
+        # קח את msg_id של ההודעה הנוכחית לעדכן אותה
+        current_msg_id = draft.get("quick_status_msg_id") or draft.get("summary_msg_id")
         if draft.get("from_email") or draft.get("from_quick"):
             draft["step"] = "confirm"
-            _show_summary(chat_id, draft)
+            _show_summary(chat_id, draft, msg_id=current_msg_id)
         else:
             draft["step"] = "main_image"
             send_message(chat_id, "שלח את <b>התמונה הראשית</b>:", {
@@ -4893,7 +4943,7 @@ def handle_callback(cb):
         send_message(chat_id, f"תגיות נוכחיות: {', '.join(draft.get('tags',[]))}\n\nשלח תגיות חדשות מופרדות בפסיק:")
 
     elif cb_data == "publish_now":
-        msg_id = send_status(chat_id, "🚀 <b>מפרסם כתבה...</b>\n\n⏳ שולח לוורדפרס")
+        msg_id = draft.get("summary_msg_id") or send_status(chat_id, "🚀 <b>מפרסם כתבה...</b>\n\n⏳ שולח לוורדפרס")
         try:
             resp = publish_to_wp(draft, "publish")
         except Exception as e:
@@ -4910,6 +4960,9 @@ def handle_callback(cb):
             import builtins
             builtins.LAST_POST_TITLE = post_title
             builtins.LAST_POST_URL = post_url
+            if os.environ.get("WHATSAPP_GROUP_ID") and whatsapp_settings["active"]:
+                wa_msg = f"*{post_title}*\n\n{post_url}"
+                threading.Thread(target=send_whatsapp, args=(wa_msg,), daemon=True).start()
             edit_message(chat_id, msg_id,
                 f"✅ <b>הכתבה פורסמה!</b>\n\n"
                 f"📰 {post_title}\n"
@@ -4918,8 +4971,9 @@ def handle_callback(cb):
                     [{"text": "📘 פרסם בפייסבוק", "callback_data": "auto_share_fb"},
                      {"text": "📸 פרסם באינסטגרם", "callback_data": "auto_share_ig"}],
                     [{"text": "🌐 פרסם בכולם", "callback_data": "auto_share_all"}],
-                    [{"text": "🐦 טוויטר", "callback_data": "share_twitter"},
-                     {"text": "🏠 סיום", "callback_data": "publish_done"}]
+                    [{"text": "💬 שלח ל-WhatsApp", "callback_data": "share_whatsapp"},
+                     {"text": "🐦 טוויטר", "callback_data": "share_twitter"}],
+                    [{"text": "🏠 סיום", "callback_data": "publish_done"}]
                 ]
             })
         else:
@@ -5307,6 +5361,11 @@ def handle_callback(cb):
                 edit_message(chat_id, msg_id, f"❌ שגיאה: {e}")
 
         threading.Thread(target=_post_story, daemon=True).start()
+
+    elif cb_data == "toggle_whatsapp":
+        whatsapp_settings["active"] = not whatsapp_settings["active"]
+        status = "✅ פעיל" if whatsapp_settings["active"] else "❌ כבוי"
+        send_message(chat_id, f"💬 <b>WhatsApp אוטומטי – {status}</b>")
 
     elif cb_data == "monthly_report":
         # בחר חודש
@@ -5894,6 +5953,21 @@ def handle_callback(cb):
         from bot import build_prompt
         send_message(chat_id, "✏️ <b>עריכת פרומפט Gemini</b>\n\nשלח את הפרומפט החדש (טקסט ארוך).\n\n⚠️ שים לב: הפרומפט חייב לכלול {text} בסוף!\n\nהפרומפט הנוכחי מוגדר בקוד.")
         draft["step"] = "edit_prompt_input"
+
+    elif cb_data == "share_whatsapp":
+        post_title = draft.get("last_post_title","")
+        post_url = draft.get("last_post_url","")
+        if not post_url:
+            send_message(chat_id, "⚠️ לא נמצא לינק לפרסום.")
+            return
+        msg_id = send_status(chat_id, "💬 <b>שולח ל-WhatsApp...</b>")
+        def _wa():
+            wa_msg = f"*{post_title}*\n\n{post_url}"
+            ok = send_whatsapp(wa_msg)
+            edit_message(chat_id, msg_id,
+                "✅ <b>נשלח ל-WhatsApp!</b>" if ok else
+                "❌ שגיאה בשליחה ל-WhatsApp\n\nבדוק שה-WHATSAPP_GROUP_ID מוגדר ב-Render")
+        threading.Thread(target=_wa, daemon=True).start()
 
     elif cb_data == "share_twitter":
         post_url = draft.get("last_post_url", "")
