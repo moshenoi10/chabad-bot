@@ -2736,7 +2736,7 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                 post_title2 = draft.get("title","")
                 notify_channel(post_title2, draft.get("subtitle", ""), post_url)
                 if os.environ.get("WHATSAPP_GROUP_ID") and whatsapp_settings["active"]:
-                    threading.Thread(target=send_whatsapp, args=(f"*{post_title2}*\n\n{post_url}",), daemon=True).start()
+                    threading.Thread(target=send_whatsapp, args=(f"*עדכוני חב\"\"\"ד - {post_title2}*\n{draft.get('subtitle','')}\n\n👇 לכתבה המלאה לחצו\n{post_url}",), daemon=True).start()
                 drafts[user_id] = {"step": "idle", "gallery": []}
                 edit_message(chat_id, msg_id, f"✅ <b>הכתבה פורסמה!</b>\n🔗 {post_url}")
             else:
@@ -4022,7 +4022,8 @@ def handle_callback(cb):
             builtins.LAST_POST_TITLE = post_title
             builtins.LAST_POST_URL = post_url
             if os.environ.get("WHATSAPP_GROUP_ID") and whatsapp_settings["active"]:
-                wa_msg = f"*{post_title}*\n\n{post_url}"
+                wa_subtitle = draft.get('subtitle','')
+                wa_msg = f'*עדכוני חב׳׳ד - {post_title}*\n{wa_subtitle}\n\n👇 לכתבה המלאה לחצו\n{post_url}'
                 threading.Thread(target=send_whatsapp, args=(wa_msg,), daemon=True).start()
             edit_message(chat_id, msg_id,
                 f"✅ <b>הכתבה פורסמה!</b>\n\n"
@@ -5025,7 +5026,8 @@ def handle_callback(cb):
             return
         msg_id = send_status(chat_id, "💬 <b>שולח ל-WhatsApp...</b>")
         def _wa():
-            wa_msg = f"*{post_title}*\n\n{post_url}"
+            wa_subtitle = draft.get('subtitle','')
+            wa_msg = f'*עדכוני חב׳׳ד - {post_title}*\n{wa_subtitle}\n\n👇 לכתבה המלאה לחצו\n{post_url}'
             ok = send_whatsapp(wa_msg)
             edit_message(chat_id, msg_id,
                 "✅ <b>נשלח ל-WhatsApp!</b>" if ok else
