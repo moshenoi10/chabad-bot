@@ -6,12 +6,28 @@ import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
-WP_URL = "https://chabadupdates.com/wp-json/wp/v2"
+WP_URL = os.environ.get("WP_URL", "https://chabadupdates.com/wp-json/wp/v2")
+WP_SITE_URL = os.environ.get("WP_SITE_URL", WP_SITE_URL)
 WP_USER = os.environ["WP_USER"]
 WP_PASSWORD = os.environ["WP_PASSWORD"]
-CHANNEL_ID = "-1003967710127"
+CHANNEL_ID = os.environ.get("CHANNEL_ID", "-1003967710127")
 VIMEO_TOKEN = os.environ.get("VIMEO_TOKEN", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+SITE_NAME = os.environ.get("SITE_NAME", "עדכוני חב״ד")
+
+# פורמט הודעות – ניתן לשינוי דרך env vars
+CHANNEL_MSG_FORMAT = os.environ.get("CHANNEL_MSG_FORMAT",
+    "*{site_name} - {title}*\n{subtitle}\n\n*לכתבה המלאה לחצו ⬇️*\n{url}")
+WHATSAPP_MSG_FORMAT = os.environ.get("WHATSAPP_MSG_FORMAT",
+    "*{site_name} - {title}*\n{subtitle}\n\n👇 לכתבה המלאה לחצו\n{url}")
+
+# קטגוריות וורדפרס – ניתן לשנות דרך env var
+_cats_env = os.environ.get("WP_CATEGORY_IDS", "11,26,25,52,45,50,51,49,48,1087,1090,1091,1089,1088,47,46,62,1083,63,1084,1085,1086,24")
+WP_RELEVANT_CATEGORY_IDS = [int(x) for x in _cats_env.split(",") if x.strip().isdigit()]
+
+# מילות זיהוי מזל טוב
+_mazaltov_env = os.environ.get("MAZALTOV_KEYWORDS", "מזל טוב,בר מצוה,נישואין,לידה,אירוסין,בר מצווה")
+MAZALTOV_KEYWORDS = [k.strip() for k in _mazaltov_env.split(",")]
 YOUTUBE_CLIENT_ID = os.environ.get("YOUTUBE_CLIENT_ID", "")
 YOUTUBE_CLIENT_SECRET = os.environ.get("YOUTUBE_CLIENT_SECRET", "")
 YOUTUBE_CHANNEL_ID = os.environ.get("YOUTUBE_CHANNEL_ID", "UCXhNK4F73hySVUj66u5GFjg")
@@ -67,7 +83,7 @@ watermark_settings = {
 }
 
 # ─── מערכת הרשאות ────────────────────────────────────────
-SUPER_ADMIN_ID = "1798097090"
+SUPER_ADMIN_ID = os.environ.get("SUPER_ADMIN_ID", "1798097090")
 
 # רמות הרשאה: "admin", "senior_editor", "editor", "blocked"
 users_permissions = {
@@ -470,7 +486,7 @@ def get_analytics_top_articles(days=7):
         )
         if not resp.ok:
             return None
-        wp_url = "https://chabadupdates.com"
+        wp_url = WP_SITE_URL
         results = []
         for row in resp.json().get("rows",[]):
             dims = row.get("dimensionValues",[])
@@ -583,7 +599,7 @@ def _run_monthly_report(chat_id, year, month):
         regular_posts = []
         for p in all_posts:
             title = p.get("title",{}).get("rendered","")
-            if "מזל טוב" in title or "בר מצוה" in title or "נישואין" in title or "לידה" in title:
+            if any(kw in title for kw in MAZALTOV_KEYWORDS):
                 mazaltov_posts.append(p)
             else:
                 regular_posts.append(p)
@@ -596,7 +612,7 @@ def _run_monthly_report(chat_id, year, month):
             if day not in days_data:
                 days_data[day] = {"regular": 0, "mazaltov": 0, "posts": []}
             title = p.get("title",{}).get("rendered","")
-            if any(kw in title for kw in ["מזל טוב","בר מצוה","נישואין","לידה"]):
+            if any(kw in title for kw in MAZALTOV_KEYWORDS):
                 days_data[day]["mazaltov"] += 1
             else:
                 days_data[day]["regular"] += 1
@@ -764,11 +780,9 @@ offset = 0
 ADMIN_MENU = {
     "keyboard": [
         [{"text": "✍️ כתבה חדשה"}, {"text": "🤖 העלאה חכמה"}],
-        [{"text": "⚡ העלאה חכמה מהירה"}, {"text": "🎉 מזל טוב"}],
-        [{"text": "🎬 העלאה ליוטיוב"}, {"text": "✏️ עריכת כתבה"}],
-        [{"text": "🗑️ מחיקת כתבה"}, {"text": "📋 כתבות אחרונות"}],
-        [{"text": "📝 טיוטות"}, {"text": "📢 הפצת תוכן"}],
-        [{"text": "🎥 הפצת וידאו"}, {"text": "⚙️ פעולות נוספות"}],
+        [{"text": "⚡ העלאה מהירה"}, {"text": "🎉 מזל טוב"}],
+        [{"text": "📋 ניהול תוכן ▾"}, {"text": "📢 הפצה ▾"}],
+        [{"text": "⚙️ פעולות נוספות"}],
     ],
     "resize_keyboard": True,
     "persistent": True
@@ -777,11 +791,9 @@ ADMIN_MENU = {
 SENIOR_EDITOR_MENU = {
     "keyboard": [
         [{"text": "✍️ כתבה חדשה"}, {"text": "🤖 העלאה חכמה"}],
-        [{"text": "⚡ העלאה חכמה מהירה"}, {"text": "🎉 מזל טוב"}],
-        [{"text": "🎬 העלאה ליוטיוב"}, {"text": "✏️ עריכת כתבה"}],
-        [{"text": "🗑️ מחיקת כתבה"}, {"text": "📋 כתבות אחרונות"}],
-        [{"text": "📝 טיוטות"}, {"text": "📢 הפצת תוכן"}],
-        [{"text": "🎥 הפצת וידאו"}, {"text": "⚙️ פעולות נוספות"}],
+        [{"text": "⚡ העלאה מהירה"}, {"text": "🎉 מזל טוב"}],
+        [{"text": "📋 ניהול תוכן ▾"}, {"text": "📢 הפצה ▾"}],
+        [{"text": "⚙️ פעולות נוספות"}],
     ],
     "resize_keyboard": True,
     "persistent": True
@@ -790,11 +802,31 @@ SENIOR_EDITOR_MENU = {
 EDITOR_MENU = {
     "keyboard": [
         [{"text": "✍️ כתבה חדשה"}, {"text": "🎉 מזל טוב"}],
-        [{"text": "✏️ עריכת כתבה"}, {"text": "🎬 העלאה ליוטיוב"}],
-        [{"text": "📢 הפצת תוכן"}, {"text": "🎥 הפצת וידאו"}]
+        [{"text": "📋 ניהול תוכן ▾"}, {"text": "📢 הפצה ▾"}],
     ],
     "resize_keyboard": True,
     "persistent": True
+}
+
+# תת-תפריטים – נפתחים כ-inline buttons
+CONTENT_MGMT_MENU = {
+    "inline_keyboard": [
+        [{"text": "✏️ עריכת כתבה", "callback_data": "menu_edit"},
+         {"text": "🗑️ מחיקת כתבה", "callback_data": "menu_delete"}],
+        [{"text": "📋 כתבות אחרונות", "callback_data": "menu_recent"},
+         {"text": "📝 טיוטות", "callback_data": "menu_drafts"}],
+        [{"text": "🎬 העלאה ליוטיוב", "callback_data": "menu_youtube"}],
+    ]
+}
+
+SHARE_MENU = {
+    "inline_keyboard": [
+        [{"text": "📢 הפצת תוכן", "callback_data": "menu_share_content"},
+         {"text": "🎥 הפצת וידאו", "callback_data": "menu_share_video"}],
+        [{"text": "📘 פרסם בפייסבוק", "callback_data": "menu_share_fb"},
+         {"text": "📸 פרסם באינסטגרם", "callback_data": "menu_share_ig"}],
+        [{"text": "💬 שלח ל-WhatsApp", "callback_data": "menu_share_wa"}],
+    ]
 }
 
 # לשמור תאימות אחורה
@@ -976,7 +1008,7 @@ def wait_for_vimeo(video_id, max_wait=300):
         time.sleep(10)
     return False
 
-def upload_to_vimeo(video_bytes, title="סרטון חדש", chat_id=None):
+def upload_to_vimeo(video_bytes, title="סרטון חדש", chat_id=None, msg_id=None):
     if not VIMEO_TOKEN:
         return None, None
     try:
@@ -989,10 +1021,11 @@ def upload_to_vimeo(video_bytes, title="סרטון חדש", chat_id=None):
         size_mb = size // 1024 // 1024
         print(f"מתחיל העלאה ל-Vimeo: {size_mb}MB", flush=True)
 
-        # שלח הודעת סטטוס אחת ועדכן אותה
-        msg_id = None
-        if chat_id:
+        # השתמש ב-msg_id חיצוני אם קיים, אחרת צור חדש
+        if chat_id and not msg_id:
             msg_id = send_status(chat_id, f"🎬 <b>מתחיל העלאה ל-Vimeo</b>\n📦 גודל: {size_mb}MB\n\n{progress_bar(0, 100)} ⏳")
+        elif chat_id and msg_id:
+            edit_message(chat_id, msg_id, f"🎬 <b>מעלה ל-Vimeo...</b>\n📦 גודל: {size_mb}MB\n\n{progress_bar(0, 100)} ⏳")
 
         create_resp = requests.post(
             "https://api.vimeo.com/me/videos",
@@ -1078,7 +1111,8 @@ def upload_to_vimeo(video_bytes, title="סרטון חדש", chat_id=None):
         return None, None
 
 def notify_channel(title, subtitle, url):
-    text = f"*עדכוני חב״ד - {title}*\n{subtitle}\n\n*לכתבה המלאה לחצו ⬇️*\n{url}"
+    text = CHANNEL_MSG_FORMAT.format(
+        site_name=SITE_NAME, title=title, subtitle=subtitle, url=url)
     try:
         requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
@@ -1589,6 +1623,42 @@ def build_groq_prompt(text):
 טקסט: {text}"""
 
 def build_prompt(text):
+    base = GEMINI_PROMPT if GEMINI_PROMPT else """אתה עורך חדשות מקצועי. קרא את הטקסט וצור ממנו כתבה עיתונאית.
+
+כותרת ראשית:
+- עד 8 מילים
+- פורמט: נושא + נקודתיים + פרט
+- אסור להתחיל בשם האתר
+- נקודתיים פעם אחת בלבד
+
+כותרת משנה:
+- חייב להיות 2-3 משפטים מופרדים בסימן • בלבד
+- אסור כוכביות * או סימני עיצוב
+
+כותרת אדומה:
+- 2-4 מילים בלבד
+
+גוף הכתבה:
+- העתק את הטקסט המקורי מילה במילה
+- חלק לפסקאות של 2-4 משפטים
+- הסר * _ ~ אבל שמור על תוכן המילים
+
+תגיות:
+- 5-8 מילות מפתח מהטקסט
+
+גרשיים – כלל ברזל:
+- גרש ״ מותר רק במילים שבטקסט המקורי כתובות עם " ביניהן
+- אסור על שמות פרטיים, מקומות, ציטוטים
+- אם ספק – אל תשים ״
+
+החזר JSON בלבד:
+{{"title":"...","subtitle":"...","red_title":"...","body":"...","tags":["..."]}}
+
+טקסט:
+{text}"""
+    return base.replace("{text}", text) if "{text}" in base else base + f"\n\nטקסט:\n{text}"
+
+def build_prompt_orig(text):
     return f"""אתה עורך חדשות חרדי מקצועי. קרא את הטקסט וצור ממנו כתבה עיתונאית.
 
 כותרת ראשית:
@@ -2034,6 +2104,17 @@ def handle_message(msg):
         send_message(chat_id, "⚙️ <b>פעולות נוספות</b>", keyboard)
         return
 
+    if text == "📋 ניהול תוכן ▾" and is_editor(user_id):
+        send_message(chat_id, "📋 <b>ניהול תוכן</b>", CONTENT_MGMT_MENU)
+        return
+
+    if text == "📢 הפצה ▾" and is_editor(user_id):
+        send_message(chat_id, "📢 <b>הפצה</b>", SHARE_MENU)
+        return
+
+    if text == "⚡ העלאה מהירה" and is_editor(user_id):
+        text = "⚡ העלאה חכמה מהירה"  # redirect לfunctionality קיימת
+
     if text == "⚡ העלאה חכמה מהירה" and is_editor(user_id):
         # אפס draft לחלוטין
         drafts[user_id] = {
@@ -2286,7 +2367,7 @@ def handle_message(msg):
             cats = {}
         keyboard = {"inline_keyboard": []}
         row = []
-        relevant_ids = [11, 26, 25, 52, 45, 50, 51, 49, 48, 1087, 1090, 1091, 1089, 1088, 47, 46, 62, 1083, 63, 1084, 1085, 1086, 24]
+        relevant_ids = WP_RELEVANT_CATEGORY_IDS
         for cat_name, cat_id in cats.items():
             if cat_id in relevant_ids:
                 row.append({"text": cat_name, "callback_data": f"cat_{cat_id}_{cat_name}"})
@@ -3993,7 +4074,10 @@ def handle_callback(cb):
 
     elif cb_data == "smart_edit_title":
         draft["step"] = "smart_edit_title_input"
-        send_message(chat_id, f"כותרת נוכחית:\n<b>{draft.get('title','')}</b>\n\nשלח כותרת חדשה:")
+        # שמור את msg_id של התצוגה המקדימה
+        preview_msg_id = draft.get("summary_msg_id")
+        new_msg = send_message(chat_id, f"כותרת נוכחית:\n<b>{draft.get('title','')}</b>\n\nשלח כותרת חדשה:")
+        # summary_msg_id נשאר כמו שהוא
 
     elif cb_data == "smart_edit_body":
         draft["step"] = "smart_edit_body_input"
@@ -4004,7 +4088,11 @@ def handle_callback(cb):
         send_message(chat_id, f"תגיות נוכחיות: {', '.join(draft.get('tags',[]))}\n\nשלח תגיות חדשות מופרדות בפסיק:")
 
     elif cb_data == "publish_now":
-        msg_id = draft.get("summary_msg_id") or send_status(chat_id, "🚀 <b>מפרסם כתבה...</b>\n\n⏳ שולח לוורדפרס")
+        msg_id = draft.get("summary_msg_id")
+        if not msg_id:
+            msg_id = send_status(chat_id, "🚀 <b>מפרסם כתבה...</b>\n\n⏳ שולח לוורדפרס")
+        else:
+            edit_message(chat_id, msg_id, "🚀 <b>מפרסם כתבה...</b>\n\n⏳ שולח לוורדפרס")
         try:
             resp = publish_to_wp(draft, "publish")
         except Exception as e:
@@ -4014,30 +4102,33 @@ def handle_callback(cb):
         if resp.status_code == 201:
             post_url = resp.json().get("link", "")
             post_title = draft.get("title", "")
-            edit_message(chat_id, msg_id, "🚀 <b>מפרסם כתבה...</b>\n\n✅ עלתה לאתר\n⏳ שולח לערוץ טלגרם")
-            notify_channel(post_title, draft.get("subtitle", ""), post_url)
+            post_subtitle = draft.get("subtitle", "")
             draft["last_post_url"] = post_url
             draft["last_post_title"] = post_title
             import builtins
             builtins.LAST_POST_TITLE = post_title
             builtins.LAST_POST_URL = post_url
-            if os.environ.get("WHATSAPP_GROUP_ID") and whatsapp_settings["active"]:
-                wa_subtitle = draft.get('subtitle','')
-                wa_msg = f'*עדכוני חב׳׳ד - {post_title}*\n{wa_subtitle}\n\n👇 לכתבה המלאה לחצו\n{post_url}'
-                threading.Thread(target=send_whatsapp, args=(wa_msg,), daemon=True).start()
+            # הצג מיד שפורסם + כפתורי הפצה
             edit_message(chat_id, msg_id,
                 f"✅ <b>הכתבה פורסמה!</b>\n\n"
                 f"📰 {post_title}\n"
                 f"🔗 {post_url}", {
                 "inline_keyboard": [
-                    [{"text": "📘 פרסם בפייסבוק", "callback_data": "auto_share_fb"},
-                     {"text": "📸 פרסם באינסטגרם", "callback_data": "auto_share_ig"}],
+                    [{"text": "📘 פייסבוק", "callback_data": "auto_share_fb"},
+                     {"text": "📸 אינסטגרם", "callback_data": "auto_share_ig"}],
                     [{"text": "🌐 פרסם בכולם", "callback_data": "auto_share_all"}],
-                    [{"text": "💬 שלח ל-WhatsApp", "callback_data": "share_whatsapp"},
+                    [{"text": "💬 WhatsApp", "callback_data": "share_whatsapp"},
                      {"text": "🐦 טוויטר", "callback_data": "share_twitter"}],
                     [{"text": "🏠 סיום", "callback_data": "publish_done"}]
                 ]
             })
+            # שלח לערוץ ו-WhatsApp ברקע
+            def _post_publish():
+                notify_channel(post_title, post_subtitle, post_url)
+                if os.environ.get("WHATSAPP_GROUP_ID") and whatsapp_settings["active"]:
+                    wa_msg = f'*עדכוני חב״ד - {post_title}*\n{post_subtitle}\n\n👇 לכתבה המלאה לחצו\n{post_url}'
+                    send_whatsapp(wa_msg)
+            threading.Thread(target=_post_publish, daemon=True).start()
         else:
             edit_message(chat_id, msg_id, f"❌ <b>שגיאה בפרסום</b>\n\n{resp.text[:200]}")
             drafts[user_id] = {"step": "idle", "gallery": []}
@@ -4108,7 +4199,7 @@ def handle_callback(cb):
         keyboard = {"inline_keyboard": []}
         row = []
         # הצג רק קטגוריות רלוונטיות
-        relevant_ids = [11, 26, 25, 52, 45, 50, 51, 49, 48, 1087, 1090, 1091, 1089, 1088, 47, 46, 62, 1083, 63, 1084, 1085, 1086, 24]
+        relevant_ids = WP_RELEVANT_CATEGORY_IDS
         for cat_name, cat_id in cats.items():
             if cat_id in relevant_ids:
                 row.append({"text": cat_name, "callback_data": f"cat_{cat_id}_{cat_name}"})
@@ -4142,7 +4233,7 @@ def handle_callback(cb):
             for i, row in enumerate(data["rows"][:5], 1):
                 title = row["dimensionValues"][0]["value"]
                 path = row["dimensionValues"][1]["value"]
-                url = f"https://chabadupdates.com{path}"
+                url = f"{WP_SITE_URL}{path}"
                 msg += f"<b>{i}. {title}</b>\n{url}\n\n"
             send_message(chat_id, msg)
         else:
@@ -4424,6 +4515,96 @@ def handle_callback(cb):
 
         threading.Thread(target=_post_story, daemon=True).start()
 
+    elif cb_data == "menu_edit":
+        draft["step"] = "edit_search"
+        send_message(chat_id, "✏️ שלח את כותרת הכתבה לעריכה (או חלק ממנה):")
+
+    elif cb_data == "menu_delete":
+        draft["step"] = "delete_search"
+        send_message(chat_id, "🗑️ שלח את כותרת הכתבה למחיקה (או חלק ממנה):")
+
+    elif cb_data == "menu_recent":
+        # הפעל כתבות אחרונות
+        try:
+            resp = requests.get(f"{WP_URL}/posts",
+                params={"per_page": 10, "orderby": "date", "order": "desc",
+                        "_fields": "id,title,link,date,status"},
+                auth=(WP_USER, WP_PASSWORD), timeout=10)
+            posts = resp.json() if resp.ok else []
+            if posts:
+                msg = "📋 <b>10 כתבות אחרונות:</b>\n\n"
+                for p in posts:
+                    status = "✅" if p.get("status") == "publish" else "📝"
+                    msg += f"{status} {p['title']['rendered']}\n🔗 {p.get('link','')}\n\n"
+                send_message(chat_id, msg)
+            else:
+                send_message(chat_id, "📭 <b>אין כתבות</b>")
+        except Exception as e:
+            send_message(chat_id, f"❌ שגיאה: {e}")
+
+    elif cb_data == "menu_drafts":
+        try:
+            resp = requests.get(f"{WP_URL}/posts",
+                params={"status": "draft", "per_page": 10, "_fields": "id,title,link,date"},
+                auth=(WP_USER, WP_PASSWORD), timeout=10)
+            posts = resp.json() if resp.ok else []
+            if posts:
+                msg = "📝 <b>טיוטות:</b>\n\n"
+                for p in posts:
+                    msg += f"• {p['title']['rendered']}\n"
+                send_message(chat_id, msg)
+            else:
+                send_message(chat_id, "אין טיוטות שמורות.")
+        except Exception as e:
+            send_message(chat_id, f"❌ שגיאה: {e}")
+
+    elif cb_data == "menu_youtube":
+        send_message(chat_id, "🎬 <b>העלאה ליוטיוב</b>\n\nבחר סוג העלאה:", {
+            "inline_keyboard": [
+                [{"text": "🤖 העלאה חכמה", "callback_data": "yt_smart"},
+                 {"text": "📋 העלאה ידנית", "callback_data": "yt_manual"}],
+                [{"text": "🎥 קבוצת סרטונים", "callback_data": "yt_group"}]
+            ]
+        })
+
+    elif cb_data == "menu_share_content":
+        draft["step"] = "social_content"
+        send_message(chat_id, "📢 <b>הפצת תוכן</b>\n\nשלח את הטקסט שתרצה להפיץ:", {
+            "inline_keyboard": [[{"text": "↩️ ביטול", "callback_data": "publish_cancel"}]]
+        })
+
+    elif cb_data == "menu_share_video":
+        draft["step"] = "social_video"
+        send_message(chat_id, "🎥 <b>הפצת וידאו</b>\n\nשלח קובץ סרטון או לינק:", {
+            "inline_keyboard": [[{"text": "↩️ ביטול", "callback_data": "publish_cancel"}]]
+        })
+
+    elif cb_data == "menu_share_fb":
+        send_message(chat_id, "📘 שלח טקסט ותמונה לפרסום בפייסבוק:", {
+            "inline_keyboard": [[{"text": "↩️ ביטול", "callback_data": "publish_cancel"}]]
+        })
+        draft["step"] = "social_fb_direct"
+
+    elif cb_data == "menu_share_ig":
+        send_message(chat_id, "📸 שלח טקסט ותמונה לפרסום באינסטגרם:", {
+            "inline_keyboard": [[{"text": "↩️ ביטול", "callback_data": "publish_cancel"}]]
+        })
+        draft["step"] = "social_ig_direct"
+
+    elif cb_data == "menu_share_wa":
+        post_title = draft.get("last_post_title", "")
+        post_url = draft.get("last_post_url", "")
+        if post_url:
+            msg_id = send_status(chat_id, "💬 <b>שולח ל-WhatsApp...</b>")
+            wa_subtitle = draft.get("subtitle", "")
+            wa_msg = WHATSAPP_MSG_FORMAT.format(
+                site_name=SITE_NAME, title=post_title, subtitle=wa_subtitle, url=post_url)
+            ok = send_whatsapp(wa_msg)
+            edit_message(chat_id, msg_id,
+                "✅ <b>נשלח ל-WhatsApp!</b>" if ok else "❌ שגיאה בשליחה ל-WhatsApp")
+        else:
+            send_message(chat_id, "⚠️ אין כתבה אחרונה לשליחה. פרסם כתבה קודם.")
+
     elif cb_data == "toggle_whatsapp":
         whatsapp_settings["active"] = not whatsapp_settings["active"]
         status = "✅ פעיל" if whatsapp_settings["active"] else "❌ כבוי"
@@ -4621,8 +4802,10 @@ def handle_callback(cb):
                     edit_message(chat_id, msg_id,
                         f"🎬 <b>מעלה סרטון {i+1}/{len(videos)} ל-Vimeo...</b>\n\n{progress_bar(i, len(videos))}")
                     vimeo_url, vimeo_id = upload_to_vimeo(
-                        vid, f"{draft.get('title','סרטון')} {i+1}" if len(videos)>1 else draft.get('title','סרטון'),
-                        chat_id=chat_id
+                        vid,
+                        f"{draft.get('title','סרטון')} {i+1}" if len(videos)>1 else draft.get('title','סרטון'),
+                        chat_id=chat_id,
+                        msg_id=msg_id
                     )
                     if vimeo_url:
                         vimeo_urls.append(vimeo_url)
@@ -4890,19 +5073,22 @@ def handle_callback(cb):
         post_title = draft.get("last_post_title", "")
         post_body = draft.get("body", "")
         post_images = [draft.get("main_image")] + draft.get("gallery", [])
-        post_images = [img for img in post_images if img]  # הסר None
+        post_images = [img for img in post_images if img]
         
         import re
-        # נקה HTML tags מהגוף
         clean_body = re.sub(r'<[^>]+>', '', post_body).strip()
-        
-        # פורמט: שורה ראשונה מודגשת (בפייסבוק) + גוף
         fb_text = f"{post_title}\n\n{clean_body}"
         ig_text = f"{post_title}\n\n{clean_body}"
+        # קח msg_id מהודעת הפרסום
+        existing_msg_id = draft.get("summary_msg_id")
         
         def _auto_share():
-            # הודעה אחת שמתעדכנת לאורך כל התהליך
-            msg_id = send_status(chat_id, "🚀 <b>מתחיל הפצה לרשתות...</b>")
+            # השתמש בהודעה קיימת או צור חדשה
+            if existing_msg_id:
+                msg_id = existing_msg_id
+                edit_message(chat_id, msg_id, "🚀 <b>מתחיל הפצה לרשתות...</b>")
+            else:
+                msg_id = send_status(chat_id, "🚀 <b>מתחיל הפצה לרשתות...</b>")
             status_lines = []
 
             def update(extra="", markup=None):
@@ -5027,7 +5213,7 @@ def handle_callback(cb):
         msg_id = send_status(chat_id, "💬 <b>שולח ל-WhatsApp...</b>")
         def _wa():
             wa_subtitle = draft.get('subtitle','')
-            wa_msg = f'*עדכוני חב׳׳ד - {post_title}*\n{wa_subtitle}\n\n👇 לכתבה המלאה לחצו\n{post_url}'
+            wa_msg = WHATSAPP_MSG_FORMAT.format(site_name=SITE_NAME, title=post_title, subtitle=wa_subtitle, url=post_url)
             ok = send_whatsapp(wa_msg)
             edit_message(chat_id, msg_id,
                 "✅ <b>נשלח ל-WhatsApp!</b>" if ok else
