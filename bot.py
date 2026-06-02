@@ -3942,7 +3942,7 @@ def handle_callback(cb):
         print(f"smart_approve: step={step}, msg_id={current_msg_id}, from_quick={draft.get('from_quick')}, has_image={bool(draft.get('main_image'))}", flush=True)
         # אם כבר בשלב confirm – עדכן אותה הודעה
         if step == "confirm":
-            _show_summary(chat_id, draft, msg_id=current_msg_id)
+            _show_summary(chat_id, draft, msg_id=None)  # תמיד הודעה חדשה
         # העלאה מהירה/ממייל – ישר לסיכום
         elif draft.get("from_email") or draft.get("from_quick"):
             draft["step"] = "confirm"
