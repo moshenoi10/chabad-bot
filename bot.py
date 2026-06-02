@@ -16,6 +16,13 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_PROMPT = os.environ.get("GEMINI_PROMPT", "")
 SITE_NAME = os.environ.get("SITE_NAME", "עדכוני חב״ד")
 
+# ─── שליטה בפונקציות ────────────────────────────────────
+_features_env = os.environ.get("FEATURES", "all")
+ENABLED_FEATURES = set(_features_env.split(",")) if _features_env != "all" else {"all"}
+
+def feature_enabled(name):
+    return "all" in ENABLED_FEATURES or name in ENABLED_FEATURES
+
 # פורמט הודעות – ניתן לשינוי דרך env vars
 CHANNEL_MSG_FORMAT = os.environ.get("CHANNEL_MSG_FORMAT",
     "*{site_name} - {title}*\n{subtitle}\n\n*לכתבה המלאה לחצו ⬇️*\n{url}")
@@ -1251,12 +1258,25 @@ def post_to_twitter(text, url=""):
         print(f"שגיאה שליחה לערוץ: {e}")
 
 def get_menu(user_id):
-    perm = get_permission(str(user_id))
-    if perm == "admin":
-        return ADMIN_MENU
-    elif perm == "senior_editor":
-        return SENIOR_EDITOR_MENU
-    return EDITOR_MENU
+    rows = []
+    if is_admin(user_id) or is_senior_editor(user_id):
+        row1 = []
+        if feature_enabled("new_article"): row1.append({"text": "✍️ כתבה חדשה"})
+        if feature_enabled("smart_upload"): row1.append({"text": "🤖 העלאה חכמה"})
+        if row1: rows.append(row1)
+        row2 = []
+        if feature_enabled("quick_upload"): row2.append({"text": "⚡ העלאה מהירה"})
+        if feature_enabled("mazaltov"): row2.append({"text": "🎉 מזל טוב"})
+        if row2: rows.append(row2)
+        rows.append([{"text": "📋 ניהול תוכן ▾"}, {"text": "📢 הפצה ▾"}])
+        rows.append([{"text": "⚙️ פעולות נוספות"}])
+    else:
+        row1 = []
+        if feature_enabled("new_article"): row1.append({"text": "✍️ כתבה חדשה"})
+        if feature_enabled("mazaltov"): row1.append({"text": "🎉 מזל טוב"})
+        if row1: rows.append(row1)
+        rows.append([{"text": "📋 ניהול תוכן ▾"}, {"text": "📢 הפצה ▾"}])
+    return {"keyboard": rows, "resize_keyboard": True, "persistent": True}
 
 def get_wp_categories():
     try:
