@@ -13,6 +13,7 @@ WP_PASSWORD = os.environ["WP_PASSWORD"]
 CHANNEL_ID = os.environ.get("CHANNEL_ID", "-1003967710127")
 VIMEO_TOKEN = os.environ.get("VIMEO_TOKEN", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_PROMPT = os.environ.get("GEMINI_PROMPT", "")
 SITE_NAME = os.environ.get("SITE_NAME", "עדכוני חב״ד")
 
 # פורמט הודעות – ניתן לשינוי דרך env vars
@@ -841,8 +842,11 @@ def edit_message(chat_id, message_id, text, reply_markup=None):
     try:
         resp = requests.post(url, json=data, timeout=10)
         if not resp.ok:
-            print(f"edit_message נכשל {resp.status_code}: {resp.text[:150]}", flush=True)
-            # fallback – שלח הודעה חדשה
+            err = resp.text[:100]
+            # תוכן זהה – לא שגיאה אמיתית
+            if "message is not modified" in err:
+                return
+            print(f"edit_message נכשל {resp.status_code}: {err}", flush=True)
             send_message(chat_id, text, reply_markup)
     except Exception as e:
         print(f"שגיאה edit_message: {e}", flush=True)
@@ -4743,6 +4747,10 @@ def handle_callback(cb):
         })
 
     elif cb_data == "quick_upload_done":
+        # מנע עיבוד כפול
+        if draft.get("processing"):
+            return
+        draft["processing"] = True
         # שלח הודעה חדשה
         msg_id = send_status(chat_id, "⚡ <b>מתחיל עיבוד...</b>")
         draft["quick_status_msg_id"] = msg_id
@@ -4777,6 +4785,7 @@ def handle_callback(cb):
             stop[0] = True
 
             if not result:
+                draft["processing"] = False  # אפשר ניסיון חוזר
                 edit_message(chat_id, msg_id, "⚠️ <b>AI לא הצליח לעבד</b>\n\nמה תרצה לעשות?", {
                     "inline_keyboard": [
                         [{"text": "🔄 נסה שוב", "callback_data": "quick_upload_done"}],
