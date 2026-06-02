@@ -1950,8 +1950,23 @@ def _show_summary(chat_id, draft, msg_id=None):
     }
     if msg_id:
         print(f"_show_summary: edit msg_id={msg_id}", flush=True)
-        edit_message(chat_id, msg_id, summary, keyboard)
-        draft["summary_msg_id"] = msg_id
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText"
+        data = {"chat_id": chat_id, "message_id": msg_id, "text": summary, 
+                "parse_mode": "HTML", "reply_markup": json.dumps(keyboard)}
+        resp = requests.post(url, json=data, timeout=10)
+        if resp.ok:
+            draft["summary_msg_id"] = msg_id
+        else:
+            err = resp.text
+            if "message is not modified" in err:
+                # תוכן זהה – שלח הודעה חדשה
+                print("_show_summary: content identical, sending new", flush=True)
+                new_msg_id = send_status(chat_id, summary, keyboard)
+                draft["summary_msg_id"] = new_msg_id
+            else:
+                print(f"_show_summary edit failed: {err[:100]}", flush=True)
+                new_msg_id = send_status(chat_id, summary, keyboard)
+                draft["summary_msg_id"] = new_msg_id
     else:
         print("_show_summary: send new", flush=True)
         new_msg_id = send_status(chat_id, summary, keyboard)
