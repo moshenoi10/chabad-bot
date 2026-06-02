@@ -1949,9 +1949,11 @@ def _show_summary(chat_id, draft, msg_id=None):
         ]
     }
     if msg_id:
+        print(f"_show_summary: edit msg_id={msg_id}", flush=True)
         edit_message(chat_id, msg_id, summary, keyboard)
         draft["summary_msg_id"] = msg_id
     else:
+        print("_show_summary: send new", flush=True)
         new_msg_id = send_status(chat_id, summary, keyboard)
         draft["summary_msg_id"] = new_msg_id
 
