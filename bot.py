@@ -807,7 +807,11 @@ def edit_message(chat_id, message_id, text, reply_markup=None):
     if reply_markup:
         data["reply_markup"] = json.dumps(reply_markup)
     try:
-        requests.post(url, json=data, timeout=10)
+        resp = requests.post(url, json=data, timeout=10)
+        if not resp.ok:
+            print(f"edit_message נכשל {resp.status_code}: {resp.text[:150]}", flush=True)
+            # fallback – שלח הודעה חדשה
+            send_message(chat_id, text, reply_markup)
     except Exception as e:
         print(f"שגיאה edit_message: {e}", flush=True)
 
