@@ -1693,11 +1693,12 @@ def save_drafts():
             safe_drafts = {}
             for uid, d in drafts.items():
                 safe = {k: v for k, v in d.items() 
-                       if k not in ("main_image", "gallery", "mazaltov_images", "pending_group_files")}
+                       if k not in ("main_image", "gallery", "mazaltov_images", 
+                                   "pending_group_files", "quick_videos", "quick_audio")}
                 safe_drafts[uid] = safe
             pickle.dump(safe_drafts, f)
     except Exception as _e:
-        print(f"שגיאה: {_e}", flush=True)
+        print(f"שגיאה שמירת drafts: {_e}", flush=True)
 
 def load_drafts():
     global drafts
@@ -5509,9 +5510,11 @@ def handle_callback(cb):
         audio = draft.get("quick_audio", [])
 
         if not texts:
-            edit_message(chat_id, msg_id, "⚠️ לא קיבלתי טקסט. שלח שוב עם טקסט.", {
-                "inline_keyboard": [[{"text": "↩️ חזרה", "callback_data": "publish_cancel"}]]
+            edit_message(chat_id, msg_id, 
+                "⚠️ <b>לא קיבלתי טקסט</b>\n\nשלח את טקסט הכתבה ולחץ שוב על סיום.", {
+                "inline_keyboard": [[{"text": "✅ סיום – עבד!", "callback_data": "quick_upload_done"}]]
             })
+            print(f"quick_upload_done: אין טקסט. draft keys: {list(draft.keys())}", flush=True)
             return
 
         def _process():
@@ -7331,6 +7334,7 @@ def main():
                 if "message" in update:
                     try:
                         handle_message(update["message"])
+                        save_drafts()
                     except Exception as e:
                         print(f"שגיאה handle_message: {e}", flush=True)
                         import traceback
@@ -7338,6 +7342,7 @@ def main():
                 elif "callback_query" in update:
                     try:
                         handle_callback(update["callback_query"])
+                        save_drafts()
                     except Exception as e:
                         print(f"שגיאה handle_callback: {e}", flush=True)
                         import traceback
