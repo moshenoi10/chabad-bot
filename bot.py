@@ -7,7 +7,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 WP_URL = os.environ.get("WP_URL", "https://chabadupdates.com/wp-json/wp/v2")
-WP_SITE_URL = os.environ.get("WP_SITE_URL", WP_SITE_URL)
+WP_SITE_URL = os.environ.get("WP_SITE_URL", "https://chabadupdates.com")
 WP_USER = os.environ["WP_USER"]
 WP_PASSWORD = os.environ["WP_PASSWORD"]
 CHANNEL_ID = os.environ.get("CHANNEL_ID", "-1003967710127")
