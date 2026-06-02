@@ -3828,9 +3828,17 @@ def handle_callback(cb):
             cats, cat_names = auto_select_categories(draft.get("title",""), draft.get("body",""))
             draft["categories"] = cats
             draft["cat_names"] = cat_names
-        # קח את msg_id של ההודעה הנוכחית לעדכן אותה
         current_msg_id = draft.get("quick_status_msg_id") or draft.get("summary_msg_id")
-        if draft.get("from_email") or draft.get("from_quick"):
+        step = draft.get("step","")
+        # אם כבר בשלב confirm – הצג סיכום
+        if step == "confirm":
+            _show_summary(chat_id, draft, msg_id=current_msg_id)
+        # העלאה מהירה/ממייל – ישר לסיכום
+        elif draft.get("from_email") or draft.get("from_quick"):
+            draft["step"] = "confirm"
+            _show_summary(chat_id, draft, msg_id=current_msg_id)
+        # העלאה חכמה רגילה – בדוק אם יש תמונה
+        elif draft.get("main_image"):
             draft["step"] = "confirm"
             _show_summary(chat_id, draft, msg_id=current_msg_id)
         else:
