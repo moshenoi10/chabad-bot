@@ -1927,6 +1927,7 @@ def handle_drive_link(chat_id, user_id, url, draft):
     t.start()
 
 def _show_summary(chat_id, draft, msg_id=None):
+    import time as _time
     summary = f"""📋 <b>סיכום:</b>
 
 <b>כותרת:</b> {draft.get('title','')}
@@ -1936,7 +1937,8 @@ def _show_summary(chat_id, draft, msg_id=None):
 <b>קטגוריות:</b> {', '.join(draft.get('cat_names',[]))}
 <b>תמונה ראשית:</b> {'✅' if draft.get('main_image') else '❌'}
 <b>גלריה:</b> {len(draft.get('gallery',[]))} תמונות
-<b>וידאו:</b> {draft.get('video_url') or 'אין'}"""
+<b>וידאו:</b> {draft.get('video_url') or 'אין'}
+<i>\u200b{int(_time.time())}</i>"""
     keyboard = {
         "inline_keyboard": [
             [{"text": "🚀 פרסם עכשיו", "callback_data": "publish_now"},
@@ -3920,7 +3922,7 @@ def handle_callback(cb):
         current_msg_id = draft.get("quick_status_msg_id") or draft.get("summary_msg_id")
         step = draft.get("step","")
         print(f"smart_approve: step={step}, msg_id={current_msg_id}, from_quick={draft.get('from_quick')}, has_image={bool(draft.get('main_image'))}", flush=True)
-        # אם כבר בשלב confirm – הצג סיכום
+        # אם כבר בשלב confirm – עדכן אותה הודעה עם timestamp חדש
         if step == "confirm":
             _show_summary(chat_id, draft, msg_id=current_msg_id)
         # העלאה מהירה/ממייל – ישר לסיכום
