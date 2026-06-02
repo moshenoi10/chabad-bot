@@ -3829,6 +3829,7 @@ def handle_callback(cb):
             draft["categories"] = cats
             draft["cat_names"] = cat_names
         current_msg_id = draft.get("quick_status_msg_id") or draft.get("summary_msg_id")
+        print(f"smart_approve: step={step}, msg_id={current_msg_id}, from_quick={draft.get('from_quick')}, has_image={bool(draft.get('main_image'))}", flush=True)
         step = draft.get("step","")
         # אם כבר בשלב confirm – הצג סיכום
         if step == "confirm":
