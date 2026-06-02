@@ -2254,8 +2254,26 @@ def handle_message(msg):
         if text == "/start":
             menu = get_menu(user_id)
             perm = get_permission(user_id)
+            if not is_editor(user_id):
+                # משתמש חדש – הודעת פתיחה יפה
+                send_message(chat_id,
+                    f"👋 <b>שלום!</b>\n\n"
+                    f"ברוך הבא לבוט <b>{SITE_NAME}</b>\n\n"
+                    f"🔒 <b>נדרשת הרשאה</b>\n"
+                    f"כדי להשתמש בבוט תצטרך אישור מהמנהל.\n\n"
+                    f"בקשתך נשלחה למנהל – תחכה לאישור.")
+                notify_admin_error(
+                    f"👤 <b>משתמש חדש ביקש גישה</b>\n\n"
+                    f"שם: {msg.get('from',{}).get('first_name','')} {msg.get('from',{}).get('last_name','')}\n"
+                    f"username: @{msg.get('from',{}).get('username','אין')}\n"
+                    f"ID: <code>{user_id}</code>\n\n"
+                    f"/approve_{user_id} – עורך\n"
+                    f"/approvesenior_{user_id} – עורך ראשי\n"
+                    f"/makeadmin_{user_id} – מנהל\n"
+                    f"/block_{user_id} – חסום")
+                return
             perm_emoji = {"admin": "👑", "senior_editor": "✨", "editor": "✏️"}.get(perm, "👤")
-            name = f"{perm_emoji} <b>עדכוני חב״ד</b>"
+            name = f"{perm_emoji} <b>{SITE_NAME}</b>"
             send_message(chat_id, f"{name}\n\nברוך הבא! בחר פעולה מהתפריט:", menu)
             return
         if not is_editor(user_id):
