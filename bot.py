@@ -398,11 +398,9 @@ def get_analytics_data(days=7):
         property_id = os.environ.get("GA_PROPERTY_ID","")
         print(f"Analytics: sa_json={'יש' if sa_json else 'חסר'}, property_id={property_id}", flush=True)
         if not sa_json or not property_id:
-            print("Analytics: חסרים משתנים!", flush=True)
             return None
 
-        # קבל access token דרך JWT
-        import base64, time as _time, hmac, hashlib
+        import base64, time as _time
         sa = _json.loads(sa_json)
         now = int(_time.time())
         header = base64.urlsafe_b64encode(_json.dumps({"alg":"RS256","typ":"JWT"}).encode()).rstrip(b'=').decode()
@@ -418,34 +416,60 @@ def get_analytics_data(days=7):
         from cryptography.hazmat.backends import default_backend
         key = serialization.load_pem_private_key(sa["private_key"].encode(), password=None, backend=default_backend())
         sig = base64.urlsafe_b64encode(key.sign(f"{header}.{payload}".encode(), padding.PKCS1v15(), hashes.SHA256())).rstrip(b'=').decode()
-        jwt = f"{header}.{payload}.{sig}"
+        jwt_token = f"{header}.{payload}.{sig}"
 
         token_resp = requests.post("https://oauth2.googleapis.com/token",
-            data={"grant_type":"urn:ietf:params:oauth:grant-type:jwt-bearer","assertion":jwt}, timeout=15)
+            data={"grant_type":"urn:ietf:params:oauth:grant-type:jwt-bearer","assertion":jwt_token}, timeout=15)
         if not token_resp.ok:
             print(f"GA token error: {token_resp.text[:200]}", flush=True)
             return None
         token = token_resp.json().get("access_token")
 
-        period = f"{days}daysAgo"
+        # תקן פורמט תאריך
+        start_date = "today" if days <= 1 else f"{days}daysAgo"
         body = {
-            "dateRanges": [{"startDate": period, "endDate": "today"}],
-            "metrics": [{"name":"sessions"},{"name":"totalUsers"},{"name":"screenPageViews"}]
+            "dateRanges": [{"startDate": start_date, "endDate": "today"}],
+            "metrics": [
+                {"name": "sessions"},
+                {"name": "totalUsers"},
+                {"name": "screenPageViews"}
+            ]
         }
         resp = requests.post(
             f"https://analyticsdata.googleapis.com/v1beta/properties/{property_id}:runReport",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             json=body, timeout=15
         )
         if not resp.ok:
-            print(f"GA error: {resp.text[:200]}", flush=True)
+            print(f"GA error: {resp.text[:300]}", flush=True)
             return None
-        totals = resp.json().get("totals",[{}])[0].get("metricValues",[])
-        return {
-            "sessions": int(totals[0].get("value",0)) if totals else 0,
-            "users": int(totals[1].get("value",0)) if len(totals)>1 else 0,
-            "views": int(totals[2].get("value",0)) if len(totals)>2 else 0,
-        }
+
+        data = resp.json()
+        print(f"GA response keys: {list(data.keys())}", flush=True)
+
+        # GA4 API מחזיר rows עם metricValues
+        rows = data.get("rows", [])
+        totals = data.get("totals", [{}])
+
+        sessions, users, views = 0, 0, 0
+
+        # נסה totals קודם
+        if totals and totals[0].get("metricValues"):
+            mv = totals[0]["metricValues"]
+            sessions = int(mv[0].get("value", 0)) if len(mv) > 0 else 0
+            users = int(mv[1].get("value", 0)) if len(mv) > 1 else 0
+            views = int(mv[2].get("value", 0)) if len(mv) > 2 else 0
+        elif rows:
+            # סכם את כל ה-rows
+            for row in rows:
+                mv = row.get("metricValues", [])
+                sessions += int(mv[0].get("value", 0)) if len(mv) > 0 else 0
+                users += int(mv[1].get("value", 0)) if len(mv) > 1 else 0
+                views += int(mv[2].get("value", 0)) if len(mv) > 2 else 0
+
+        print(f"GA result: sessions={sessions}, users={users}, views={views}", flush=True)
+        return {"sessions": sessions, "users": users, "views": views}
+
     except Exception as e:
         print(f"שגיאה Analytics: {e}", flush=True)
         return None
@@ -4484,21 +4508,29 @@ def handle_callback(cb):
         })
 
     elif cb_data.startswith("analytics_top_"):
-        days = cb_data.replace("analytics_top_", "")
-        period = f"{days}daysAgo"
-        period_name = {"1": "24 השעות האחרונות", "7": "7 הימים האחרונים", "30": "30 הימים האחרונים"}.get(days, "")
-        send_message(chat_id, "📊 <b>מושך נתונים...</b>")
-        data = get_analytics_data(period)
-        if data and data.get("rows"):
-            msg = f"🏆 <b>חמש הכתבות הנצפות ביותר באתר ״עדכוני חב״ד״</b>\n<b>{period_name}:</b>\n\n"
-            for i, row in enumerate(data["rows"][:5], 1):
-                title = row["dimensionValues"][0]["value"]
-                path = row["dimensionValues"][1]["value"]
-                url = f"{WP_SITE_URL}{path}"
-                msg += f"<b>{i}. {title}</b>\n{url}\n\n"
-            send_message(chat_id, msg)
-        else:
-            send_message(chat_id, "❌ לא נמצאו נתונים.")
+        days = int(cb_data.replace("analytics_top_", ""))
+        period_name = {1: "24 השעות האחרונות", 7: "7 הימים האחרונים", 30: "30 הימים האחרונים"}.get(days, "")
+        msg_id = draft.get("extra_actions_msg_id")
+        if msg_id:
+            edit_message(chat_id, msg_id, "⏳ מושך 5 הכתבות הנצפות...")
+        def _top(d=days, m=msg_id, pn=period_name):
+            data = get_analytics_top_articles(d)
+            if data:
+                msg = f"🏆 <b>5 הכתבות הנצפות ביותר</b>\n<b>{pn}:</b>\n\n"
+                for i, art in enumerate(data[:5], 1):
+                    msg += f"<b>{i}. {art['title']}</b>\n{art['url']}\n\n"
+                kb = {"inline_keyboard": [[get_back_button()[0]]]}
+                if m:
+                    edit_message(chat_id, m, msg, kb)
+                else:
+                    send_message(chat_id, msg, kb)
+            else:
+                txt = "❌ לא נמצאו נתונים."
+                if m:
+                    edit_message(chat_id, m, txt, {"inline_keyboard": [[get_back_button()[0]]]})
+                else:
+                    send_message(chat_id, txt)
+        threading.Thread(target=_top, daemon=True).start()
 
     elif cb_data == "analytics_visits":
         send_message(chat_id, "לאיזה תקופה?", {
@@ -4974,18 +5006,21 @@ def handle_callback(cb):
         send_message(chat_id, "📅 שלח חודש ושנה בפורמט:\n<code>MM/YYYY</code>\n\nלדוגמה: <code>05/2026</code>")
 
     elif cb_data == "mgmt_users":
-        # ניהול משתמשים
         users_text = "👥 <b>ניהול משתמשים</b>\n\n"
         for uid, role in users_permissions.items():
             emoji = {"admin":"👑","senior_editor":"✨","editor":"✏️"}.get(role,"👤")
             users_text += f"{emoji} <code>{uid}</code> – {role}\n"
-        send_message(chat_id, users_text, {
-            "inline_keyboard": [
-                [{"text": "➕ הוסף עורך", "callback_data": "add_editor"},
-                 {"text": "➕ הוסף עורך ראשי", "callback_data": "add_senior"}],
-                [{"text": "🚫 חסום משתמש", "callback_data": "block_user"}]
-            ]
-        })
+        msg_id = draft.get("extra_actions_msg_id")
+        kb = {"inline_keyboard": [
+            [{"text": "➕ הוסף עורך", "callback_data": "add_editor"},
+             {"text": "➕ הוסף עורך ראשי", "callback_data": "add_senior"}],
+            [{"text": "🚫 חסום משתמש", "callback_data": "block_user"}],
+            [get_back_button()[0]]
+        ]}
+        if msg_id:
+            edit_message(chat_id, msg_id, users_text, kb)
+        else:
+            send_message(chat_id, users_text, kb)
 
     elif cb_data == "mgmt_log":
         log_text = "📊 <b>לוג פעולות אחרונות:</b>\n\n"
@@ -5021,28 +5056,42 @@ def handle_callback(cb):
 
     elif cb_data == "clear_learning":
         save_learning({"title_edits": [], "subtitle_edits": [], "style_notes": []})
-        send_message(chat_id, "✅ הלמידה נוקתה. הבוט יתחיל מחדש.")
+        msg_id = draft.get("extra_actions_msg_id")
+        if msg_id:
+            edit_message(chat_id, msg_id, "✅ הלמידה נוקתה!", {"inline_keyboard": [[get_back_button()[0]]]})
+        else:
+            send_message(chat_id, "✅ הלמידה נוקתה!")
 
     elif cb_data == "mgmt_settings":
         words_list = "\n".join([f"• {w}" for w in GERESH_WORDS[:15]])
-        send_message(chat_id, f"⚙️ <b>הגדרות מערכת</b>\n\n<b>מילים עם גרש ({len(GERESH_WORDS)}):</b>\n{words_list}", {
-            "inline_keyboard": [
-                [{"text": "➕ הוסף מילה", "callback_data": "geresh_add"},
-                 {"text": "➖ הסר מילה", "callback_data": "geresh_remove"}],
-                [{"text": "✏️ ערוך פרומפט Gemini", "callback_data": "edit_prompt"}]
-            ]
-        })
+        msg_id = draft.get("extra_actions_msg_id")
+        kb = {"inline_keyboard": [
+            [{"text": "➕ הוסף מילה", "callback_data": "geresh_add"},
+             {"text": "➖ הסר מילה", "callback_data": "geresh_remove"}],
+            [{"text": "✏️ ערוך פרומפט Gemini", "callback_data": "edit_prompt"}],
+            [get_back_button()[0]]
+        ]}
+        txt = f"⚙️ <b>הגדרות מערכת</b>\n\n<b>מילים עם גרש ({len(GERESH_WORDS)}):</b>\n{words_list}"
+        if msg_id:
+            edit_message(chat_id, msg_id, txt, kb)
+        else:
+            send_message(chat_id, txt, kb)
 
     elif cb_data == "mgmt_email":
-        send_message(chat_id, get_email_status(), {
-            "inline_keyboard": [
-                [{"text": "⏸️ השהה" if email_system["active"] else "▶️ הפעל", "callback_data": "email_toggle"},
-                 {"text": "🔄 בדוק עכשיו", "callback_data": "email_check_now"}],
-                [{"text": "⏱️ שנה תדירות", "callback_data": "email_change_interval"}],
-                [{"text": "➕ הוסף כתובת", "callback_data": "email_add_sender"},
-                 {"text": "➖ הסר כתובת", "callback_data": "email_remove_sender"}]
-            ]
-        })
+        msg_id = draft.get("extra_actions_msg_id")
+        kb_email = {"inline_keyboard": [
+            [{"text": "⏸️ השהה" if email_system["active"] else "▶️ הפעל", "callback_data": "email_toggle"},
+             {"text": "🔄 בדוק עכשיו", "callback_data": "email_check_now"}],
+            [{"text": "⏱️ שנה תדירות", "callback_data": "email_change_interval"}],
+            [{"text": "➕ הוסף כתובת", "callback_data": "email_add_sender"},
+             {"text": "➖ הסר כתובת", "callback_data": "email_remove_sender"}],
+            [get_back_button()[0]]
+        ]}
+        txt_email = get_email_status()
+        if msg_id:
+            edit_message(chat_id, msg_id, txt_email, kb_email)
+        else:
+            send_message(chat_id, txt_email, kb_email)
 
     elif cb_data == "mgmt_analytics":
         send_message(chat_id, "📈 <b>אנליטיקס</b>\n\nבחר תקופה:", {
@@ -5101,15 +5150,20 @@ def handle_callback(cb):
     elif cb_data == "mgmt_networks":
         fb_ok = "✅" if os.environ.get("FB_PAGE_TOKEN") else "❌"
         ig_ok = "✅" if os.environ.get("IG_USER_ID") else "❌"
-        send_message(chat_id, f"🌐 <b>ניהול רשתות</b>\n\n{fb_ok} פייסבוק\n{ig_ok} אינסטגרם", {
-            "inline_keyboard": [
-                [{"text": "📊 סטטיסטיקות פייסבוק", "callback_data": "social_stats_fb"},
-                 {"text": "📊 סטטיסטיקות אינסטגרם", "callback_data": "social_stats_ig"}],
-                [{"text": "🗑️ מחק פוסט פייסבוק", "callback_data": "social_delete_fb"},
-                 {"text": "📋 פוסטים אחרונים", "callback_data": "social_recent_posts"}],
-                [{"text": "🖼 הגדרות ווטרמארק", "callback_data": "watermark_settings"}]
-            ]
-        })
+        msg_id = draft.get("extra_actions_msg_id")
+        kb = {"inline_keyboard": [
+            [{"text": "📊 סטטיסטיקות פייסבוק", "callback_data": "social_stats_fb"},
+             {"text": "📊 סטטיסטיקות אינסטגרם", "callback_data": "social_stats_ig"}],
+            [{"text": "🗑️ מחק פוסט פייסבוק", "callback_data": "social_delete_fb"},
+             {"text": "📋 פוסטים אחרונים", "callback_data": "social_recent_posts"}],
+            [{"text": "🖼 הגדרות ווטרמארק", "callback_data": "watermark_settings"}],
+            [get_back_button()[0]]
+        ]}
+        txt = f"🌐 <b>ניהול רשתות</b>\n\n{fb_ok} פייסבוק\n{ig_ok} אינסטגרם"
+        if msg_id:
+            edit_message(chat_id, msg_id, txt, kb)
+        else:
+            send_message(chat_id, txt, kb)
 
     elif cb_data == "quick_upload_done":
         # מנע עיבוד כפול
