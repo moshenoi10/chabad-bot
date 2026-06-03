@@ -7440,7 +7440,6 @@ def main():
     load_drafts()
     download_story_template()
     threading.Thread(target=start_whatsapp_polling, daemon=True).start()
-    threading.Thread(target=setup_greenapi_webhook, daemon=True).start()
 
     try:
         requests.post(
