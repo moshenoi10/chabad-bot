@@ -251,6 +251,7 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == '/webhook/whatsapp':
             # Green API Webhook – מקבל הודעות מוואטסאפ
+            print(f"📱 WA Webhook התקבל: {json.dumps(body)[:200]}", flush=True)
             threading.Thread(target=handle_whatsapp_webhook, args=(body,), daemon=True).start()
             self._json({"ok": True})
 
