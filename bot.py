@@ -58,7 +58,9 @@ email_system = {
 }
 
 whatsapp_settings = {
-    "active": True,  # האם שליחה אוטומטית פעילה
+    "active": True,         # האם שליחה אוטומטית פעילה
+    "inbox_active": False,  # האם קריאת כתבות מוואטסאפ פעילה
+    "allowed_senders": [],  # מספרים מורשים לשלוח כתבות
 }
 
 youtube_tokens = {}
@@ -246,6 +248,11 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"ok": False, "error": resp.json().get("error",{}).get("message","שגיאה")})
             except Exception as e:
                 self._json({"ok": False, "error": str(e)})
+
+        elif path == '/webhook/whatsapp':
+            # Green API Webhook – מקבל הודעות מוואטסאפ
+            threading.Thread(target=handle_whatsapp_webhook, args=(body,), daemon=True).start()
+            self._json({"ok": True})
 
         elif path == '/api/watermark':
             self._json({k: v for k, v in watermark_settings.items()
@@ -688,7 +695,218 @@ def _run_monthly_report(chat_id, year, month):
         print(f"שגיאה monthly report: {e}", flush=True)
         edit_message(chat_id, msg_id, f"❌ שגיאה ביצירת הדוח: {e}")
 
-def send_whatsapp(message, image_url=None):
+# ─── WhatsApp Webhook ────────────────────────────────────
+# מאגר הודעות לכל שולח (מספר טלפון → רשימת הודעות)
+wa_article_buffer = {}
+
+# מספרים מורשים לשלוח כתבות מוואטסאפ
+def get_wa_allowed_senders():
+    # קודם מה שהוגדר דרך הבוט, אחר כך env var
+    if whatsapp_settings.get("allowed_senders"):
+        return whatsapp_settings["allowed_senders"]
+    env = os.environ.get("WA_ALLOWED_SENDERS", "")
+    return [s.strip() for s in env.split(",") if s.strip()]
+
+def handle_whatsapp_webhook(body):
+    """מטפל בהודעות נכנסות מ-Green API"""
+    try:
+        if not whatsapp_settings.get("inbox_active"):
+            return
+
+        msg_type = body.get("typeWebhook", "")
+        if msg_type != "incomingMessageReceived":
+            return
+
+        instance_data = body.get("instanceData", {})
+        sender_data = body.get("senderData", {})
+        message_data = body.get("messageData", {})
+
+        sender = sender_data.get("sender", "")  # מספר@c.us
+        chat_id_wa = sender_data.get("chatId", "")  # קבוצה@g.us
+        sender_name = sender_data.get("senderName", "")
+
+        # בדוק שזה מהקבוצה הנכונה
+        target_group = os.environ.get("WHATSAPP_GROUP_ID", "")
+        if target_group and chat_id_wa != target_group:
+            return
+
+        # בדוק הרשאה
+        allowed = get_wa_allowed_senders()
+        sender_number = sender.replace("@c.us", "").replace("@s.whatsapp.net", "")
+        if allowed and sender_number not in allowed:
+            print(f"WA webhook: שולח לא מורשה {sender_number}", flush=True)
+            return
+
+        # חלץ תוכן
+        text_msg = message_data.get("textMessageData", {}).get("textMessage", "")
+        image_msg = message_data.get("imageMessageData", {})
+        video_msg = message_data.get("videoMessageData", {})
+        doc_msg = message_data.get("documentMessageData", {})
+        caption = (image_msg.get("caption") or video_msg.get("caption") or
+                  doc_msg.get("caption") or "")
+
+        # זיהוי // - התחלה או סוף
+        is_separator = text_msg.strip() == "//"
+
+        # אתחל buffer אם צריך
+        if sender not in wa_article_buffer:
+            wa_article_buffer[sender] = {"texts": [], "images": [], "videos": [], "started": False}
+
+        buf = wa_article_buffer[sender]
+
+        if is_separator:
+            if not buf["started"]:
+                # התחלת כתבה
+                buf["started"] = True
+                buf["texts"] = []
+                buf["images"] = []
+                buf["videos"] = []
+                print(f"WA: {sender_name} התחיל כתבה", flush=True)
+            else:
+                # סוף כתבה – שלח לעיבוד
+                if buf["texts"] or buf["images"]:
+                    print(f"WA: {sender_name} סיים כתבה – שולח לעיבוד", flush=True)
+                    _process_wa_article(buf.copy(), sender_name)
+                # אפס buffer
+                wa_article_buffer[sender] = {"texts": [], "images": [], "videos": [], "started": False}
+            return
+
+        # אם לא התחיל עם // – התעלם
+        if not buf["started"]:
+            return
+
+        # הוסף תוכן ל-buffer
+        if text_msg:
+            buf["texts"].append(text_msg)
+
+        if image_msg.get("downloadUrl"):
+            buf["images"].append({
+                "url": image_msg["downloadUrl"],
+                "caption": caption
+            })
+
+        if video_msg.get("downloadUrl"):
+            buf["videos"].append({
+                "url": video_msg["downloadUrl"],
+                "caption": caption
+            })
+
+        print(f"WA buffer {sender_name}: {len(buf['texts'])} טקסטים, {len(buf['images'])} תמונות", flush=True)
+
+    except Exception as e:
+        print(f"שגיאה WA webhook: {e}", flush=True)
+
+def _process_wa_article(buf, sender_name):
+    """מעבד כתבה מוואטסאפ ושולח לאישור בטלגרם"""
+    try:
+        admin_chat = SUPER_ADMIN_ID
+        full_text = "\n\n".join(buf["texts"])
+
+        if not full_text:
+            send_message(admin_chat, f"⚠️ כתבה מוואטסאפ ({sender_name}) ללא טקסט.")
+            return
+
+        # הורד תמונות
+        images_bytes = []
+        for img in buf["images"][:10]:
+            try:
+                r = requests.get(img["url"], timeout=15)
+                if r.ok:
+                    images_bytes.append(r.content)
+            except:
+                pass
+
+        # שלח הודעת התראה
+        msg_id = send_message(admin_chat,
+            f"📨 <b>כתבה חדשה מוואטסאפ</b>\n\n"
+            f"👤 שולח: <b>{sender_name}</b>\n"
+            f"📝 {len(buf['texts'])} הודעות טקסט\n"
+            f"🖼 {len(images_bytes)} תמונות\n"
+            f"🎬 {len(buf['videos'])} סרטונים\n\n"
+            f"⏳ מעבד עם AI...", None)
+
+        # עבד עם AI
+        result = process_with_gemini(full_text)
+
+        if not result:
+            send_message(admin_chat, "❌ AI לא הצליח לעבד את הכתבה מוואטסאפ.", {
+                "inline_keyboard": [[{"text": "↩️ סגור", "callback_data": "publish_cancel"}]]
+            })
+            return
+
+        # שמור ב-draft של האדמין
+        user_id = str(SUPER_ADMIN_ID)
+        draft = drafts.setdefault(user_id, {})
+        draft.update({
+            "step": "smart_preview",
+            "title": result.get("title", ""),
+            "subtitle": result.get("subtitle", ""),
+            "red_title": result.get("red_title", ""),
+            "body": result.get("body", ""),
+            "tags": result.get("tags", []),
+            "from_quick": True,
+            "gallery": images_bytes,
+            "main_image": images_bytes[0] if images_bytes else None,
+            "wa_source": sender_name,
+            "summary_msg_id": None,
+        })
+
+        cats, cat_names = auto_select_categories(draft["title"], draft["body"])
+        draft["categories"] = cats
+        draft["cat_names"] = cat_names
+
+        # הצג תצוגה מקדימה
+        import re as _re
+        def esc(s): return str(s).replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+        body_preview = _re.sub(r'<[^>]+>', '', draft.get("body",""))[:300]
+
+        text_preview = (
+            f"✅ <b>כתבה מוואטסאפ – {esc(sender_name)}</b>\n\n"
+            f"<b>כותרת:</b> {esc(draft['title'])}\n"
+            f"<b>כותרת משנה:</b> {esc(draft['subtitle'])}\n"
+            f"<b>קטגוריות:</b> {esc(', '.join(cat_names))}\n\n"
+            f"<b>גוף:</b>\n{esc(body_preview)}..."
+        )
+
+        new_id = send_message(admin_chat, text_preview, {
+            "inline_keyboard": [
+                [{"text": "✅ מאשר, פרסם", "callback_data": "smart_approve"}],
+                [{"text": "✨ שפר כותרות", "callback_data": "smart_improve_titles"}],
+                [{"text": "✏️ ערוך כותרת", "callback_data": "smart_edit_title"},
+                 {"text": "✏️ ערוך כותרת משנה", "callback_data": "smart_edit_subtitle"}],
+                [{"text": "❌ בטל", "callback_data": "publish_cancel"}]
+            ]
+        })
+        draft["summary_msg_id"] = new_id
+
+    except Exception as e:
+        print(f"שגיאה עיבוד WA כתבה: {e}", flush=True)
+
+def setup_greenapi_webhook():
+    """מגדיר Webhook ב-Green API"""
+    instance_id = os.environ.get("GREENAPI_ID", "")
+    token = os.environ.get("GREENAPI_TOKEN", "")
+    site_url = os.environ.get("WP_SITE_URL", "").replace("chabadupdates.com", "chabad-bot.onrender.com")
+    render_url = os.environ.get("RENDER_URL", "https://chabad-bot.onrender.com")
+    webhook_url = f"{render_url}/webhook/whatsapp"
+
+    if not instance_id or not token:
+        return
+
+    try:
+        resp = requests.post(
+            f"https://7107.api.greenapi.com/waInstance{instance_id}/setSettings/{token}",
+            json={"webhookUrl": webhook_url, "incomingWebhook": "yes"},
+            timeout=10
+        )
+        if resp.ok:
+            print(f"✅ Green API Webhook מוגדר: {webhook_url}", flush=True)
+        else:
+            print(f"⚠️ Green API Webhook שגיאה: {resp.text[:100]}", flush=True)
+    except Exception as e:
+        print(f"שגיאה Webhook setup: {e}", flush=True)
+
+
     """שולח הודעה לקבוצת וואטסאפ דרך Green API"""
     instance_id = os.environ.get("GREENAPI_ID", "")
     token = os.environ.get("GREENAPI_TOKEN", "")
@@ -2239,6 +2457,8 @@ def handle_message(msg):
             [{"text": "📅 דוח חודשי", "callback_data": "monthly_report"}],
             [{"text": "💬 WhatsApp – " + ("✅ פעיל" if whatsapp_settings["active"] else "❌ כבוי"),
               "callback_data": "toggle_whatsapp"}],
+            [{"text": "📨 WA אינבוקס – " + ("✅ פעיל" if whatsapp_settings.get("inbox_active") else "❌ כבוי"),
+              "callback_data": "wa_inbox_menu"}],
             [{"text": "🧠 למידה מעריכות", "callback_data": "mgmt_learning"}],
         ]
         msg_id = send_status(chat_id, "⚙️ <b>פעולות נוספות</b>", keyboard)
@@ -3615,6 +3835,20 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             })
         return True
 
+    elif step == "wa_add_sender_input":
+        number = text.strip().replace("+", "").replace("-", "").replace(" ", "")
+        if number.isdigit() and len(number) >= 10:
+            senders = whatsapp_settings.setdefault("allowed_senders", [])
+            if number not in senders:
+                senders.append(number)
+            draft["step"] = "idle"
+            send_message(chat_id, f"✅ <b>{number}</b> נוסף!", {
+                "inline_keyboard": [[{"text": "↩️ חזור", "callback_data": "wa_inbox_menu"}]]
+            })
+        else:
+            send_message(chat_id, "⚠️ מספר לא תקין. שלח בפורמט: <code>972501234567</code>")
+        return True
+
     elif step == "report_month_input":
         import re as _re
         match = _re.match(r'^(\d{1,2})[/\-\.](\d{4})$', text.strip())
@@ -4952,6 +5186,75 @@ def handle_callback(cb):
             show_extra_actions(chat_id, draft, user_id, msg_id=msg_id)
         else:
             send_message(chat_id, f"💬 <b>WhatsApp אוטומטי – {status}</b>")
+
+    elif cb_data == "wa_inbox_menu":
+        msg_id = draft.get("extra_actions_msg_id")
+        senders = whatsapp_settings.get("allowed_senders", [])
+        status = "✅ פעיל" if whatsapp_settings.get("inbox_active") else "❌ כבוי"
+        senders_text = "\n".join([f"• {s}" for s in senders]) if senders else "כולם מורשים"
+        txt = (f"📨 <b>WhatsApp אינבוקס</b>\n\n"
+               f"סטטוס: <b>{status}</b>\n\n"
+               f"<b>מספרים מורשים:</b>\n{senders_text}\n\n"
+               f"<b>איך לשלוח כתבה:</b>\n"
+               f"שלח <code>//</code> לתחילת כתבה\n"
+               f"שלח תוכן (טקסט, תמונות, וידאו)\n"
+               f"שלח <code>//</code> לסיום – הבוט מעבד אוטומטית")
+        kb = {"inline_keyboard": [
+            [{"text": "✅ הפעל" if not whatsapp_settings.get("inbox_active") else "⏸️ עצור",
+              "callback_data": "toggle_wa_inbox"}],
+            [{"text": "➕ הוסף מספר מורשה", "callback_data": "wa_add_sender"},
+             {"text": "➖ הסר מספר", "callback_data": "wa_remove_sender"}],
+            [{"text": "🗑️ נקה כל המספרים", "callback_data": "wa_clear_senders"}],
+            [get_back_button()[0]]
+        ]}
+        if msg_id:
+            edit_message(chat_id, msg_id, txt, kb)
+        else:
+            send_message(chat_id, txt, kb)
+
+    elif cb_data == "toggle_wa_inbox":
+        whatsapp_settings["inbox_active"] = not whatsapp_settings.get("inbox_active", False)
+        status = "✅ פעיל" if whatsapp_settings["inbox_active"] else "❌ כבוי"
+        send_message(chat_id, f"📨 WhatsApp אינבוקס – <b>{status}</b>")
+        # חזור לתפריט
+        msg_id = draft.get("extra_actions_msg_id")
+        show_extra_actions(chat_id, draft, user_id, msg_id=msg_id)
+
+    elif cb_data == "wa_add_sender":
+        draft["step"] = "wa_add_sender_input"
+        send_message(chat_id,
+            "📱 <b>הוסף מספר מורשה</b>\n\n"
+            "שלח את מספר הטלפון בפורמט בינלאומי:\n"
+            "<code>972501234567</code>\n\n"
+            "(ללא + וללא רווחים)")
+
+    elif cb_data == "wa_remove_sender":
+        senders = whatsapp_settings.get("allowed_senders", [])
+        if not senders:
+            send_message(chat_id, "אין מספרים להסרה.")
+        else:
+            kb = {"inline_keyboard": [
+                [{"text": s, "callback_data": f"wa_del_{s}"}] for s in senders
+            ] + [[{"text": "↩️ ביטול", "callback_data": "wa_inbox_menu"}]]}
+            send_message(chat_id, "בחר מספר להסרה:", kb)
+
+    elif cb_data.startswith("wa_del_"):
+        number = cb_data[7:]
+        senders = whatsapp_settings.get("allowed_senders", [])
+        if number in senders:
+            senders.remove(number)
+        whatsapp_settings["allowed_senders"] = senders
+        send_message(chat_id, f"✅ {number} הוסר.")
+        # חזור לתפריט
+        msg_id = draft.get("extra_actions_msg_id")
+        if msg_id:
+            edit_message(chat_id, msg_id, "✅ הוסר!", {"inline_keyboard": [[get_back_button()[0]]]})
+
+    elif cb_data == "wa_clear_senders":
+        whatsapp_settings["allowed_senders"] = []
+        msg_id = draft.get("extra_actions_msg_id")
+        if msg_id:
+            edit_message(chat_id, msg_id, "✅ כל המספרים נוקו!", {"inline_keyboard": [[get_back_button()[0]]]})
 
     elif cb_data == "back_to_extra_actions":
         msg_id = draft.get("extra_actions_msg_id")
@@ -6945,6 +7248,7 @@ def main():
     print("🚀 בוט חבד מתחיל!", flush=True)
     load_drafts()
     download_story_template()
+    threading.Thread(target=setup_greenapi_webhook, daemon=True).start()
 
     try:
         requests.post(
