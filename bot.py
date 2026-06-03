@@ -696,6 +696,9 @@ def _run_monthly_report(chat_id, year, month):
         print(f"שגיאה monthly report: {e}", flush=True)
         edit_message(chat_id, msg_id, f"❌ שגיאה ביצירת הדוח: {e}")
 
+
+# ─── מצב עריכת כתבה מוואטסאפ ────────────────────────────
+wa_edit_sessions = {}  # sender → {post_id, mode, images, videos, pdfs}
 # ─── WhatsApp Webhook ────────────────────────────────────
 # מאגר הודעות לכל שולח (מספר טלפון → רשימת הודעות)
 wa_article_buffer = {}
@@ -787,6 +790,30 @@ def handle_whatsapp_webhook(body):
         is_separator = text_msg.strip() == "//"
         is_status = text_msg.strip() == "//סטטוס"
         is_help = text_msg.strip() == "//עזרה"
+        is_approve = text_msg.strip() == "//אשר"
+        is_edit_cmd = text_msg.strip() == "//ערוך"
+        is_finish = text_msg.strip() == "/סיום"
+
+        # פקודות עריכה שדות
+        field_edit = None
+        txt_stripped = text_msg.strip()
+        if txt_stripped.startswith("/ראשית "):
+            field_edit = ("title", txt_stripped[7:].strip())
+        elif txt_stripped.startswith("/משנה "):
+            field_edit = ("subtitle", txt_stripped[6:].strip())
+        elif txt_stripped.startswith("/אדומה "):
+            field_edit = ("red_title", txt_stripped[7:].strip())
+        elif txt_stripped.startswith("/גוף "):
+            field_edit = ("body", txt_stripped[5:].strip())
+        elif txt_stripped.startswith("/תגיות "):
+            tags_text = txt_stripped[7:].strip()
+            field_edit = ("tags", [t.strip() for t in tags_text.split(",")])
+        elif txt_stripped.startswith("/קטגוריות "):
+            field_edit = ("categories_text", txt_stripped[10:].strip())
+
+        # זיהוי מצב עריכה פעיל
+        edit_session = wa_edit_sessions.get(sender)
+        edit_mode = edit_session.get("mode") if edit_session else None
 
         # אתחל buffer
         if sender not in wa_article_buffer:
@@ -798,12 +825,24 @@ def handle_whatsapp_webhook(body):
         if is_help:
             send_whatsapp(
                 "📖 *פקודות זמינות:*\n\n"
-                "// – התחלת כתבה\n"
+                "*שליחת כתבה:*\n"
+                "// – התחלה\n"
                 "טקסט + תמונות + וידאו\n"
-                "// – סיום ועיבוד\n\n"
-                "// // – ביטול כתבה שהתחלת\n\n"
-                "//סטטוס – כמה כתבות עלו היום\n"
-                "//עזרה – הצג הודעה זו"
+                "// – סיום ועיבוד AI\n\n"
+                "*עריכה אחרי עיבוד:*\n"
+                "/ראשית [טקסט] – כותרת ראשית\n"
+                "/משנה [טקסט] – כותרת משנה\n"
+                "/אדומה [טקסט] – כותרת אדומה\n"
+                "/גוף [טקסט] – גוף הכתבה\n"
+                "/תגיות [מילה1, מילה2] – תגיות\n"
+                "/קטגוריות [שם] – קטגוריות\n\n"
+                "*פרסום:*\n"
+                "//אשר – פרסם\n"
+                "//ערוך – ערוך בטלגרם\n"
+                "//// – בטל\n\n"
+                "*כלים:*\n"
+                "//סטטוס – כתבות היום\n"
+                "//עזרה – הודעה זו"
             )
             return
 
@@ -820,6 +859,170 @@ def handle_whatsapp_webhook(body):
                 send_whatsapp(f"📊 *סטטוס היום:*\n\n✅ {len(posts)} כתבות פורסמו היום")
             except:
                 send_whatsapp("❌ לא הצלחתי למשוך נתונים")
+            return
+
+        if is_approve:
+            _handle_wa_button("wa_approve", sender_number)
+            return
+
+        if is_edit_cmd:
+            _handle_wa_button("wa_edit", sender_number)
+            return
+
+        # ─── /ערוך [לינק] ───────────────────────────────────────
+        if txt_stripped.startswith("/ערוך"):
+            url_or_id = txt_stripped[5:].strip()
+            if not url_or_id:
+                send_whatsapp("שלח: /ערוך [לינק לכתבה]\nלדוגמה: /ערוך https://chabadupdates.com/archives/1234")
+                return
+            # חלץ ID מלינק
+            post_id = url_or_id.rstrip("/").split("/")[-1]
+            try:
+                resp = requests.get(f"{WP_URL}/posts/{post_id}",
+                    auth=(WP_USER, WP_PASSWORD), timeout=10)
+                if resp.ok:
+                    post = resp.json()
+                    title = post["title"]["rendered"]
+                    wa_edit_sessions[sender] = {
+                        "post_id": post_id,
+                        "mode": None,
+                        "images": [],
+                        "videos": [],
+                        "pdfs": []
+                    }
+                    send_whatsapp(
+                        f"✅ *כתבה נמצאה:*\n{title}\n\n"
+                        f"*פקודות עריכה:*\n"
+                        f"/כותרת – כותרת ראשית\n"
+                        f"/משנה – כותרת משנה\n"
+                        f"/אדומה – כותרת אדומה\n"
+                        f"/תמונה – החלף תמונה ראשית\n"
+                        f"/מדיה – הוסף תמונות/וידאו/PDF\n"
+                        f"/סיום – שמור ופרסם שינויים\n"
+                        f"//// – בטל עריכה"
+                    )
+                else:
+                    send_whatsapp("❌ כתבה לא נמצאה. בדוק את הלינק.")
+            except Exception as e:
+                send_whatsapp(f"❌ שגיאה: {e}")
+            return
+
+        # ─── טיפול במצב עריכה פעיל ─────────────────────────────
+        if edit_session:
+            post_id = edit_session["post_id"]
+
+            # פקודות מצב
+            if txt_stripped == "/כותרת":
+                edit_session["mode"] = "title"
+                wa_edit_sessions[sender] = edit_session
+                send_whatsapp("✏️ שלח את הכותרת החדשה:")
+                return
+            elif txt_stripped == "/משנה":
+                edit_session["mode"] = "subtitle"
+                wa_edit_sessions[sender] = edit_session
+                send_whatsapp("✏️ שלח את כותרת המשנה החדשה:")
+                return
+            elif txt_stripped == "/אדומה":
+                edit_session["mode"] = "red_title"
+                wa_edit_sessions[sender] = edit_session
+                send_whatsapp("✏️ שלח את הכותרת האדומה (2-4 מילים):")
+                return
+            elif txt_stripped == "/תמונה":
+                edit_session["mode"] = "main_image"
+                wa_edit_sessions[sender] = edit_session
+                send_whatsapp("🖼 שלח את התמונה הראשית החדשה:")
+                return
+            elif txt_stripped == "/מדיה":
+                edit_session["mode"] = "media"
+                wa_edit_sessions[sender] = edit_session
+                send_whatsapp("📎 שלח תמונות/וידאו/PDF. שלח /סיום לסיום:")
+                return
+            elif txt_stripped == "////":
+                del wa_edit_sessions[sender]
+                send_whatsapp("❌ עריכה בוטלה.")
+                return
+            elif txt_stripped == "/סיום":
+                _finish_wa_edit(sender, edit_session, sender_name)
+                return
+
+            # קבלת תוכן לפי מצב
+            if edit_mode == "title" and text_msg:
+                _update_wp_field(post_id, "title", text_msg)
+                send_whatsapp(f"✅ כותרת עודכנה:\n{text_msg}")
+                edit_session["mode"] = None
+                wa_edit_sessions[sender] = edit_session
+                return
+
+            elif edit_mode == "subtitle" and text_msg:
+                _update_wp_field(post_id, "excerpt", text_msg)
+                send_whatsapp(f"✅ כותרת משנה עודכנה")
+                edit_session["mode"] = None
+                wa_edit_sessions[sender] = edit_session
+                return
+
+            elif edit_mode == "red_title" and text_msg:
+                _update_wp_meta(post_id, "tag_label", text_msg)
+                send_whatsapp(f"✅ כותרת אדומה עודכנה: {text_msg}")
+                edit_session["mode"] = None
+                wa_edit_sessions[sender] = edit_session
+                return
+
+            elif edit_mode == "main_image" and image_url:
+                edit_session["main_image"] = image_url
+                wa_edit_sessions[sender] = edit_session
+                send_whatsapp("✅ תמונה ראשית נשמרה – שלח /סיום לפרסום")
+                return
+
+            elif edit_mode == "media":
+                if image_url:
+                    edit_session["images"].append(image_url)
+                    send_whatsapp(f"✅ תמונה נוספה ({len(edit_session['images'])} סה\"כ)")
+                    wa_edit_sessions[sender] = edit_session
+                    return
+                elif video_url:
+                    edit_session["videos"].append(video_url)
+                    send_whatsapp(f"✅ וידאו נוסף ({len(edit_session['videos'])} סה\"כ)")
+                    wa_edit_sessions[sender] = edit_session
+                    return
+                elif msg_type == "documentMessage":
+                    file_data = message_data.get("fileMessageData", {})
+                    pdf_url = file_data.get("downloadUrl", "")
+                    if pdf_url:
+                        edit_session["pdfs"].append(pdf_url)
+                        send_whatsapp(f"✅ קובץ נוסף ({len(edit_session['pdfs'])} סה\"כ)")
+                        wa_edit_sessions[sender] = edit_session
+                        return
+
+        if is_cancel:
+            user_id = str(SUPER_ADMIN_ID)
+            draft = drafts.get(user_id, {})
+            if not draft.get("title"):
+                send_whatsapp("⚠️ אין כתבה ממתינה לעריכה. שלח כתבה קודם.")
+                return
+            field, value = field_edit
+            if field == "categories_text":
+                # חפש קטגוריות לפי שם
+                cats, cat_names = auto_select_categories(value, value)
+                draft["categories"] = cats
+                draft["cat_names"] = cat_names
+                send_whatsapp(f"✅ קטגוריות עודכנו: {', '.join(cat_names)}")
+            elif field == "tags":
+                draft["tags"] = value
+                send_whatsapp(f"✅ תגיות עודכנו: {', '.join(value)}")
+            else:
+                draft[field] = value
+                field_names = {"title": "כותרת", "subtitle": "כותרת משנה",
+                              "red_title": "כותרת אדומה", "body": "גוף"}
+                send_whatsapp(f"✅ {field_names.get(field, field)} עודכן!")
+            drafts[user_id] = draft
+            # שלח תצוגה מקדימה מעודכנת
+            send_whatsapp(
+                f"📋 *עדכון נוכחי:*\n\n"
+                f"*{draft.get('title','')}*\n"
+                f"{draft.get('subtitle','')[:100]}\n"
+                f"_{draft.get('red_title','')}_\n\n"
+                f"📝 //אשר לפרסום | //// לביטול"
+            )
             return
 
         if is_cancel:
@@ -887,6 +1090,21 @@ def _process_wa_article(buf, sender_name):
             except:
                 pass
 
+        # הורד וידאו והעלה ל-Vimeo
+        vimeo_urls = []
+        for vid in buf.get("videos", [])[:3]:
+            try:
+                edit_message(admin_chat, msg_id if 'msg_id' in dir() else None,
+                    "⏳ מוריד וידאו...")
+                r = requests.get(vid["url"], timeout=60)
+                if r.ok:
+                    vimeo_url, _ = upload_to_vimeo(r.content, full_text[:50], chat_id=admin_chat)
+                    if vimeo_url:
+                        vimeo_urls.append(vimeo_url)
+                        print(f"✅ וידאו WA עלה ל-Vimeo: {vimeo_url}", flush=True)
+            except Exception as e:
+                print(f"שגיאה הורדת וידאו WA: {e}", flush=True)
+
         # שלח הודעת התראה
         msg_id = send_message(admin_chat,
             f"📨 <b>כתבה חדשה מוואטסאפ</b>\n\n"
@@ -920,6 +1138,8 @@ def _process_wa_article(buf, sender_name):
             "from_quick": True,
             "gallery": images_bytes,
             "main_image": images_bytes[0] if images_bytes else None,
+            "vimeo_urls": vimeo_urls,
+            "vimeo_url": vimeo_urls[0] if vimeo_urls else None,
             "wa_source": sender_name,
             "summary_msg_id": None,
         })
@@ -928,18 +1148,16 @@ def _process_wa_article(buf, sender_name):
         draft["categories"] = cats
         draft["cat_names"] = cat_names
 
-        # שלח כפתורי אישור בוואטסאפ
+        # שלח הודעת אישור בוואטסאפ – בלי כפתורים (לא נתמך בחינמי)
         wa_preview = (
             f"✅ *כתבה מוכנה לאישור:*\n\n"
             f"*{result.get('title','')}*\n"
-            f"{result.get('subtitle','')[:100]}\n\n"
-            f"_{sender_name}_"
+            f"{result.get('subtitle','')[:150]}\n\n"
+            f"📝 לאישור פרסום – שלח: *//אשר*\n"
+            f"✏️ לעריכה בטלגרם – שלח: *//ערוך*\n"
+            f"❌ לביטול – שלח: */////*"
         )
-        send_whatsapp_with_buttons(wa_preview, [
-            {"id": "wa_approve", "text": "✅ פרסם"},
-            {"id": "wa_edit", "text": "✏️ ערוך בטלגרם"},
-            {"id": "wa_cancel", "text": "❌ בטל"}
-        ])
+        send_whatsapp(wa_preview)
 
         # הצג תצוגה מקדימה בטלגרם
         import re as _re
@@ -947,10 +1165,12 @@ def _process_wa_article(buf, sender_name):
         body_preview = _re.sub(r'<[^>]+>', '', draft.get("body",""))[:300]
 
         text_preview = (
-            f"✅ <b>כתבה מוואטסאפ – {esc(sender_name)}</b>\n\n"
+            f"📨 <b>כתבה מוואטסאפ – {esc(sender_name)}</b>\n\n"
             f"<b>כותרת:</b> {esc(draft['title'])}\n"
             f"<b>כותרת משנה:</b> {esc(draft['subtitle'])}\n"
-            f"<b>קטגוריות:</b> {esc(', '.join(cat_names))}\n\n"
+            f"<b>כותרת אדומה:</b> {esc(draft.get('red_title',''))}\n"
+            f"<b>קטגוריות:</b> {esc(', '.join(cat_names))}\n"
+            f"<b>תגיות:</b> {esc(', '.join(draft.get('tags',[])))}\n\n"
             f"<b>גוף:</b>\n{esc(body_preview)}..."
         )
 
@@ -960,6 +1180,10 @@ def _process_wa_article(buf, sender_name):
                 [{"text": "✨ שפר כותרות", "callback_data": "smart_improve_titles"}],
                 [{"text": "✏️ ערוך כותרת", "callback_data": "smart_edit_title"},
                  {"text": "✏️ ערוך כותרת משנה", "callback_data": "smart_edit_subtitle"}],
+                [{"text": "✏️ ערוך כותרת אדומה", "callback_data": "smart_edit_red_title"},
+                 {"text": "✏️ ערוך גוף", "callback_data": "smart_edit_body"}],
+                [{"text": "✏️ ערוך תגיות", "callback_data": "smart_edit_tags"},
+                 {"text": "🔄 שנה קטגוריות", "callback_data": "change_categories"}],
                 [{"text": "❌ בטל", "callback_data": "publish_cancel"}]
             ]
         })
@@ -1044,6 +1268,84 @@ def start_whatsapp_polling():
     except Exception as e:
         print(f"שגיאה Webhook setup: {e}", flush=True)
 
+
+def _update_wp_field(post_id, field, value):
+    """עדכן שדה בכתבה בוורדפרס"""
+    try:
+        requests.post(f"{WP_URL}/posts/{post_id}",
+            json={field: value},
+            auth=(WP_USER, WP_PASSWORD), timeout=10)
+    except Exception as e:
+        print(f"שגיאה עדכון WP: {e}", flush=True)
+
+def _update_wp_meta(post_id, meta_key, value):
+    """עדכן meta field בכתבה"""
+    try:
+        requests.post(f"{WP_URL}/posts/{post_id}",
+            json={"meta": {meta_key: value}},
+            auth=(WP_USER, WP_PASSWORD), timeout=10)
+    except Exception as e:
+        print(f"שגיאה עדכון WP meta: {e}", flush=True)
+
+def _finish_wa_edit(sender, session, sender_name):
+    """סיים עריכה מוואטסאפ ועדכן כתבה"""
+    post_id = session["post_id"]
+    admin_chat = SUPER_ADMIN_ID
+    msg_id = send_message(admin_chat, f"⏳ מעדכן כתבה {post_id}...")
+
+    try:
+        # עדכן תמונה ראשית
+        if session.get("main_image"):
+            r = requests.get(session["main_image"], timeout=15)
+            if r.ok:
+                img_id = upload_image_to_wp(r.content, f"main_{post_id}.jpg")
+                if img_id:
+                    requests.post(f"{WP_URL}/posts/{post_id}",
+                        json={"featured_media": img_id},
+                        auth=(WP_USER, WP_PASSWORD), timeout=10)
+
+        # הוסף תמונות לגלריה
+        gallery_ids = []
+        for img_url in session.get("images", []):
+            r = requests.get(img_url, timeout=15)
+            if r.ok:
+                img_id = upload_image_to_wp(r.content, f"gallery_{post_id}.jpg")
+                if img_id:
+                    gallery_ids.append(img_id)
+
+        # הוסף וידאו ל-Vimeo
+        vimeo_urls = []
+        for vid_url in session.get("videos", []):
+            r = requests.get(vid_url, timeout=60)
+            if r.ok:
+                vimeo_url, _ = upload_to_vimeo(r.content, f"כתבה {post_id}", chat_id=admin_chat)
+                if vimeo_url:
+                    vimeo_urls.append(vimeo_url)
+
+        # עדכן גלריה ו-Vimeo בכתבה
+        if gallery_ids or vimeo_urls:
+            post_resp = requests.get(f"{WP_URL}/posts/{post_id}",
+                auth=(WP_USER, WP_PASSWORD), timeout=10)
+            if post_resp.ok:
+                current_content = post_resp.json().get("content", {}).get("raw", "")
+                # הוסף vimeo embeds
+                for v_url in vimeo_urls:
+                    current_content += f'\n\n[video src="{v_url}"]'
+                requests.post(f"{WP_URL}/posts/{post_id}",
+                    json={"content": current_content,
+                          "meta": {"gallery_ids": gallery_ids}},
+                    auth=(WP_USER, WP_PASSWORD), timeout=10)
+
+        del wa_edit_sessions[sender]
+        send_whatsapp("✅ *הכתבה עודכנה בהצלחה!*")
+        edit_message(admin_chat, msg_id,
+            f"✅ <b>כתבה {post_id} עודכנה מוואטסאפ!</b>\n"
+            f"🖼 {len(gallery_ids)} תמונות\n"
+            f"🎬 {len(vimeo_urls)} וידאו")
+
+    except Exception as e:
+        send_whatsapp(f"❌ שגיאה בעדכון: {e}")
+        print(f"שגיאה _finish_wa_edit: {e}", flush=True)
 
 def _handle_wa_button(button_id, sender_number):
     """מטפל בלחיצת כפתור מוואטסאפ"""
