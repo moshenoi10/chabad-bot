@@ -952,7 +952,6 @@ def setup_greenapi_webhook():
     """מגדיר Webhook ב-Green API"""
     instance_id = os.environ.get("GREENAPI_ID", "")
     token = os.environ.get("GREENAPI_TOKEN", "")
-    site_url = os.environ.get("WP_SITE_URL", "").replace("chabadupdates.com", "chabad-bot.onrender.com")
     render_url = os.environ.get("RENDER_URL", "https://chabad-bot.onrender.com")
     webhook_url = f"{render_url}/webhook/whatsapp"
 
@@ -962,13 +961,25 @@ def setup_greenapi_webhook():
     try:
         resp = requests.post(
             f"https://7107.api.greenapi.com/waInstance{instance_id}/setSettings/{token}",
-            json={"webhookUrl": webhook_url, "incomingWebhook": "yes"},
+            json={
+                "webhookUrl": webhook_url,
+                "webhookUrlToken": "",
+                "delaySendMessagesMilliseconds": 1000,
+                "markIncomingMessagesReaded": "no",
+                "markIncomingMessagesReadedOnReply": "no",
+                "incomingWebhook": "yes",
+                "deviceWebhook": "yes",
+                "statusInstanceWebhook": "no",
+                "stateWebhook": "no",
+                "sendFromUTC": "no",
+                "receiveNotifications": "yes"
+            },
             timeout=10
         )
         if resp.ok:
             print(f"✅ Green API Webhook מוגדר: {webhook_url}", flush=True)
         else:
-            print(f"⚠️ Green API Webhook שגיאה: {resp.text[:100]}", flush=True)
+            print(f"⚠️ Green API Webhook שגיאה: {resp.text[:200]}", flush=True)
     except Exception as e:
         print(f"שגיאה Webhook setup: {e}", flush=True)
 
