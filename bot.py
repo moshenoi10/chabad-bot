@@ -2658,9 +2658,19 @@ def show_smart_preview(chat_id, draft, msg_id=None):
         ]
     }
     if msg_id:
-        edit_message(chat_id, msg_id, preview, keyboard)
-        draft["summary_msg_id"] = msg_id
+        print(f"show_smart_preview: edit msg_id={msg_id}", flush=True)
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText"
+        data = {"chat_id": chat_id, "message_id": msg_id, "text": preview,
+                "parse_mode": "HTML", "reply_markup": json.dumps(keyboard)}
+        resp = requests.post(url, json=data, timeout=10)
+        if resp.ok:
+            draft["summary_msg_id"] = msg_id
+        else:
+            print(f"show_smart_preview edit failed: {resp.text[:100]} – sending new", flush=True)
+            new_id = send_status(chat_id, preview, keyboard)
+            draft["summary_msg_id"] = new_id
     else:
+        print("show_smart_preview: send new", flush=True)
         new_id = send_status(chat_id, preview, keyboard)
         draft["summary_msg_id"] = new_id
 
@@ -2669,12 +2679,16 @@ def handle_smart_edit_inputs(chat_id, user_id, step, text, draft, drafts):
     if step == "smart_edit_subtitle_input":
         draft["subtitle"] = text
         draft["step"] = "smart_preview"
-        show_smart_preview(chat_id, draft, msg_id=draft.get("summary_msg_id"))
+        msg_id = draft.get("summary_msg_id")
+        show_smart_preview(chat_id, draft, msg_id=msg_id)
+        if not msg_id:
+            draft["summary_msg_id"] = None
         return True
     elif step == "smart_edit_title_input":
         draft["title"] = text
         draft["step"] = "smart_preview"
-        show_smart_preview(chat_id, draft, msg_id=draft.get("summary_msg_id"))
+        msg_id = draft.get("summary_msg_id")
+        show_smart_preview(chat_id, draft, msg_id=msg_id)
         return True
     elif step == "smart_edit_red_title_input":
         draft["red_title"] = text
