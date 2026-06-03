@@ -58,9 +58,9 @@ email_system = {
 }
 
 whatsapp_settings = {
-    "active": True,         # האם שליחה אוטומטית פעילה
-    "inbox_active": False,  # האם קריאת כתבות מוואטסאפ פעילה
-    "allowed_senders": [],  # מספרים מורשים לשלוח כתבות
+    "active": True,
+    "inbox_active": False,
+    "allowed_senders": ["972533057480"],
 }
 
 youtube_tokens = {}
@@ -714,6 +714,20 @@ def handle_whatsapp_webhook(body):
             return
 
         msg_type = body.get("typeWebhook", "")
+
+        # טיפול בלחיצת כפתור
+        if msg_type == "incomingMessageReceived":
+            msg_data = body.get("messageData", {})
+            button_resp = msg_data.get("buttonsResponseMessage", {})
+            if button_resp:
+                button_id = button_resp.get("selectedButtonId", "")
+                sender = body.get("senderData", {}).get("sender", "")
+                sender_number = sender.replace("@c.us","").replace("@s.whatsapp.net","")
+                allowed = get_wa_allowed_senders()
+                if allowed and sender_number not in allowed:
+                    return
+                _handle_wa_button(button_id, sender_number)
+                return
         if msg_type != "incomingMessageReceived":
             return
 
@@ -745,14 +759,52 @@ def handle_whatsapp_webhook(body):
         caption = (image_msg.get("caption") or video_msg.get("caption") or
                   doc_msg.get("caption") or "")
 
-        # זיהוי // - התחלה או סוף
+        # זיהוי פקודות
+        is_cancel = text_msg.strip() == "////"
         is_separator = text_msg.strip() == "//"
+        is_status = text_msg.strip() == "//סטטוס"
+        is_help = text_msg.strip() == "//עזרה"
 
-        # אתחל buffer אם צריך
+        # אתחל buffer
         if sender not in wa_article_buffer:
             wa_article_buffer[sender] = {"texts": [], "images": [], "videos": [], "started": False}
 
         buf = wa_article_buffer[sender]
+
+        # פקודת עזרה
+        if is_help:
+            send_whatsapp(
+                "📖 *פקודות זמינות:*\n\n"
+                "// – התחלת כתבה\n"
+                "טקסט + תמונות + וידאו\n"
+                "// – סיום ועיבוד\n\n"
+                "// // – ביטול כתבה שהתחלת\n\n"
+                "//סטטוס – כמה כתבות עלו היום\n"
+                "//עזרה – הצג הודעה זו"
+            )
+            return
+
+        # פקודת סטטוס
+        if is_status:
+            try:
+                from datetime import datetime
+                today = datetime.now().strftime("%Y-%m-%dT00:00:00")
+                resp = requests.get(f"{WP_URL}/posts",
+                    params={"after": today, "per_page": 100, "status": "publish",
+                            "_fields": "id,title"},
+                    auth=(WP_USER, WP_PASSWORD), timeout=10)
+                posts = resp.json() if resp.ok else []
+                send_whatsapp(f"📊 *סטטוס היום:*\n\n✅ {len(posts)} כתבות פורסמו היום")
+            except:
+                send_whatsapp("❌ לא הצלחתי למשוך נתונים")
+            return
+
+        if is_cancel:
+            if buf["started"]:
+                wa_article_buffer[sender] = {"texts": [], "images": [], "videos": [], "started": False}
+                send_whatsapp(f"❌ הכתבה בוטלה")
+                print(f"WA: {sender_name} ביטל כתבה", flush=True)
+            return
 
         if is_separator:
             if not buf["started"]:
@@ -855,7 +907,20 @@ def _process_wa_article(buf, sender_name):
         draft["categories"] = cats
         draft["cat_names"] = cat_names
 
-        # הצג תצוגה מקדימה
+        # שלח כפתורי אישור בוואטסאפ
+        wa_preview = (
+            f"✅ *כתבה מוכנה לאישור:*\n\n"
+            f"*{result.get('title','')}*\n"
+            f"{result.get('subtitle','')[:100]}\n\n"
+            f"_{sender_name}_"
+        )
+        send_whatsapp_with_buttons(wa_preview, [
+            {"id": "wa_approve", "text": "✅ פרסם"},
+            {"id": "wa_edit", "text": "✏️ ערוך בטלגרם"},
+            {"id": "wa_cancel", "text": "❌ בטל"}
+        ])
+
+        # הצג תצוגה מקדימה בטלגרם
         import re as _re
         def esc(s): return str(s).replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
         body_preview = _re.sub(r'<[^>]+>', '', draft.get("body",""))[:300]
@@ -907,6 +972,82 @@ def setup_greenapi_webhook():
         print(f"שגיאה Webhook setup: {e}", flush=True)
 
 
+def _handle_wa_button(button_id, sender_number):
+    """מטפל בלחיצת כפתור מוואטסאפ"""
+    admin_chat = SUPER_ADMIN_ID
+    user_id = str(SUPER_ADMIN_ID)
+    draft = drafts.get(user_id, {})
+
+    if button_id == "wa_approve":
+        # פרסם!
+        if not draft.get("title"):
+            send_whatsapp("⚠️ אין כתבה ממתינה לפרסום")
+            return
+        send_whatsapp("⏳ מפרסם...")
+        try:
+            resp = publish_to_wp(draft, "publish")
+            if resp.status_code == 201:
+                post_url = resp.json().get("link", "")
+                post_title = draft.get("title", "")
+                post_subtitle = draft.get("subtitle", "")
+                # הפץ
+                def _dist():
+                    notify_channel(post_title, post_subtitle, post_url)
+                    if whatsapp_settings["active"]:
+                        wa_msg = WHATSAPP_MSG_FORMAT.format(
+                            site_name=SITE_NAME, title=post_title,
+                            subtitle=post_subtitle, url=post_url)
+                        send_whatsapp(wa_msg)
+                threading.Thread(target=_dist, daemon=True).start()
+                send_whatsapp(f"✅ *פורסם בהצלחה!*\n{post_url}")
+                # עדכן טלגרם
+                send_message(admin_chat, f"✅ <b>פורסם מוואטסאפ!</b>\n🔗 {post_url}")
+                drafts[user_id] = {"step": "idle", "gallery": []}
+            else:
+                send_whatsapp("❌ שגיאה בפרסום")
+        except Exception as e:
+            send_whatsapp(f"❌ שגיאה: {e}")
+
+    elif button_id == "wa_edit":
+        send_whatsapp("✏️ פתח את הטלגרם לעריכה")
+        send_message(admin_chat,
+            "📨 <b>עריכה מבוקשת מוואטסאפ</b>\n\nהכתבה ממתינה לעריכה:", {
+            "inline_keyboard": [
+                [{"text": "✅ מאשר, פרסם", "callback_data": "smart_approve"}],
+                [{"text": "✏️ ערוך כותרת", "callback_data": "smart_edit_title"}],
+                [{"text": "❌ בטל", "callback_data": "publish_cancel"}]
+            ]
+        })
+
+    elif button_id == "wa_cancel":
+        drafts[user_id] = {"step": "idle", "gallery": []}
+        send_whatsapp("❌ הכתבה בוטלה")
+        send_message(admin_chat, "❌ הכתבה מוואטסאפ בוטלה")
+
+def send_whatsapp_with_buttons(message, buttons):
+    """שולח הודעה עם כפתורים ב-WhatsApp Business"""
+    instance_id = os.environ.get("GREENAPI_ID", "")
+    token = os.environ.get("GREENAPI_TOKEN", "")
+    group_id = os.environ.get("WHATSAPP_GROUP_ID", "")
+    if not instance_id or not token or not group_id:
+        return False
+    try:
+        # Green API – שליחת הודעה עם כפתורים
+        url = f"https://7107.api.greenapi.com/waInstance{instance_id}/sendButtons/{token}"
+        payload = {
+            "chatId": group_id,
+            "message": message,
+            "buttons": [{"buttonId": b["id"], "buttonText": b["text"]} for b in buttons]
+        }
+        resp = requests.post(url, json=payload, timeout=15)
+        print(f"WA buttons: {resp.status_code}", flush=True)
+        return resp.status_code == 200
+    except Exception as e:
+        print(f"שגיאה WA buttons: {e}", flush=True)
+        # fallback – שלח בלי כפתורים
+        return send_whatsapp(message)
+
+def send_whatsapp(message, image_url=None):
     """שולח הודעה לקבוצת וואטסאפ דרך Green API"""
     instance_id = os.environ.get("GREENAPI_ID", "")
     token = os.environ.get("GREENAPI_TOKEN", "")
