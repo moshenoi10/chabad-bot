@@ -970,6 +970,10 @@ def start_whatsapp_polling():
                     print(f"📱 WA הודעה התקבלה: {str(data)[:200]}", flush=True)
                     receipt_id = data.get("receiptId")
                     body = data.get("body", {})
+                    # לוג מבנה מלא לדיבוג
+                    msg_data = body.get("messageData", {})
+                    print(f"📱 WA messageData keys: {list(msg_data.keys())}", flush=True)
+                    print(f"📱 WA full messageData: {str(msg_data)[:500]}", flush=True)
                     if whatsapp_settings.get("inbox_active"):
                         handle_whatsapp_webhook(body)
                     else:
