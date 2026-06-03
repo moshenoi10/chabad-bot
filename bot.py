@@ -2921,6 +2921,105 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             edit_message(chat_id, msg_id, f"❌ שגיאה: {e}")
         return True
 
+    elif step == "edit_search":
+        # חיפוש כתבה לעריכה לפי כותרת או לינק
+        msg_id = send_status(chat_id, "🔍 <b>מחפש...</b>")
+        try:
+            # אם שלח לינק ישיר
+            if "chabadupdates.com/archives/" in text or text.strip().isdigit():
+                post_id = text.strip().rstrip("/").split("/")[-1]
+                r = requests.get(f"{WP_URL}/posts/{post_id}?context=edit",
+                                auth=(WP_USER, WP_PASSWORD), timeout=10)
+                if r.ok:
+                    post = r.json()
+                    draft["edit_id"] = post["id"]
+                    draft["edit_title"] = post["title"]["rendered"]
+                    draft["step"] = "edit_menu"
+                    edit_message(chat_id, msg_id,
+                        f"✅ <b>נמצא:</b>\n{post['title']['rendered']}", {
+                        "inline_keyboard": [
+                            [{"text": "כותרת", "callback_data": "edit_title"},
+                             {"text": "כותרת משנה", "callback_data": "edit_subtitle"}],
+                            [{"text": "כותרת אדומה", "callback_data": "edit_red_title"},
+                             {"text": "תמונה ראשית", "callback_data": "edit_image"}],
+                            [{"text": "הוספת תמונות", "callback_data": "edit_gallery"},
+                             {"text": "הוספת סרטון", "callback_data": "edit_video"}],
+                            [{"text": "📄 הוספת PDF", "callback_data": "edit_pdf"}],
+                            [{"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+                        ]
+                    })
+                    return True
+            # חיפוש לפי כותרת
+            r = requests.get(f"{WP_URL}/posts",
+                params={"search": text, "per_page": 5, "_fields": "id,title,link"},
+                auth=(WP_USER, WP_PASSWORD), timeout=10)
+            posts = r.json() if r.ok else []
+            if not posts:
+                edit_message(chat_id, msg_id, "❌ לא נמצאו כתבות. נסה שוב:")
+                return True
+            if len(posts) == 1:
+                post = posts[0]
+                draft["edit_id"] = post["id"]
+                draft["edit_title"] = post["title"]["rendered"]
+                draft["step"] = "edit_menu"
+                edit_message(chat_id, msg_id,
+                    f"✅ <b>נמצא:</b>\n{post['title']['rendered']}", {
+                    "inline_keyboard": [
+                        [{"text": "כותרת", "callback_data": "edit_title"},
+                         {"text": "כותרת משנה", "callback_data": "edit_subtitle"}],
+                        [{"text": "כותרת אדומה", "callback_data": "edit_red_title"},
+                         {"text": "תמונה ראשית", "callback_data": "edit_image"}],
+                        [{"text": "הוספת תמונות", "callback_data": "edit_gallery"},
+                         {"text": "הוספת סרטון", "callback_data": "edit_video"}],
+                        [{"text": "📄 הוספת PDF", "callback_data": "edit_pdf"}],
+                        [{"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+                    ]
+                })
+            else:
+                # כמה תוצאות – תן לבחור
+                keyboard = [[{"text": p["title"]["rendered"][:50],
+                             "callback_data": f"select_edit_{p['id']}"}] for p in posts]
+                keyboard.append([{"text": "❌ ביטול", "callback_data": "publish_cancel"}])
+                edit_message(chat_id, msg_id, "🔍 <b>נמצאו מספר כתבות, בחר:</b>", {"inline_keyboard": keyboard})
+        except Exception as e:
+            edit_message(chat_id, msg_id, f"❌ שגיאה: {e}")
+        return True
+
+    elif step == "delete_search":
+        msg_id = send_status(chat_id, "🔍 <b>מחפש...</b>")
+        try:
+            if "chabadupdates.com/archives/" in text or text.strip().isdigit():
+                post_id = text.strip().rstrip("/").split("/")[-1]
+            else:
+                r = requests.get(f"{WP_URL}/posts",
+                    params={"search": text, "per_page": 5, "_fields": "id,title"},
+                    auth=(WP_USER, WP_PASSWORD), timeout=10)
+                posts = r.json() if r.ok else []
+                if not posts:
+                    edit_message(chat_id, msg_id, "❌ לא נמצאו כתבות.")
+                    return True
+                if len(posts) > 1:
+                    keyboard = [[{"text": p["title"]["rendered"][:50],
+                                 "callback_data": f"select_delete_{p['id']}"}] for p in posts]
+                    keyboard.append([{"text": "❌ ביטול", "callback_data": "publish_cancel"}])
+                    edit_message(chat_id, msg_id, "בחר כתבה למחיקה:", {"inline_keyboard": keyboard})
+                    return True
+                post_id = posts[0]["id"]
+            r = requests.get(f"{WP_URL}/posts/{post_id}",
+                            auth=(WP_USER, WP_PASSWORD), timeout=10)
+            if r.ok:
+                title = r.json()["title"]["rendered"]
+                edit_message(chat_id, msg_id,
+                    f"🗑️ למחוק את:\n<b>{title}</b>?", {
+                    "inline_keyboard": [
+                        [{"text": "✅ כן, מחק", "callback_data": f"confirm_delete_post_{post_id}"},
+                         {"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+                    ]
+                })
+        except Exception as e:
+            edit_message(chat_id, msg_id, f"❌ שגיאה: {e}")
+        return True
+
     elif step == "edit_field_value":
         field = draft.get("edit_field")
         post_id = draft.get("edit_id")
@@ -4576,6 +4675,52 @@ def handle_callback(cb):
                 edit_message(chat_id, msg_id, f"❌ שגיאה: {e}")
 
         threading.Thread(target=_post_story, daemon=True).start()
+
+    elif cb_data.startswith("select_edit_"):
+        post_id = int(cb_data[12:])
+        r = requests.get(f"{WP_URL}/posts/{post_id}?context=edit",
+                        auth=(WP_USER, WP_PASSWORD), timeout=10)
+        if r.ok:
+            post = r.json()
+            draft["edit_id"] = post_id
+            draft["edit_title"] = post["title"]["rendered"]
+            draft["step"] = "edit_menu"
+            send_message(chat_id, f"✅ <b>{post['title']['rendered']}</b>", {
+                "inline_keyboard": [
+                    [{"text": "כותרת", "callback_data": "edit_title"},
+                     {"text": "כותרת משנה", "callback_data": "edit_subtitle"}],
+                    [{"text": "כותרת אדומה", "callback_data": "edit_red_title"},
+                     {"text": "תמונה ראשית", "callback_data": "edit_image"}],
+                    [{"text": "הוספת תמונות", "callback_data": "edit_gallery"},
+                     {"text": "הוספת סרטון", "callback_data": "edit_video"}],
+                    [{"text": "📄 הוספת PDF", "callback_data": "edit_pdf"}],
+                    [{"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+                ]
+            })
+
+    elif cb_data.startswith("select_delete_"):
+        post_id = cb_data[14:]
+        r = requests.get(f"{WP_URL}/posts/{post_id}",
+                        auth=(WP_USER, WP_PASSWORD), timeout=10)
+        if r.ok:
+            title = r.json()["title"]["rendered"]
+            send_message(chat_id, f"🗑️ למחוק:\n<b>{title}</b>?", {
+                "inline_keyboard": [
+                    [{"text": "✅ כן, מחק", "callback_data": f"confirm_delete_post_{post_id}"},
+                     {"text": "❌ ביטול", "callback_data": "publish_cancel"}]
+                ]
+            })
+
+    elif cb_data.startswith("confirm_delete_post_"):
+        post_id = cb_data[20:]
+        msg_id = send_status(chat_id, "🗑️ מוחק...")
+        r = requests.delete(f"{WP_URL}/posts/{post_id}?force=true",
+                           auth=(WP_USER, WP_PASSWORD), timeout=10)
+        if r.ok:
+            edit_message(chat_id, msg_id, "✅ <b>הכתבה נמחקה!</b>")
+        else:
+            edit_message(chat_id, msg_id, f"❌ שגיאה: {r.text[:100]}")
+        drafts[user_id] = {"step": "idle", "gallery": []}
 
     elif cb_data == "menu_edit":
         draft["step"] = "edit_search"
