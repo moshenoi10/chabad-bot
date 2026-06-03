@@ -752,14 +752,36 @@ def handle_whatsapp_webhook(body):
             print(f"WA webhook: שולח לא מורשה {sender_number}", flush=True)
             return
 
-        # חלץ תוכן
-        text_msg = message_data.get("textMessageData", {}).get("textMessage", "")
-        image_msg = message_data.get("imageMessageData", {})
-        video_msg = message_data.get("videoMessageData", {})
-        doc_msg = message_data.get("documentMessageData", {})
-        caption = (image_msg.get("caption") or video_msg.get("caption") or
-                  doc_msg.get("caption") or "")
+        # חלץ תוכן לפי המבנה האמיתי של Green API
+        msg_type = message_data.get("typeMessage", "")
+        text_msg = ""
+        image_url = ""
+        video_url = ""
+        caption = ""
 
+        if msg_type == "textMessage":
+            text_msg = message_data.get("textMessageData", {}).get("textMessage", "")
+        elif msg_type == "extendedTextMessage":
+            text_msg = message_data.get("extendedTextMessageData", {}).get("text", "")
+        elif msg_type in ("imageMessage", "videoMessage", "documentMessage",
+                          "audioMessage", "pttMessage"):
+            file_data = message_data.get("fileMessageData", {})
+            caption = file_data.get("caption", "")
+            url = file_data.get("downloadUrl", "")
+            file_name = file_data.get("fileName", "")
+            if msg_type == "imageMessage":
+                image_url = url
+            elif msg_type == "videoMessage":
+                video_url = url
+            elif msg_type == "documentMessage":
+                if file_name.lower().endswith(".pdf"):
+                    buf.setdefault("pdfs", []).append({"url": url, "name": file_name})
+                else:
+                    buf.setdefault("docs", []).append({"url": url, "name": file_name})
+            elif msg_type in ("audioMessage", "pttMessage"):
+                buf.setdefault("audio", []).append({"url": url})
+            if caption:
+                text_msg = caption
         # זיהוי פקודות
         is_cancel = text_msg.strip() == "////"
         is_separator = text_msg.strip() == "//"
@@ -832,19 +854,15 @@ def handle_whatsapp_webhook(body):
         if text_msg:
             buf["texts"].append(text_msg)
 
-        if image_msg.get("downloadUrl"):
-            buf["images"].append({
-                "url": image_msg["downloadUrl"],
-                "caption": caption
-            })
+        if image_url:
+            buf["images"].append({"url": image_url, "caption": caption})
 
-        if video_msg.get("downloadUrl"):
-            buf["videos"].append({
-                "url": video_msg["downloadUrl"],
-                "caption": caption
-            })
+        if video_url:
+            buf["videos"].append({"url": video_url, "caption": caption})
 
-        print(f"WA buffer {sender_name}: {len(buf['texts'])} טקסטים, {len(buf['images'])} תמונות", flush=True)
+        print(f"WA buffer {sender_name}: {len(buf['texts'])} טקסטים, "
+              f"{len(buf['images'])} תמונות, {len(buf['videos'])} וידאו, "
+              f"{len(buf.get('pdfs',[]))} PDF, {len(buf.get('audio',[]))} שמע", flush=True)
 
     except Exception as e:
         print(f"שגיאה WA webhook: {e}", flush=True)
@@ -875,7 +893,9 @@ def _process_wa_article(buf, sender_name):
             f"👤 שולח: <b>{sender_name}</b>\n"
             f"📝 {len(buf['texts'])} הודעות טקסט\n"
             f"🖼 {len(images_bytes)} תמונות\n"
-            f"🎬 {len(buf['videos'])} סרטונים\n\n"
+            f"🎬 {len(buf.get('videos',[]))} סרטונים\n"
+            f"📄 {len(buf.get('pdfs',[]))} קבצי PDF\n"
+            f"🎵 {len(buf.get('audio',[]))} קבצי שמע\n\n"
             f"⏳ מעבד עם AI...", None)
 
         # עבד עם AI
