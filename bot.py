@@ -396,7 +396,9 @@ def get_analytics_data(days=7):
         import json as _json
         sa_json = os.environ.get("GA_SERVICE_ACCOUNT_JSON","")
         property_id = os.environ.get("GA_PROPERTY_ID","")
+        print(f"Analytics: sa_json={'יש' if sa_json else 'חסר'}, property_id={property_id}", flush=True)
         if not sa_json or not property_id:
+            print("Analytics: חסרים משתנים!", flush=True)
             return None
 
         # קבל access token דרך JWT
@@ -720,38 +722,7 @@ def get_ig_stats():
     except:
         return {}
 
-def get_analytics_data():
-    """מושך נתוני Google Analytics"""
-    try:
-        import json as _json
-        sa_json = os.environ.get("GA_SERVICE_ACCOUNT_JSON","")
-        property_id = os.environ.get("GA_PROPERTY_ID","")
-        if not sa_json or not property_id:
-            return None
-        import google.oauth2.service_account as sa
-        import googleapiclient.discovery as discovery
-        creds = sa.Credentials.from_service_account_info(
-            _json.loads(sa_json),
-            scopes=["https://www.googleapis.com/auth/analytics.readonly"]
-        )
-        service = discovery.build("analyticsdata", "v1beta", credentials=creds)
-        body = {
-            "dateRanges": [{"startDate": "7daysAgo", "endDate": "today"}],
-            "metrics": [{"name": "sessions"}, {"name": "totalUsers"}, {"name": "screenPageViews"}],
-            "dimensions": [{"name": "pagePath"}],
-            "limit": 5,
-            "orderBys": [{"metric": {"metricName": "screenPageViews"}, "desc": True}]
-        }
-        resp = service.properties().runReport(property=f"properties/{property_id}", body=body).execute()
-        totals = resp.get("totals",[{}])[0].get("metricValues",[])
-        return {
-            "sessions": int(totals[0].get("value",0)) if totals else 0,
-            "users": int(totals[1].get("value",0)) if len(totals)>1 else 0,
-            "views": int(totals[2].get("value",0)) if len(totals)>2 else 0,
-            "articles": []
-        }
-    except:
-        return None
+# get_analytics_data – נמחק כפילות
 
 def run_server():
     port = int(os.environ.get("PORT", 10000))
@@ -1327,7 +1298,38 @@ def get_menu(user_id):
         rows.append([{"text": "📋 ניהול תוכן ▾"}, {"text": "📢 הפצה ▾"}])
     return {"keyboard": rows, "resize_keyboard": True, "persistent": True}
 
-def get_wp_categories():
+def show_extra_actions(chat_id, draft, user_id, msg_id=None):
+    """מציג תפריט פעולות נוספות – עורך הודעה קיימת"""
+    keyboard = {"inline_keyboard": []}
+    if is_admin(user_id):
+        keyboard["inline_keyboard"] += [
+            [{"text": "👥 ניהול משתמשים", "callback_data": "mgmt_users"},
+             {"text": "📊 לוג פעולות", "callback_data": "mgmt_log"}],
+            [{"text": "⚙️ הגדרות מערכת", "callback_data": "mgmt_settings"}],
+        ]
+    if is_senior_editor(user_id):
+        keyboard["inline_keyboard"] += [
+            [{"text": "📧 ניהול מייל", "callback_data": "mgmt_email"},
+             {"text": "📈 אנליטיקס", "callback_data": "mgmt_analytics"}],
+            [{"text": "🌐 ניהול רשתות", "callback_data": "mgmt_networks"}],
+        ]
+    keyboard["inline_keyboard"] += [
+        [{"text": "📅 דוח חודשי", "callback_data": "monthly_report"}],
+        [{"text": "💬 WhatsApp – " + ("✅ פעיל" if whatsapp_settings["active"] else "❌ כבוי"),
+          "callback_data": "toggle_whatsapp"}],
+        [{"text": "🧠 למידה מעריכות", "callback_data": "mgmt_learning"}],
+    ]
+    if msg_id:
+        edit_message(chat_id, msg_id, "⚙️ <b>פעולות נוספות</b>", keyboard)
+    else:
+        new_id = send_status(chat_id, "⚙️ <b>פעולות נוספות</b>", keyboard)
+        draft["extra_actions_msg_id"] = new_id
+
+def get_back_button():
+    """כפתור חזור לפעולות נוספות"""
+    return [{"text": "↩️ חזור לפעולות נוספות", "callback_data": "back_to_extra_actions"}]
+
+
     try:
         resp = requests.get(f"{WP_URL}/categories?per_page=100",
                            auth=(WP_USER, WP_PASSWORD), timeout=10)
@@ -2215,7 +2217,8 @@ def handle_message(msg):
               "callback_data": "toggle_whatsapp"}],
             [{"text": "🧠 למידה מעריכות", "callback_data": "mgmt_learning"}],
         ]
-        send_message(chat_id, "⚙️ <b>פעולות נוספות</b>", keyboard)
+        msg_id = send_status(chat_id, "⚙️ <b>פעולות נוספות</b>", keyboard)
+        draft["extra_actions_msg_id"] = msg_id
         return
 
     if text == "📋 ניהול תוכן ▾" and is_editor(user_id):
@@ -2755,7 +2758,7 @@ def handle_smart_edit_inputs(chat_id, user_id, step, text, draft, drafts):
         add_learning_example("subtitle", before, text)
         msg_id = draft.get("edit_request_msg_id") or draft.get("summary_msg_id")
         show_smart_preview(chat_id, draft, msg_id=msg_id)
-        draft["summary_msg_id"] = msg_id
+        draft["edit_request_msg_id"] = draft.get("summary_msg_id")
         return True
     elif step == "smart_edit_title_input":
         before = draft.get("title", "")
@@ -2764,7 +2767,7 @@ def handle_smart_edit_inputs(chat_id, user_id, step, text, draft, drafts):
         add_learning_example("title", before, text)
         msg_id = draft.get("edit_request_msg_id") or draft.get("summary_msg_id")
         show_smart_preview(chat_id, draft, msg_id=msg_id)
-        draft["summary_msg_id"] = msg_id
+        draft["edit_request_msg_id"] = draft.get("summary_msg_id")
         return True
     elif step == "smart_edit_red_title_input":
         before = draft.get("red_title", "")
@@ -2773,7 +2776,7 @@ def handle_smart_edit_inputs(chat_id, user_id, step, text, draft, drafts):
         add_learning_example("red_title", before, text)
         msg_id = draft.get("edit_request_msg_id") or draft.get("summary_msg_id")
         show_smart_preview(chat_id, draft, msg_id=msg_id)
-        draft["summary_msg_id"] = msg_id
+        draft["edit_request_msg_id"] = draft.get("summary_msg_id")
         return True
     elif step == "smart_edit_body_input":
         draft["body"] = text
@@ -4912,10 +4915,32 @@ def handle_callback(cb):
     elif cb_data == "toggle_whatsapp":
         whatsapp_settings["active"] = not whatsapp_settings["active"]
         status = "✅ פעיל" if whatsapp_settings["active"] else "❌ כבוי"
-        send_message(chat_id, f"💬 <b>WhatsApp אוטומטי – {status}</b>")
+        msg_id = draft.get("extra_actions_msg_id")
+        if msg_id:
+            show_extra_actions(chat_id, draft, user_id, msg_id=msg_id)
+        else:
+            send_message(chat_id, f"💬 <b>WhatsApp אוטומטי – {status}</b>")
+
+    elif cb_data == "back_to_extra_actions":
+        msg_id = draft.get("extra_actions_msg_id")
+        show_extra_actions(chat_id, draft, user_id, msg_id=msg_id)
+
+    elif cb_data == "mgmt_analytics":
+        msg_id = draft.get("extra_actions_msg_id")
+        edit_message(chat_id, msg_id, "📈 <b>אנליטיקס</b>\n\nבחר תקופה:", {
+            "inline_keyboard": [
+                [{"text": "📅 היום", "callback_data": "analytics_1"},
+                 {"text": "📅 שבוע", "callback_data": "analytics_7"}],
+                [{"text": "📅 חודש", "callback_data": "analytics_30"},
+                 {"text": "📅 שנה", "callback_data": "analytics_365"}],
+                [{"text": "🏆 5 הנצפות", "callback_data": "analytics_top"},
+                 {"text": "🔗 לפי URL", "callback_data": "analytics_url"}],
+                [get_back_button()[0]]
+            ]
+        })
+        draft["extra_actions_msg_id"] = msg_id
 
     elif cb_data == "monthly_report":
-        # בחר חודש
         from datetime import datetime, timedelta
         now = datetime.now()
         months = []
@@ -4923,16 +4948,21 @@ def handle_callback(cb):
             d = datetime(now.year, now.month, 1) - timedelta(days=i*28)
             d = datetime(d.year, d.month, 1)
             months.append(d)
-
         hebrew_months = {1:"ינואר",2:"פברואר",3:"מרץ",4:"אפריל",5:"מאי",6:"יוני",
                         7:"יולי",8:"אוגוסט",9:"ספטמבר",10:"אוקטובר",11:"נובמבר",12:"דצמבר"}
-
         keyboard = {"inline_keyboard": [
             [{"text": f"📅 {hebrew_months[d.month]} {d.year}",
               "callback_data": f"report_{d.year}_{d.month}"}]
             for d in months
-        ] + [[{"text": "✏️ הכנס חודש ידנית", "callback_data": "report_manual"}]]}
-        send_message(chat_id, "📅 <b>דוח חודשי</b>\n\nבחר חודש:", keyboard)
+        ] + [
+            [{"text": "✏️ הכנס חודש ידנית", "callback_data": "report_manual"}],
+            [get_back_button()[0]]
+        ]}
+        msg_id = draft.get("extra_actions_msg_id")
+        if msg_id:
+            edit_message(chat_id, msg_id, "📅 <b>דוח חודשי</b>\n\nבחר חודש:", keyboard)
+        else:
+            send_message(chat_id, "📅 <b>דוח חודשי</b>\n\nבחר חודש:", keyboard)
 
     elif cb_data.startswith("report_") and cb_data != "report_manual":
         parts = cb_data.split("_")
@@ -4961,24 +4991,33 @@ def handle_callback(cb):
         log_text = "📊 <b>לוג פעולות אחרונות:</b>\n\n"
         for entry in activity_log[-20:]:
             log_text += f"🕐 {entry['time']} | {entry['username']}\n└ {entry['action']}\n\n"
-        send_message(chat_id, log_text or "אין פעולות עדיין.")
+        msg_id = draft.get("extra_actions_msg_id")
+        if msg_id:
+            edit_message(chat_id, msg_id, log_text or "אין פעולות עדיין.", {
+                "inline_keyboard": [[get_back_button()[0]]]
+            })
+        else:
+            send_message(chat_id, log_text or "אין פעולות עדיין.")
 
     elif cb_data == "mgmt_learning":
         learning = load_learning()
         total = sum(len(v) for v in learning.values() if isinstance(v, list))
         titles = len(learning.get("title_edits", []))
         subtitles = len(learning.get("subtitle_edits", []))
-        send_message(chat_id,
-            f"🧠 <b>למידה מעריכות</b>\n\n"
+        msg_id = draft.get("extra_actions_msg_id")
+        text = (f"🧠 <b>למידה מעריכות</b>\n\n"
             f"📊 סה\"כ דוגמאות: <b>{total}</b>\n"
             f"📌 כותרות: {titles}\n"
             f"📌 כותרות משנה: {subtitles}\n\n"
-            f"הבוט לומד מהעריכות שלך ומשפר כותרות בכתבות הבאות.", {
-            "inline_keyboard": [
-                [{"text": "🗑️ נקה למידה", "callback_data": "clear_learning"}],
-                [{"text": "↩️ חזור", "callback_data": "publish_cancel"}]
-            ]
-        })
+            f"הבוט לומד מהעריכות שלך ומשפר כותרות בכתבות הבאות.")
+        kb = {"inline_keyboard": [
+            [{"text": "🗑️ נקה למידה", "callback_data": "clear_learning"}],
+            [get_back_button()[0]]
+        ]}
+        if msg_id:
+            edit_message(chat_id, msg_id, text, kb)
+        else:
+            send_message(chat_id, text, kb)
 
     elif cb_data == "clear_learning":
         save_learning({"title_edits": [], "subtitle_edits": [], "style_notes": []})
@@ -5019,20 +5058,25 @@ def handle_callback(cb):
             ]
         })
 
-    elif cb_data.startswith("analytics_") and not cb_data.startswith("analytics_specific"):
+    elif cb_data.startswith("analytics_") and not cb_data.startswith("analytics_specific") and not cb_data in ("analytics_top", "analytics_url"):
         days = int(cb_data.replace("analytics_", ""))
         period_names = {1:"היום", 7:"שבוע אחרון", 30:"חודש אחרון", 365:"שנה אחרונה"}
-        msg_id = send_status(chat_id, f"⏳ מושך נתוני {period_names.get(days,'')}...")
+        msg_id = draft.get("extra_actions_msg_id")
+        edit_message(chat_id, msg_id, f"⏳ מושך נתוני {period_names.get(days,'')}...")
         def _load(d=days, m=msg_id, p=period_names.get(days,'')):
             data = get_analytics_data(d)
             if data:
-                edit_message(chat_id, m, f"""📈 <b>אנליטיקס – {p}</b>
-
-🔵 סשנים: <b>{data.get('sessions','--')}</b>
-👤 משתמשים: <b>{data.get('users','--')}</b>
-👁 צפיות: <b>{data.get('views','--')}</b>""")
+                edit_message(chat_id, m,
+                    f"📈 <b>אנליטיקס – {p}</b>\n\n"
+                    f"🔵 סשנים: <b>{data.get('sessions','--')}</b>\n"
+                    f"👤 משתמשים: <b>{data.get('users','--')}</b>\n"
+                    f"👁 צפיות: <b>{data.get('views','--')}</b>", {
+                    "inline_keyboard": [[get_back_button()[0]]]
+                })
             else:
-                edit_message(chat_id, m, "❌ לא הצלחתי למשוך נתונים.\n\nוודא שמשתנה GA_SERVICE_ACCOUNT_JSON מוגדר ב-Render.")
+                edit_message(chat_id, m, "❌ לא הצלחתי למשוך נתונים.", {
+                    "inline_keyboard": [[get_back_button()[0]]]
+                })
         threading.Thread(target=_load, daemon=True).start()
 
     elif cb_data.startswith("top5_"):
@@ -5710,8 +5754,8 @@ def get_analytics_token():
         print(f"שגיאה Analytics token: {e}", flush=True)
     return None
 
-def get_analytics_data(period="7daysAgo", limit=5):
-    """מושך נתוני Analytics"""
+def _get_analytics_data_v2(period="7daysAgo", limit=5):
+    """גרסה ישנה – לא בשימוש"""
     token = get_analytics_token()
     if not token:
         return None
@@ -5725,12 +5769,6 @@ def get_analytics_data(period="7daysAgo", limit=5):
                 "dimensions": [{"name": "pageTitle"}, {"name": "pagePath"}],
                 "orderBys": [{"metric": {"metricName": "screenPageViews"}, "desc": True}],
                 "limit": limit,
-                "dimensionFilter": {
-                    "filter": {
-                        "fieldName": "pagePath",
-                        "stringFilter": {"matchType": "CONTAINS", "value": "/archives/"}
-                    }
-                }
             },
             timeout=15
         )
