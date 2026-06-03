@@ -948,7 +948,39 @@ def _process_wa_article(buf, sender_name):
     except Exception as e:
         print(f"שגיאה עיבוד WA כתבה: {e}", flush=True)
 
-def setup_greenapi_webhook():
+def start_whatsapp_polling():
+    """בודק הודעות חדשות מ-Green API כל 3 שניות"""
+    instance_id = os.environ.get("GREENAPI_ID", "")
+    token = os.environ.get("GREENAPI_TOKEN", "")
+    if not instance_id or not token:
+        return
+    base = f"https://7107.api.greenapi.com/waInstance{instance_id}"
+    print("🟢 WhatsApp polling מתחיל...", flush=True)
+
+    while True:
+        try:
+            if whatsapp_settings.get("inbox_active"):
+                resp = requests.get(
+                    f"{base}/receiveNotification/{token}",
+                    timeout=10
+                )
+                if resp.ok and resp.json():
+                    data = resp.json()
+                    receipt_id = data.get("receiptId")
+                    body = data.get("body", {})
+                    # טפל בהודעה
+                    handle_whatsapp_webhook(body)
+                    # מחק מהתור
+                    if receipt_id:
+                        requests.delete(
+                            f"{base}/deleteNotification/{token}/{receipt_id}",
+                            timeout=5
+                        )
+        except Exception as e:
+            print(f"שגיאה WA polling: {e}", flush=True)
+        time.sleep(3)
+
+
     """מגדיר Webhook ב-Green API"""
     instance_id = os.environ.get("GREENAPI_ID", "")
     token = os.environ.get("GREENAPI_TOKEN", "")
@@ -7407,6 +7439,7 @@ def main():
     print("🚀 בוט חבד מתחיל!", flush=True)
     load_drafts()
     download_story_template()
+    threading.Thread(target=start_whatsapp_polling, daemon=True).start()
     threading.Thread(target=setup_greenapi_webhook, daemon=True).start()
 
     try:
