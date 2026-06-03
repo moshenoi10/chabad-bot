@@ -5326,7 +5326,9 @@ def handle_callback(cb):
         if msg_id:
             show_extra_actions(chat_id, draft, user_id, msg_id=msg_id)
         else:
-            send_message(chat_id, f"💬 <b>WhatsApp אוטומטי – {status}</b>")
+            new_id = send_status(chat_id, f"💬 <b>WhatsApp אוטומטי – {status}</b>")
+            draft["extra_actions_msg_id"] = new_id
+            show_extra_actions(chat_id, draft, user_id, msg_id=new_id)
 
     elif cb_data == "wa_inbox_menu":
         msg_id = draft.get("extra_actions_msg_id")
@@ -5356,10 +5358,14 @@ def handle_callback(cb):
     elif cb_data == "toggle_wa_inbox":
         whatsapp_settings["inbox_active"] = not whatsapp_settings.get("inbox_active", False)
         status = "✅ פעיל" if whatsapp_settings["inbox_active"] else "❌ כבוי"
-        send_message(chat_id, f"📨 WhatsApp אינבוקס – <b>{status}</b>")
-        # חזור לתפריט
+        # עדכן תפריט
         msg_id = draft.get("extra_actions_msg_id")
-        show_extra_actions(chat_id, draft, user_id, msg_id=msg_id)
+        if msg_id:
+            show_extra_actions(chat_id, draft, user_id, msg_id=msg_id)
+        else:
+            new_id = send_status(chat_id, f"📨 WhatsApp אינבוקס – <b>{status}</b>")
+            draft["extra_actions_msg_id"] = new_id
+            show_extra_actions(chat_id, draft, user_id, msg_id=new_id)
 
     elif cb_data == "wa_add_sender":
         draft["step"] = "wa_add_sender_input"
@@ -7357,7 +7363,7 @@ def auto_select_categories(title, body):
     return [25], ["חדשות"]
 
 
-    """מחזיר סטטוס מערכת המייל"""
+def get_email_status():
     status = "✅ פעילה" if email_system["active"] else "⏸️ מושהית"
     interval_min = email_system["interval"] // 60
     senders = "\n".join([f"• {s}" for s in email_system["allowed_senders"]])
