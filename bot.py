@@ -953,29 +953,34 @@ def start_whatsapp_polling():
     instance_id = os.environ.get("GREENAPI_ID", "")
     token = os.environ.get("GREENAPI_TOKEN", "")
     if not instance_id or not token:
+        print("⚠️ WA polling: חסרים GREENAPI_ID או GREENAPI_TOKEN", flush=True)
         return
     base = f"https://7107.api.greenapi.com/waInstance{instance_id}"
     print("🟢 WhatsApp polling מתחיל...", flush=True)
 
     while True:
         try:
-            if whatsapp_settings.get("inbox_active"):
-                resp = requests.get(
-                    f"{base}/receiveNotification/{token}",
-                    timeout=10
-                )
-                if resp.ok and resp.json():
-                    data = resp.json()
+            resp = requests.get(
+                f"{base}/receiveNotification/{token}",
+                timeout=10
+            )
+            if resp.ok:
+                data = resp.json()
+                if data:
+                    print(f"📱 WA הודעה התקבלה: {str(data)[:200]}", flush=True)
                     receipt_id = data.get("receiptId")
                     body = data.get("body", {})
-                    # טפל בהודעה
-                    handle_whatsapp_webhook(body)
-                    # מחק מהתור
+                    if whatsapp_settings.get("inbox_active"):
+                        handle_whatsapp_webhook(body)
+                    else:
+                        print("📱 WA inbox כבוי – מתעלם", flush=True)
                     if receipt_id:
                         requests.delete(
                             f"{base}/deleteNotification/{token}/{receipt_id}",
                             timeout=5
                         )
+            else:
+                print(f"⚠️ WA polling שגיאה: {resp.status_code} {resp.text[:100]}", flush=True)
         except Exception as e:
             print(f"שגיאה WA polling: {e}", flush=True)
         time.sleep(3)
