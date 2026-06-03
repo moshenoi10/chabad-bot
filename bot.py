@@ -962,7 +962,7 @@ def start_whatsapp_polling():
         try:
             resp = requests.get(
                 f"{base}/receiveNotification/{token}",
-                timeout=10
+                timeout=25
             )
             if resp.ok:
                 data = resp.json()
