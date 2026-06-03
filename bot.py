@@ -762,6 +762,55 @@ import pickle
 
 drafts = {}
 DRAFTS_FILE = "/tmp/drafts.pkl"
+LEARNING_FILE = "/tmp/learning.pkl"
+
+def load_learning():
+    try:
+        with open(LEARNING_FILE, "rb") as f:
+            return pickle.load(f)
+    except:
+        return {"title_edits": [], "subtitle_edits": [], "style_notes": []}
+
+def save_learning(data):
+    try:
+        with open(LEARNING_FILE, "wb") as f:
+            pickle.dump(data, f)
+    except Exception as e:
+        print(f"שגיאה שמירת learning: {e}", flush=True)
+
+def add_learning_example(field, before, after):
+    """שמור דוגמת עריכה ללמידה"""
+    if not before or not after or before == after:
+        return
+    learning = load_learning()
+    key = field + "_edits"
+    if key not in learning:
+        learning[key] = []
+    # הוסף רק אם לא כבר קיים
+    example = {"before": before, "after": after}
+    if example not in learning[key]:
+        learning[key].append(example)
+        # שמור רק 10 דוגמאות אחרונות
+        learning[key] = learning[key][-10:]
+        save_learning(learning)
+        print(f"✅ למד עריכת {field}: {before[:30]} → {after[:30]}", flush=True)
+
+def build_learning_context():
+    """בנה הקשר למידה לפרומפט"""
+    learning = load_learning()
+    context = ""
+    
+    if learning.get("title_edits"):
+        context += "\nדוגמאות לסגנון כותרות מועדף:\n"
+        for ex in learning["title_edits"][-5:]:
+            context += f'- במקום: "{ex["before"]}"\n  עדיף: "{ex["after"]}"\n'
+    
+    if learning.get("subtitle_edits"):
+        context += "\nדוגמאות לסגנון כותרת משנה מועדף:\n"
+        for ex in learning["subtitle_edits"][-5:]:
+            context += f'- במקום: "{ex["before"]}"\n  עדיף: "{ex["after"]}"\n'
+    
+    return context
 
 def save_drafts():
     try:
@@ -1654,13 +1703,19 @@ def build_prompt(text):
 - פורמט: נושא + נקודתיים + פרט
 - אסור להתחיל בשם האתר
 - נקודתיים פעם אחת בלבד
+- ללא נקודה בסוף
 
 כותרת משנה:
 - חייב להיות 2-3 משפטים מופרדים בסימן • בלבד
-- אסור כוכביות * או סימני עיצוב
+- הסימן • מופיע בין המשפטים, לא בסוף
+- ללא נקודה בסוף כל משפט – אסור לשים . לפני •
+- אסור כוכביות * או סימני עיצוב אחרים
+- דוגמה נכונה: "משפט ראשון • משפט שני • משפט שלישי"
+- דוגמה שגויה: "משפט ראשון. • משפט שני. • משפט שלישי."
 
 כותרת אדומה:
 - 2-4 מילים בלבד
+- ללא נקודה בסוף
 
 גוף הכתבה:
 - העתק את הטקסט המקורי מילה במילה
@@ -1680,7 +1735,16 @@ def build_prompt(text):
 
 טקסט:
 {text}"""
+    learning_ctx = build_learning_context()
+    if learning_ctx:
+        base = base.replace(
+            "\nהחזר JSON בלבד:",
+            f"\nלמד מהעריכות הקודמות שלי וצור כותרות בסגנון דומה:{learning_ctx}\nהחזר JSON בלבד:"
+        )
     return base.replace("{text}", text) if "{text}" in base else base + f"\n\nטקסט:\n{text}"
+
+def build_prompt_with_learning(text):
+    pass  # שמור למניעת כפילות
 
 def build_prompt_orig(text):
     return f"""אתה עורך חדשות חרדי מקצועי. קרא את הטקסט וצור ממנו כתבה עיתונאית.
@@ -1760,6 +1824,11 @@ def process_with_gemini(text):
                     for field in ["title", "subtitle", "red_title", "body"]:
                         if field in parsed and parsed[field]:
                             parsed[field] = fix_geresh(restore_geresh(parsed[field]))
+                    # נקה נקודות לפני • בכותרת משנה
+                    if field == "subtitle":
+                        import re as _re
+                        parsed[field] = _re.sub(r'\.\s*•', ' •', parsed[field])
+                        parsed[field] = _re.sub(r'\.$', '', parsed[field].strip())
                     return parsed
                 return None
             print(f"שגיאה Gemini: {resp.status_code} {resp.text[:100]}", flush=True)
@@ -2144,6 +2213,7 @@ def handle_message(msg):
             [{"text": "📅 דוח חודשי", "callback_data": "monthly_report"}],
             [{"text": "💬 WhatsApp – " + ("✅ פעיל" if whatsapp_settings["active"] else "❌ כבוי"),
               "callback_data": "toggle_whatsapp"}],
+            [{"text": "🧠 למידה מעריכות", "callback_data": "mgmt_learning"}],
         ]
         send_message(chat_id, "⚙️ <b>פעולות נוספות</b>", keyboard)
         return
@@ -2176,6 +2246,8 @@ def handle_message(msg):
             "vimeo_url": None,
             "vimeo_urls": [],
             "pdf_embeds": [],
+            "summary_msg_id": None,
+            "edit_request_msg_id": None,
         }
         draft = drafts[user_id]
         msg_id = send_status(chat_id,
@@ -2677,23 +2749,31 @@ def show_smart_preview(chat_id, draft, msg_id=None):
 def handle_smart_edit_inputs(chat_id, user_id, step, text, draft, drafts):
     """מטפל בכניסות עריכה חכמה - נקרא מתוך handle_message"""
     if step == "smart_edit_subtitle_input":
+        before = draft.get("subtitle", "")
         draft["subtitle"] = text
         draft["step"] = "smart_preview"
-        msg_id = draft.get("summary_msg_id")
+        add_learning_example("subtitle", before, text)
+        msg_id = draft.get("edit_request_msg_id") or draft.get("summary_msg_id")
         show_smart_preview(chat_id, draft, msg_id=msg_id)
-        if not msg_id:
-            draft["summary_msg_id"] = None
+        draft["summary_msg_id"] = msg_id
         return True
     elif step == "smart_edit_title_input":
+        before = draft.get("title", "")
         draft["title"] = text
         draft["step"] = "smart_preview"
-        msg_id = draft.get("summary_msg_id")
+        add_learning_example("title", before, text)
+        msg_id = draft.get("edit_request_msg_id") or draft.get("summary_msg_id")
         show_smart_preview(chat_id, draft, msg_id=msg_id)
+        draft["summary_msg_id"] = msg_id
         return True
     elif step == "smart_edit_red_title_input":
+        before = draft.get("red_title", "")
         draft["red_title"] = text
         draft["step"] = "smart_preview"
-        show_smart_preview(chat_id, draft, msg_id=draft.get("summary_msg_id"))
+        add_learning_example("red_title", before, text)
+        msg_id = draft.get("edit_request_msg_id") or draft.get("summary_msg_id")
+        show_smart_preview(chat_id, draft, msg_id=msg_id)
+        draft["summary_msg_id"] = msg_id
         return True
     elif step == "smart_edit_body_input":
         draft["body"] = text
@@ -4241,11 +4321,13 @@ def handle_callback(cb):
 
     elif cb_data == "smart_edit_red_title":
         draft["step"] = "smart_edit_red_title_input"
-        send_message(chat_id, f"כותרת אדומה נוכחית:\n<b>{draft.get('red_title','')}</b>\n\nשלח כותרת אדומה חדשה (2-4 מילים):")
+        new_id = send_status(chat_id, f"כותרת אדומה נוכחית:\n<b>{draft.get('red_title','')}</b>\n\nשלח כותרת אדומה חדשה (2-4 מילים):")
+        draft["edit_request_msg_id"] = new_id
 
     elif cb_data == "smart_edit_subtitle":
         draft["step"] = "smart_edit_subtitle_input"
-        send_message(chat_id, f"כותרת משנה נוכחית:\n{draft.get('subtitle','')}\n\nשלח כותרת משנה חדשה:")
+        new_id = send_status(chat_id, f"כותרת משנה נוכחית:\n{draft.get('subtitle','')}\n\nשלח כותרת משנה חדשה:")
+        draft["edit_request_msg_id"] = new_id
 
     elif cb_data == "smart_edit_title":
         draft["step"] = "smart_edit_title_input"
@@ -4256,7 +4338,8 @@ def handle_callback(cb):
 
     elif cb_data == "smart_edit_body":
         draft["step"] = "smart_edit_body_input"
-        send_message(chat_id, "שלח גוף כתבה חדש:")
+        new_id = send_status(chat_id, "שלח גוף כתבה חדש:")
+        draft["edit_request_msg_id"] = new_id
 
     elif cb_data == "smart_edit_tags":
         draft["step"] = "smart_edit_tags_input"
@@ -4879,6 +4962,27 @@ def handle_callback(cb):
         for entry in activity_log[-20:]:
             log_text += f"🕐 {entry['time']} | {entry['username']}\n└ {entry['action']}\n\n"
         send_message(chat_id, log_text or "אין פעולות עדיין.")
+
+    elif cb_data == "mgmt_learning":
+        learning = load_learning()
+        total = sum(len(v) for v in learning.values() if isinstance(v, list))
+        titles = len(learning.get("title_edits", []))
+        subtitles = len(learning.get("subtitle_edits", []))
+        send_message(chat_id,
+            f"🧠 <b>למידה מעריכות</b>\n\n"
+            f"📊 סה\"כ דוגמאות: <b>{total}</b>\n"
+            f"📌 כותרות: {titles}\n"
+            f"📌 כותרות משנה: {subtitles}\n\n"
+            f"הבוט לומד מהעריכות שלך ומשפר כותרות בכתבות הבאות.", {
+            "inline_keyboard": [
+                [{"text": "🗑️ נקה למידה", "callback_data": "clear_learning"}],
+                [{"text": "↩️ חזור", "callback_data": "publish_cancel"}]
+            ]
+        })
+
+    elif cb_data == "clear_learning":
+        save_learning({"title_edits": [], "subtitle_edits": [], "style_notes": []})
+        send_message(chat_id, "✅ הלמידה נוקתה. הבוט יתחיל מחדש.")
 
     elif cb_data == "mgmt_settings":
         words_list = "\n".join([f"• {w}" for w in GERESH_WORDS[:15]])
