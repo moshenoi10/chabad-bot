@@ -699,7 +699,7 @@ def _run_monthly_report(chat_id, year, month):
 
 
 # ─── WhatsApp Inbox ──────────────────────────────────────
-WA_SETTINGS_FILE = "/opt/render/project/src/wa_settings.pkl"
+WA_SETTINGS_FILE = "/data/wa_settings.pkl"
 
 def load_wa_settings():
     try:
@@ -892,10 +892,10 @@ def handle_whatsapp_webhook(body):
             wa_send("🔗 שלח את לינק הכתבה למחיקה:")
             return
 
-        # 4. פקודות עריכה שדה של כתבה ממתינה
-        if txt.startswith("/כותרת ") or txt.startswith("/משנה ") or \
-           txt.startswith("/אדומה ") or txt.startswith("/גוף ") or \
-           txt.startswith("/תגיות "):
+        # 4. פקודות עריכה שדה – תומך בכמה פקודות בהודעה אחת
+        field_prefixes = ["/כותרת ", "/משנה ", "/אדומה ", "/גוף ", "/תגיות "]
+        if any(txt.startswith(p) for p in field_prefixes) or \
+           any(f"\n{p}" in txt for p in field_prefixes):
             _wa_edit_pending_field(sender, txt)
             return
 
@@ -1051,34 +1051,57 @@ def _wa_help():
     wa_send(msg)
 
 def _wa_edit_pending_field(sender, txt):
-    """עריכת שדה של כתבה ממתינה לאישור"""
+    """עריכת שדות של כתבה ממתינה – תומך במספר שדות בהודעה אחת"""
     user_id = str(SUPER_ADMIN_ID)
     draft = drafts.get(user_id, {})
     if not draft.get("title"):
         wa_send("⚠️ אין כתבה ממתינה לעריכה.")
         return
-    if txt.startswith("/כותרת "):
-        draft["title"] = txt[7:].strip()
-        wa_send(f"✅ כותרת עודכנה")
-    elif txt.startswith("/משנה "):
-        draft["subtitle"] = txt[6:].strip()
-        wa_send(f"✅ כותרת משנה עודכנה")
-    elif txt.startswith("/אדומה "):
-        draft["red_title"] = txt[7:].strip()
-        wa_send(f"✅ כותרת אדומה עודכנה")
-    elif txt.startswith("/גוף "):
-        draft["body"] = txt[5:].strip()
-        wa_send(f"✅ גוף עודכן")
-    elif txt.startswith("/תגיות "):
-        draft["tags"] = [t.strip() for t in txt[7:].split(",")]
-        wa_send(f"✅ תגיות עודכנו")
+
+    import re
+    # חלץ כל הפקודות מההודעה
+    pattern = r'/(כותרת|משנה|אדומה|גוף|תגיות)\s+(.*?)(?=\n/|\Z)'
+    matches = re.findall(pattern, txt, re.DOTALL)
+
+    if not matches:
+        # נסה שורה בודדת
+        for prefix, field in [("/כותרת ", "title"), ("/משנה ", "subtitle"),
+                               ("/אדומה ", "red_title"), ("/גוף ", "body"),
+                               ("/תגיות ", "tags")]:
+            if txt.startswith(prefix):
+                value = txt[len(prefix):].strip()
+                if field == "tags":
+                    draft[field] = [t.strip() for t in value.split(",")]
+                else:
+                    draft[field] = value
+                matches = [(prefix[1:-1], value)]
+                break
+
+    updated = []
+    field_map = {"כותרת": "title", "משנה": "subtitle",
+                 "אדומה": "red_title", "גוף": "body", "תגיות": "tags"}
+
+    for cmd, value in matches:
+        value = value.strip()
+        field = field_map.get(cmd)
+        if not field or not value:
+            continue
+        if field == "tags":
+            draft[field] = [t.strip() for t in value.split(",")]
+        else:
+            draft[field] = value
+        updated.append(cmd)
+
+    if not updated:
+        return
+
     drafts[user_id] = draft
-    wa_send(
-        f"📋 *עדכון:*\n"
-        f"*{draft.get('title','')}*\n"
-        f"{draft.get('subtitle','')[:80]}\n\n"
-        f"//אשר לפרסום | //// לביטול"
-    )
+
+    summary = "✅ עודכנו: " + ", ".join(updated) + "\n\n"
+    summary += f"*{draft.get('title','')}*\n"
+    summary += f"{draft.get('subtitle','')[:80]}\n\n"
+    summary += "//אשר לפרסום | //// לביטול"
+    wa_send(summary)
 
 def _wa_approve(sender, sender_name):
     user_id = str(SUPER_ADMIN_ID)
@@ -1101,6 +1124,19 @@ def _wa_approve(sender, sender_name):
                         site_name=SITE_NAME, title=post_title,
                         subtitle=post_subtitle, url=post_url)
                     print(f"שולח WA: {wa_msg[:100]}", flush=True)
+                    # נסה לשלוח עם תמונה
+                    post_image = resp.json().get("_links",{}).get("wp:featuredmedia",[])
+                    featured_url = None
+                    try:
+                        post_data = requests.get(f"{WP_URL}/posts/{resp.json().get('id')}",
+                            params={"_embed": True}, auth=(WP_USER, WP_PASSWORD), timeout=10)
+                        if post_data.ok:
+                            embed = post_data.json().get("_embedded",{})
+                            media = embed.get("wp:featuredmedia",[{}])
+                            if media:
+                                featured_url = media[0].get("source_url","")
+                    except:
+                        pass
                     ok = send_whatsapp(wa_msg)
                     print(f"WA שליחה: {'✅' if ok else '❌'}", flush=True)
                 drafts[user_id] = {"step": "idle", "gallery": []}
@@ -1454,10 +1490,12 @@ def _process_wa_article(buf, sender_name):
                 try:
                     r = requests.get(vid_url, timeout=60)
                     if r.ok:
-                        vimeo_url, _ = upload_to_vimeo(r.content, full_text[:50], chat_id=admin_chat)
-                        if vimeo_url:
+                        vimeo_url, vid_id = upload_to_vimeo(r.content, full_text[:50], chat_id=admin_chat)
+                        if vimeo_url and vid_id:
+                            wa_send(f"⏳ ממתין לעיבוד סרטון ב-Vimeo...")
+                            wait_for_vimeo(vid_id, max_wait=300)
                             vimeo_urls.append(vimeo_url)
-                            wa_send(f"✅ וידאו {i+1} עלה")
+                            wa_send(f"✅ וידאו {i+1} מוכן!")
                 except Exception as e:
                     print(f"שגיאה וידאו WA: {e}", flush=True)
 
@@ -1653,8 +1691,8 @@ def run_server():
 import pickle
 
 drafts = {}
-DRAFTS_FILE = "/opt/render/project/src/drafts.pkl"
-LEARNING_FILE = "/opt/render/project/src/learning.pkl"
+DRAFTS_FILE = "/data/drafts.pkl"
+LEARNING_FILE = "/data/learning.pkl"
 
 def load_learning():
     try:
@@ -2304,6 +2342,12 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
         url = draft["video_url"]
         content += f'\n\n<!-- wp:embed {{"url":"{url}","type":"video","providerNameSlug":"vimeo","responsive":true}} -->\n<figure class="wp-block-embed is-type-video is-provider-vimeo"><div class="wp-block-embed__wrapper">\n{url}\n</div></figure>\n<!-- /wp:embed -->'
 
+    # vimeo_urls – רשימת כתובות Vimeo (מוואטסאפ ומהירה)
+    for url in draft.get("vimeo_urls", []):
+        if url and url != draft.get("video_url"):
+            video_id = url.split("/")[-1].split("?")[0]
+            content += f'\n\n<div style="padding:56.25% 0 0 0;position:relative;"><iframe src="https://player.vimeo.com/video/{video_id}" frameborder="0" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe></div><script src="https://player.vimeo.com/api/player.js"></script>\n'
+
     for url in draft.get("videos", []):
         if "vimeo.com" in url:
             video_id = url.split("/")[-1].split("?")[0]
@@ -2629,12 +2673,14 @@ def build_prompt(text):
 - ללא נקודה בסוף
 
 כותרת משנה:
-- חייב להיות 2-3 משפטים מופרדים בסימן • בלבד
+- חייב להיות בדיוק 2-3 משפטים מלאים ומפורטים
+- כל משפט חייב להכיל לפחות 5-8 מילים
+- מופרדים בסימן • בלבד
 - הסימן • מופיע בין המשפטים, לא בסוף
 - ללא נקודה בסוף כל משפט – אסור לשים . לפני •
 - אסור כוכביות * או סימני עיצוב אחרים
-- דוגמה נכונה: "משפט ראשון • משפט שני • משפט שלישי"
-- דוגמה שגויה: "משפט ראשון. • משפט שני. • משפט שלישי."
+- דוגמה נכונה: "עשרות צעירים השתתפו בשבת מיוחדת • האירוע כלל התוועדות ולימוד משותף • האורחים חזרו הביתה עם חוויה בלתי נשכחת"
+- דוגמה שגויה: "שבת מיוחדת • אירוע חשוב"
 
 כותרת אדומה:
 - 2-4 מילים בלבד
@@ -5322,10 +5368,11 @@ def handle_callback(cb):
                 ]
             })
             # שלח לערוץ ו-WhatsApp ברקע
-            def _post_publish():
-                notify_channel(post_title, post_subtitle, post_url)
+            def _post_publish(pid=post_id, pt=post_title, ps=post_subtitle, pu=post_url):
+                notify_channel(pt, ps, pu)
                 if os.environ.get("WHATSAPP_GROUP_ID") and whatsapp_settings["active"]:
-                    wa_msg = f'*עדכוני חב״ד - {post_title}*\n{post_subtitle}\n\n👇 לכתבה המלאה לחצו\n{post_url}'
+                    wa_msg = WHATSAPP_MSG_FORMAT.format(
+                        site_name=SITE_NAME, title=pt, subtitle=ps, url=pu)
                     send_whatsapp(wa_msg)
             threading.Thread(target=_post_publish, daemon=True).start()
         else:
