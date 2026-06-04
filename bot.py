@@ -711,430 +711,611 @@ def get_wa_allowed_senders():
     env = os.environ.get("WA_ALLOWED_SENDERS", "")
     return [s.strip() for s in env.split(",") if s.strip()]
 
+# ─── WhatsApp Inbox ──────────────────────────────────────
+wa_article_buffer = {}   # sender → {texts, images, videos, pdfs, audio, started}
+wa_edit_sessions  = {}   # sender → {post_id, mode, step, images, videos, pdfs}
+
+def get_wa_allowed_senders():
+    if whatsapp_settings.get("allowed_senders"):
+        return whatsapp_settings["allowed_senders"]
+    env = os.environ.get("WA_ALLOWED_SENDERS", "")
+    return [s.strip() for s in env.split(",") if s.strip()]
+
+def wa_send(msg):
+    """שלח הודעה לקבוצה"""
+    send_whatsapp(msg)
+
+def wa_is_drive_link(text):
+    return "drive.google.com" in text or "docs.google.com" in text
+
+def wa_extract_drive_media(link):
+    """חלץ מדיה מגוגל דרייב – מחזיר רשימת URLs"""
+    try:
+        return extract_google_drive_media(link)
+    except Exception as e:
+        print(f"שגיאה דרייב WA: {e}", flush=True)
+        return []
+
 def handle_whatsapp_webhook(body):
-    """מטפל בהודעות נכנסות מ-Green API"""
+    """נקודת כניסה – מנתב הודעות נכנסות מ-Green API"""
     try:
         if not whatsapp_settings.get("inbox_active"):
             return
 
-        msg_type = body.get("typeWebhook", "")
-
-        # טיפול בלחיצת כפתור
-        if msg_type == "incomingMessageReceived":
-            msg_data = body.get("messageData", {})
-            button_resp = msg_data.get("buttonsResponseMessage", {})
-            if button_resp:
-                button_id = button_resp.get("selectedButtonId", "")
-                sender = body.get("senderData", {}).get("sender", "")
-                sender_number = sender.replace("@c.us","").replace("@s.whatsapp.net","")
-                allowed = get_wa_allowed_senders()
-                if allowed and sender_number not in allowed:
-                    return
-                _handle_wa_button(button_id, sender_number)
-                return
-        if msg_type != "incomingMessageReceived":
+        if body.get("typeWebhook") != "incomingMessageReceived":
             return
 
-        instance_data = body.get("instanceData", {})
-        sender_data = body.get("senderData", {})
+        sender_data  = body.get("senderData", {})
         message_data = body.get("messageData", {})
 
-        sender = sender_data.get("sender", "")  # מספר@c.us
-        chat_id_wa = sender_data.get("chatId", "")  # קבוצה@g.us
-        sender_name = sender_data.get("senderName", "")
+        sender       = sender_data.get("sender", "")
+        chat_id_wa   = sender_data.get("chatId", "")
+        sender_name  = sender_data.get("senderName", "")
+        sender_number = sender.replace("@c.us","").replace("@s.whatsapp.net","")
 
-        # בדוק שזה מהקבוצה הנכונה
+        # בדוק קבוצה
         target_group = os.environ.get("WHATSAPP_GROUP_ID", "")
         if target_group and chat_id_wa != target_group:
             return
 
         # בדוק הרשאה
         allowed = get_wa_allowed_senders()
-        sender_number = sender.replace("@c.us", "").replace("@s.whatsapp.net", "")
         if allowed and sender_number not in allowed:
-            print(f"WA webhook: שולח לא מורשה {sender_number}", flush=True)
             return
 
-        # חלץ תוכן לפי המבנה האמיתי של Green API
-        msg_type = message_data.get("typeMessage", "")
-        text_msg = ""
-        image_url = ""
-        video_url = ""
-        caption = ""
+        # חלץ תוכן
+        msg_type   = message_data.get("typeMessage", "")
+        text_msg   = ""
+        image_url  = ""
+        video_url  = ""
+        file_url   = ""
+        file_name  = ""
 
         if msg_type == "textMessage":
             text_msg = message_data.get("textMessageData", {}).get("textMessage", "")
         elif msg_type == "extendedTextMessage":
             text_msg = message_data.get("extendedTextMessageData", {}).get("text", "")
-        elif msg_type in ("imageMessage", "videoMessage", "documentMessage",
-                          "audioMessage", "pttMessage"):
-            file_data = message_data.get("fileMessageData", {})
-            caption = file_data.get("caption", "")
-            url = file_data.get("downloadUrl", "")
-            file_name = file_data.get("fileName", "")
+        elif msg_type in ("imageMessage","videoMessage","documentMessage","audioMessage","pttMessage"):
+            fd = message_data.get("fileMessageData", {})
+            url      = fd.get("downloadUrl","")
+            file_name = fd.get("fileName","")
+            caption  = fd.get("caption","")
+            if caption:
+                text_msg = caption
             if msg_type == "imageMessage":
                 image_url = url
             elif msg_type == "videoMessage":
                 video_url = url
-            elif msg_type == "documentMessage":
-                if file_name.lower().endswith(".pdf"):
-                    buf.setdefault("pdfs", []).append({"url": url, "name": file_name})
-                else:
-                    buf.setdefault("docs", []).append({"url": url, "name": file_name})
-            elif msg_type in ("audioMessage", "pttMessage"):
-                buf.setdefault("audio", []).append({"url": url})
-            if caption:
-                text_msg = caption
-        # זיהוי פקודות
-        is_cancel = text_msg.strip() == "////"
-        is_separator = text_msg.strip() == "//"
-        is_status = text_msg.strip() == "//סטטוס"
-        is_help = text_msg.strip() == "//עזרה"
-        is_approve = text_msg.strip() == "//אשר"
-        is_edit_cmd = text_msg.strip() == "//ערוך"
-        is_finish = text_msg.strip() == "/סיום"
+            elif msg_type in ("documentMessage","audioMessage","pttMessage"):
+                file_url = url
 
-        # פקודות עריכה שדות
-        field_edit = None
-        txt_stripped = text_msg.strip()
-        if txt_stripped.startswith("/ראשית "):
-            field_edit = ("title", txt_stripped[7:].strip())
-        elif txt_stripped.startswith("/משנה "):
-            field_edit = ("subtitle", txt_stripped[6:].strip())
-        elif txt_stripped.startswith("/אדומה "):
-            field_edit = ("red_title", txt_stripped[7:].strip())
-        elif txt_stripped.startswith("/גוף "):
-            field_edit = ("body", txt_stripped[5:].strip())
-        elif txt_stripped.startswith("/תגיות "):
-            tags_text = txt_stripped[7:].strip()
-            field_edit = ("tags", [t.strip() for t in tags_text.split(",")])
-        elif txt_stripped.startswith("/קטגוריות "):
-            field_edit = ("categories_text", txt_stripped[10:].strip())
+        txt = text_msg.strip()
+        print(f"📱 WA {sender_name}: {txt[:50] or msg_type}", flush=True)
 
-        # זיהוי מצב עריכה פעיל
+        # ─── נתב לפי מצב ────────────────────────────────────
         edit_session = wa_edit_sessions.get(sender)
-        edit_mode = edit_session.get("mode") if edit_session else None
 
-        # אתחל buffer
-        if sender not in wa_article_buffer:
-            wa_article_buffer[sender] = {"texts": [], "images": [], "videos": [], "started": False}
-
-        buf = wa_article_buffer[sender]
-
-        # פקודת עזרה
-        if is_help:
-            send_whatsapp(
-                "📖 *פקודות זמינות:*\n\n"
-                "*שליחת כתבה:*\n"
-                "// – התחלה\n"
-                "טקסט + תמונות + וידאו\n"
-                "// – סיום ועיבוד AI\n\n"
-                "*עריכה אחרי עיבוד:*\n"
-                "/ראשית [טקסט] – כותרת ראשית\n"
-                "/משנה [טקסט] – כותרת משנה\n"
-                "/אדומה [טקסט] – כותרת אדומה\n"
-                "/גוף [טקסט] – גוף הכתבה\n"
-                "/תגיות [מילה1, מילה2] – תגיות\n"
-                "/קטגוריות [שם] – קטגוריות\n\n"
-                "*פרסום:*\n"
-                "//אשר – פרסם\n"
-                "//ערוך – ערוך בטלגרם\n"
-                "//// – בטל\n\n"
-                "*כלים:*\n"
-                "//סטטוס – כתבות היום\n"
-                "//עזרה – הודעה זו"
-            )
-            return
-
-        # פקודת סטטוס
-        if is_status:
-            try:
-                from datetime import datetime
-                today = datetime.now().strftime("%Y-%m-%dT00:00:00")
-                resp = requests.get(f"{WP_URL}/posts",
-                    params={"after": today, "per_page": 100, "status": "publish",
-                            "_fields": "id,title"},
-                    auth=(WP_USER, WP_PASSWORD), timeout=10)
-                posts = resp.json() if resp.ok else []
-                send_whatsapp(f"📊 *סטטוס היום:*\n\n✅ {len(posts)} כתבות פורסמו היום")
-            except:
-                send_whatsapp("❌ לא הצלחתי למשוך נתונים")
-            return
-
-        if is_approve:
-            _handle_wa_button("wa_approve", sender_number)
-            return
-
-        if is_edit_cmd:
-            _handle_wa_button("wa_edit", sender_number)
-            return
-
-        # ─── /ערוך [לינק] ───────────────────────────────────────
-        if txt_stripped.startswith("/ערוך"):
-            url_or_id = txt_stripped[5:].strip()
-            if not url_or_id:
-                send_whatsapp("שלח: /ערוך [לינק לכתבה]\nלדוגמה: /ערוך https://chabadupdates.com/archives/1234")
-                return
-            # חלץ ID מלינק
-            post_id = url_or_id.rstrip("/").split("/")[-1]
-            try:
-                resp = requests.get(f"{WP_URL}/posts/{post_id}",
-                    auth=(WP_USER, WP_PASSWORD), timeout=10)
-                if resp.ok:
-                    post = resp.json()
-                    title = post["title"]["rendered"]
-                    wa_edit_sessions[sender] = {
-                        "post_id": post_id,
-                        "mode": None,
-                        "images": [],
-                        "videos": [],
-                        "pdfs": []
-                    }
-                    send_whatsapp(
-                        f"✅ *כתבה נמצאה:*\n{title}\n\n"
-                        f"*פקודות עריכה:*\n"
-                        f"/כותרת – כותרת ראשית\n"
-                        f"/משנה – כותרת משנה\n"
-                        f"/אדומה – כותרת אדומה\n"
-                        f"/תמונה – החלף תמונה ראשית\n"
-                        f"/מדיה – הוסף תמונות/וידאו/PDF\n"
-                        f"/סיום – שמור ופרסם שינויים\n"
-                        f"//// – בטל עריכה"
-                    )
-                else:
-                    send_whatsapp("❌ כתבה לא נמצאה. בדוק את הלינק.")
-            except Exception as e:
-                send_whatsapp(f"❌ שגיאה: {e}")
-            return
-
-        # ─── טיפול במצב עריכה פעיל ─────────────────────────────
+        # 1. מצב עריכה פעיל
         if edit_session:
-            post_id = edit_session["post_id"]
-
-            # פקודות מצב
-            if txt_stripped == "/כותרת":
-                edit_session["mode"] = "title"
-                wa_edit_sessions[sender] = edit_session
-                send_whatsapp("✏️ שלח את הכותרת החדשה:")
-                return
-            elif txt_stripped == "/משנה":
-                edit_session["mode"] = "subtitle"
-                wa_edit_sessions[sender] = edit_session
-                send_whatsapp("✏️ שלח את כותרת המשנה החדשה:")
-                return
-            elif txt_stripped == "/אדומה":
-                edit_session["mode"] = "red_title"
-                wa_edit_sessions[sender] = edit_session
-                send_whatsapp("✏️ שלח את הכותרת האדומה (2-4 מילים):")
-                return
-            elif txt_stripped == "/תמונה":
-                edit_session["mode"] = "main_image"
-                wa_edit_sessions[sender] = edit_session
-                send_whatsapp("🖼 שלח את התמונה הראשית החדשה:")
-                return
-            elif txt_stripped == "/מדיה":
-                edit_session["mode"] = "media"
-                wa_edit_sessions[sender] = edit_session
-                send_whatsapp("📎 שלח תמונות/וידאו/PDF. שלח /סיום לסיום:")
-                return
-            elif txt_stripped == "////":
-                del wa_edit_sessions[sender]
-                send_whatsapp("❌ עריכה בוטלה.")
-                return
-            elif txt_stripped == "/סיום":
-                _finish_wa_edit(sender, edit_session, sender_name)
-                return
-
-            # קבלת תוכן לפי מצב
-            if edit_mode == "title" and text_msg:
-                _update_wp_field(post_id, "title", text_msg)
-                send_whatsapp(f"✅ כותרת עודכנה:\n{text_msg}")
-                edit_session["mode"] = None
-                wa_edit_sessions[sender] = edit_session
-                return
-
-            elif edit_mode == "subtitle" and text_msg:
-                _update_wp_field(post_id, "excerpt", text_msg)
-                send_whatsapp(f"✅ כותרת משנה עודכנה")
-                edit_session["mode"] = None
-                wa_edit_sessions[sender] = edit_session
-                return
-
-            elif edit_mode == "red_title" and text_msg:
-                _update_wp_meta(post_id, "tag_label", text_msg)
-                send_whatsapp(f"✅ כותרת אדומה עודכנה: {text_msg}")
-                edit_session["mode"] = None
-                wa_edit_sessions[sender] = edit_session
-                return
-
-            elif edit_mode == "main_image" and image_url:
-                edit_session["main_image"] = image_url
-                wa_edit_sessions[sender] = edit_session
-                send_whatsapp("✅ תמונה ראשית נשמרה – שלח /סיום לפרסום")
-                return
-
-            elif edit_mode == "media":
-                if image_url:
-                    edit_session["images"].append(image_url)
-                    send_whatsapp(f"✅ תמונה נוספה ({len(edit_session['images'])} סה\"כ)")
-                    wa_edit_sessions[sender] = edit_session
-                    return
-                elif video_url:
-                    edit_session["videos"].append(video_url)
-                    send_whatsapp(f"✅ וידאו נוסף ({len(edit_session['videos'])} סה\"כ)")
-                    wa_edit_sessions[sender] = edit_session
-                    return
-                elif msg_type == "documentMessage":
-                    file_data = message_data.get("fileMessageData", {})
-                    pdf_url = file_data.get("downloadUrl", "")
-                    if pdf_url:
-                        edit_session["pdfs"].append(pdf_url)
-                        send_whatsapp(f"✅ קובץ נוסף ({len(edit_session['pdfs'])} סה\"כ)")
-                        wa_edit_sessions[sender] = edit_session
-                        return
-
-        if is_cancel:
-            user_id = str(SUPER_ADMIN_ID)
-            draft = drafts.get(user_id, {})
-            if not draft.get("title"):
-                send_whatsapp("⚠️ אין כתבה ממתינה לעריכה. שלח כתבה קודם.")
-                return
-            field, value = field_edit
-            if field == "categories_text":
-                # חפש קטגוריות לפי שם
-                cats, cat_names = auto_select_categories(value, value)
-                draft["categories"] = cats
-                draft["cat_names"] = cat_names
-                send_whatsapp(f"✅ קטגוריות עודכנו: {', '.join(cat_names)}")
-            elif field == "tags":
-                draft["tags"] = value
-                send_whatsapp(f"✅ תגיות עודכנו: {', '.join(value)}")
-            else:
-                draft[field] = value
-                field_names = {"title": "כותרת", "subtitle": "כותרת משנה",
-                              "red_title": "כותרת אדומה", "body": "גוף"}
-                send_whatsapp(f"✅ {field_names.get(field, field)} עודכן!")
-            drafts[user_id] = draft
-            # שלח תצוגה מקדימה מעודכנת
-            send_whatsapp(
-                f"📋 *עדכון נוכחי:*\n\n"
-                f"*{draft.get('title','')}*\n"
-                f"{draft.get('subtitle','')[:100]}\n"
-                f"_{draft.get('red_title','')}_\n\n"
-                f"📝 //אשר לפרסום | //// לביטול"
-            )
+            _handle_wa_edit(sender, sender_name, edit_session,
+                           txt, text_msg, image_url, video_url, file_url, file_name, msg_type)
             return
 
-        if is_cancel:
-            if buf["started"]:
-                wa_article_buffer[sender] = {"texts": [], "images": [], "videos": [], "started": False}
-                send_whatsapp(f"❌ הכתבה בוטלה")
-                print(f"WA: {sender_name} ביטל כתבה", flush=True)
+        # 2. פקודות גלובליות
+        if txt == "//":
+            _wa_start_article(sender, sender_name)
+            return
+        if txt == "////":
+            _wa_cancel(sender)
+            return
+        if txt == "//אשר":
+            _wa_approve(sender, sender_name)
+            return
+        if txt == "//סטטוס":
+            _wa_status()
+            return
+        if txt == "//עזרה":
+            _wa_help()
+            return
+        if txt == "/ערוך":
+            wa_edit_sessions[sender] = {"step": "wait_link", "mode": None,
+                                        "images":[], "videos":[], "pdfs":[]}
+            wa_send("🔗 שלח את לינק הכתבה לעריכה:")
+            return
+        if txt == "/מחק":
+            wa_edit_sessions[sender] = {"step": "wait_delete_link"}
+            wa_send("🔗 שלח את לינק הכתבה למחיקה:")
             return
 
-        if is_separator:
-            if not buf["started"]:
-                # התחלת כתבה
-                buf["started"] = True
-                buf["texts"] = []
-                buf["images"] = []
-                buf["videos"] = []
-                print(f"WA: {sender_name} התחיל כתבה", flush=True)
-            else:
-                # סוף כתבה – שלח לעיבוד
-                if buf["texts"] or buf["images"]:
-                    print(f"WA: {sender_name} סיים כתבה – שולח לעיבוד", flush=True)
-                    _process_wa_article(buf.copy(), sender_name)
-                # אפס buffer
-                wa_article_buffer[sender] = {"texts": [], "images": [], "videos": [], "started": False}
+        # 3. פקודות עריכה שדה של כתבה ממתינה
+        if txt.startswith("/כותרת ") or txt.startswith("/משנה ") or            txt.startswith("/אדומה ") or txt.startswith("/גוף ") or            txt.startswith("/תגיות "):
+            _wa_edit_pending_field(sender, txt)
             return
 
-        # אם לא התחיל עם // – התעלם
-        if not buf["started"]:
+        # 4. כתבה פתוחה – אסוף תוכן
+        buf = wa_article_buffer.get(sender)
+        if buf and buf.get("started"):
+            _wa_collect(sender, sender_name, buf, txt, text_msg,
+                       image_url, video_url, file_url, file_name, msg_type)
             return
 
-        # הוסף תוכן ל-buffer
-        if text_msg:
-            buf["texts"].append(text_msg)
-
-        if image_url:
-            buf["images"].append({"url": image_url, "caption": caption})
-
-        if video_url:
-            buf["videos"].append({"url": video_url, "caption": caption})
-
-        print(f"WA buffer {sender_name}: {len(buf['texts'])} טקסטים, "
-              f"{len(buf['images'])} תמונות, {len(buf['videos'])} וידאו, "
-              f"{len(buf.get('pdfs',[]))} PDF, {len(buf.get('audio',[]))} שמע", flush=True)
+        # 5. הודעה לא מזוהה
+        if txt and not txt.startswith("/"):
+            pass  # התעלם מהודעות רגילות שאינן פקודות
 
     except Exception as e:
-        print(f"שגיאה WA webhook: {e}", flush=True)
+        print(f"שגיאה handle_whatsapp_webhook: {e}", flush=True)
+
+
+# ─── פונקציות עזר ────────────────────────────────────────
+
+def _wa_start_article(sender, sender_name):
+    buf = wa_article_buffer.get(sender, {})
+    if buf.get("started"):
+        wa_send("⚠️ כבר יש כתבה פתוחה. שלח //// לביטול קודם.")
+        return
+    wa_article_buffer[sender] = {
+        "texts":[], "images":[], "videos":[], "pdfs":[], "audio":[], "started": True
+    }
+    wa_send("✅ כתבה חדשה נפתחה!\nשלח טקסט, תמונות, וידאו, PDF, או לינק גוגל דרייב.\nשלח // לסיום.")
+    print(f"WA: {sender_name} התחיל כתבה", flush=True)
+
+def _wa_cancel(sender):
+    if sender in wa_article_buffer:
+        del wa_article_buffer[sender]
+    if sender in wa_edit_sessions:
+        del wa_edit_sessions[sender]
+    wa_send("❌ בוטל.")
+
+def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, file_url, file_name, msg_type):
+    """אוסף תוכן לכתבה פתוחה"""
+    # סיום כתבה
+    if txt == "//":
+        if not buf["texts"] and not buf["images"] and not buf["videos"]:
+            wa_send("⚠️ הכתבה ריקה. שלח תוכן קודם.")
+            return
+        wa_article_buffer[sender]["started"] = False
+        wa_send("⏳ מעבד עם AI...")
+        threading.Thread(target=_process_wa_article,
+                        args=(buf.copy(), sender_name), daemon=True).start()
+        wa_article_buffer[sender] = {"texts":[], "images":[], "videos":[], "pdfs":[], "audio":[], "started": False}
+        return
+
+    # זהה דרייב
+    if wa_is_drive_link(text_msg):
+        wa_send("⏳ מוריד מגוגל דרייב...")
+        media = wa_extract_drive_media(text_msg)
+        for m in media:
+            if m.get("type") == "image":
+                buf["images"].append(m["url"])
+            elif m.get("type") == "video":
+                buf["videos"].append(m["url"])
+        wa_send(f"✅ דרייב: {len(media)} פריטים נוספו")
+        return
+
+    # תוכן רגיל
+    added = []
+    if text_msg and not text_msg.startswith("/"):
+        buf["texts"].append(text_msg)
+        added.append("טקסט")
+    if image_url:
+        buf["images"].append(image_url)
+        added.append(f"תמונה ({len(buf['images'])} סהכ)")
+    if video_url:
+        buf["videos"].append(video_url)
+        added.append(f"וידאו ({len(buf['videos'])} סהכ)")
+    if file_url:
+        if file_name.lower().endswith(".pdf"):
+            buf["pdfs"].append({"url": file_url, "name": file_name})
+            added.append("PDF")
+        else:
+            buf["audio"].append(file_url)
+            added.append("קובץ")
+    if added:
+        print(f"WA buffer {sender_name}: {', '.join(added)}", flush=True)
+
+def _wa_status():
+    try:
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%dT00:00:00")
+        resp = requests.get(f"{WP_URL}/posts",
+            params={"after": today, "per_page": 100, "status": "publish", "_fields": "id"},
+            auth=(WP_USER, WP_PASSWORD), timeout=10)
+        count = len(resp.json()) if resp.ok else "?"
+        wa_send(f"📊 *סטטוס:* {count} כתבות פורסמו היום")
+    except:
+        wa_send("❌ לא הצלחתי למשוך נתונים")
+
+def _wa_help():
+    wa_send(
+        "📖 *פקודות:*\n\n"
+        "*העלאת כתבה:*\n"
+        "// – התחלה\n"
+        "שלח טקסט/תמונות/וידאו/PDF/דרייב\n"
+        "// – סיום + עיבוד AI\n\n"
+        "*אחרי עיבוד:*\n"
+        "/כותרת [טקסט]\n"
+        "/משנה [טקסט]\n"
+        "/אדומה [טקסט]\n"
+        "/גוף [טקסט]\n"
+        "/תגיות [מ1, מ2]\n"
+        "//אשר – פרסם\n"
+        "//// – בטל\n\n"
+        "*עריכת כתבה קיימת:*\n"
+        "/ערוך → שלח לינק\n"
+        "/מחק → שלח לינק\n\n"
+        "*כלים:*\n"
+        "//סטטוס | //עזרה"
+    )
+
+def _wa_edit_pending_field(sender, txt):
+    """עריכת שדה של כתבה ממתינה לאישור"""
+    user_id = str(SUPER_ADMIN_ID)
+    draft = drafts.get(user_id, {})
+    if not draft.get("title"):
+        wa_send("⚠️ אין כתבה ממתינה לעריכה.")
+        return
+    if txt.startswith("/כותרת "):
+        draft["title"] = txt[7:].strip()
+        wa_send(f"✅ כותרת עודכנה")
+    elif txt.startswith("/משנה "):
+        draft["subtitle"] = txt[6:].strip()
+        wa_send(f"✅ כותרת משנה עודכנה")
+    elif txt.startswith("/אדומה "):
+        draft["red_title"] = txt[7:].strip()
+        wa_send(f"✅ כותרת אדומה עודכנה")
+    elif txt.startswith("/גוף "):
+        draft["body"] = txt[5:].strip()
+        wa_send(f"✅ גוף עודכן")
+    elif txt.startswith("/תגיות "):
+        draft["tags"] = [t.strip() for t in txt[7:].split(",")]
+        wa_send(f"✅ תגיות עודכנו")
+    drafts[user_id] = draft
+    wa_send(
+        f"📋 *עדכון:*\n"
+        f"*{draft.get('title','')}*\n"
+        f"{draft.get('subtitle','')[:80]}\n\n"
+        f"//אשר לפרסום | //// לביטול"
+    )
+
+def _wa_approve(sender, sender_name):
+    user_id = str(SUPER_ADMIN_ID)
+    draft = drafts.get(user_id, {})
+    if not draft.get("title"):
+        wa_send("⚠️ אין כתבה ממתינה לפרסום.")
+        return
+    wa_send("⏳ מפרסם...")
+    def _pub():
+        try:
+            resp = publish_to_wp(draft, "publish")
+            if resp and resp.status_code in (200, 201):
+                post_url = resp.json().get("link","")
+                post_title = draft.get("title","")
+                post_subtitle = draft.get("subtitle","")
+                # הפצה
+                notify_channel(post_title, post_subtitle, post_url)
+                if whatsapp_settings.get("active"):
+                    wa_msg = WHATSAPP_MSG_FORMAT.format(
+                        site_name=SITE_NAME, title=post_title,
+                        subtitle=post_subtitle, url=post_url)
+                    send_whatsapp(wa_msg)
+                drafts[user_id] = {"step": "idle", "gallery": []}
+                send_message(int(SUPER_ADMIN_ID), f"✅ <b>פורסם מוואטסאפ!</b>\n🔗 {post_url}")
+            else:
+                wa_send("❌ שגיאה בפרסום. נסה דרך טלגרם.")
+        except Exception as e:
+            wa_send(f"❌ שגיאה: {e}")
+    threading.Thread(target=_pub, daemon=True).start()
+
+
+# ─── עריכת כתבה קיימת ────────────────────────────────────
+
+def _handle_wa_edit(sender, sender_name, session, txt, text_msg,
+                    image_url, video_url, file_url, file_name, msg_type):
+    """מנהל מצב עריכת כתבה קיימת"""
+    step = session.get("step")
+    post_id = session.get("post_id")
+
+    # שלב 1 – המתנה ללינק עריכה
+    if step == "wait_link":
+        url_or_id = txt.rstrip("/").split("/")[-1]
+        if not url_or_id.isdigit() and "chabadupdates.com" not in txt:
+            wa_send("⚠️ שלח לינק תקין לכתבה")
+            return
+        pid = url_or_id if url_or_id.isdigit() else txt.rstrip("/").split("/")[-1]
+        try:
+            resp = requests.get(f"{WP_URL}/posts/{pid}",
+                auth=(WP_USER, WP_PASSWORD), timeout=10)
+            if resp.ok:
+                post = resp.json()
+                title = post["title"]["rendered"]
+                session["post_id"] = pid
+                session["step"] = "editing"
+                wa_edit_sessions[sender] = session
+                wa_send(
+                    f"✅ *{title}*\n\n"
+                    f"*פקודות עריכה:*\n"
+                    f"/כותרת [טקסט] – כותרת ראשית\n"
+                    f"/משנה [טקסט] – כותרת משנה\n"
+                    f"/אדומה [טקסט] – כותרת אדומה\n"
+                    f"/גוף [טקסט] – גוף הכתבה\n"
+                    f"/תמונה – תמונה ראשית\n"
+                    f"/מדיה – הוסף תמונות/וידאו/PDF/דרייב\n"
+                    f"/סיום – שמור הכל\n"
+                    f"//// – בטל"
+                )
+            else:
+                wa_send("❌ כתבה לא נמצאה")
+                del wa_edit_sessions[sender]
+        except Exception as e:
+            wa_send(f"❌ שגיאה: {e}")
+        return
+
+    # שלב 1ב – המתנה ללינק מחיקה
+    if step == "wait_delete_link":
+        pid = txt.rstrip("/").split("/")[-1]
+        try:
+            resp = requests.get(f"{WP_URL}/posts/{pid}",
+                auth=(WP_USER, WP_PASSWORD), timeout=10)
+            if resp.ok:
+                title = resp.json()["title"]["rendered"]
+                session["post_id"] = pid
+                session["step"] = "wait_delete_confirm"
+                session["delete_title"] = title
+                wa_edit_sessions[sender] = session
+                wa_send(f"⚠️ למחוק את:\n*{title}*\n\n//אשר לאישור | //// לביטול")
+            else:
+                wa_send("❌ כתבה לא נמצאה")
+                del wa_edit_sessions[sender]
+        except Exception as e:
+            wa_send(f"❌ שגיאה: {e}")
+        return
+
+    # אישור מחיקה
+    if step == "wait_delete_confirm":
+        if txt == "//אשר":
+            try:
+                requests.delete(f"{WP_URL}/posts/{post_id}?force=true",
+                    auth=(WP_USER, WP_PASSWORD), timeout=10)
+                wa_send(f"✅ הכתבה נמחקה!")
+                send_message(int(SUPER_ADMIN_ID),
+                    f"🗑️ <b>כתבה נמחקה מוואטסאפ</b>\nID: {post_id}")
+            except Exception as e:
+                wa_send(f"❌ שגיאה: {e}")
+            del wa_edit_sessions[sender]
+        elif txt == "////":
+            del wa_edit_sessions[sender]
+            wa_send("❌ ביטול.")
+        return
+
+    # שלב עריכה פעיל
+    if step == "editing":
+
+        if txt == "////":
+            del wa_edit_sessions[sender]
+            wa_send("❌ עריכה בוטלה.")
+            return
+
+        if txt == "/סיום":
+            threading.Thread(target=_finish_wa_edit,
+                            args=(sender, session, sender_name), daemon=True).start()
+            return
+
+        if txt == "/תמונה":
+            session["mode"] = "main_image"
+            wa_edit_sessions[sender] = session
+            wa_send("🖼 שלח את התמונה הראשית (תמונה או לינק דרייב):")
+            return
+
+        if txt == "/מדיה":
+            session["mode"] = "media"
+            wa_edit_sessions[sender] = session
+            wa_send("📎 שלח תמונות/וידאו/PDF/לינק דרייב. שלח /סיום לסיום.")
+            return
+
+        # עריכת שדות טקסט
+        for prefix, field in [("/כותרת ", "title"), ("/משנה ", "excerpt"),
+                               ("/אדומה ", "meta"), ("/גוף ", "content")]:
+            if txt.startswith(prefix):
+                value = txt[len(prefix):].strip()
+                wa_send(f"⏳ מעדכן...")
+                if field == "meta":
+                    _update_wp_meta(post_id, "tag_label", value)
+                elif field == "content":
+                    _update_wp_field(post_id, "content", value)
+                else:
+                    _update_wp_field(post_id, field, value)
+                wa_send(f"✅ עודכן!")
+                return
+
+        # קבלת מדיה לפי מצב
+        mode = session.get("mode")
+
+        if mode == "main_image":
+            if wa_is_drive_link(text_msg):
+                wa_send("⏳ מוריד מדרייב...")
+                media = wa_extract_drive_media(text_msg)
+                imgs = [m["url"] for m in media if m.get("type") == "image"]
+                if imgs:
+                    session["main_image_url"] = imgs[0]
+                    session["mode"] = None
+                    wa_edit_sessions[sender] = session
+                    wa_send("✅ תמונה ראשית נשמרה מדרייב. שלח /סיום.")
+                else:
+                    wa_send("❌ לא נמצאו תמונות בדרייב")
+            elif image_url:
+                session["main_image_url"] = image_url
+                session["mode"] = None
+                wa_edit_sessions[sender] = session
+                wa_send("✅ תמונה ראשית נשמרה. שלח /סיום.")
+            return
+
+        if mode == "media":
+            added = []
+            if wa_is_drive_link(text_msg):
+                wa_send("⏳ מוריד מדרייב...")
+                media = wa_extract_drive_media(text_msg)
+                for m in media:
+                    if m.get("type") == "image":
+                        session["images"].append(m["url"])
+                    elif m.get("type") == "video":
+                        session["videos"].append(m["url"])
+                added.append(f"{len(media)} פריטים מדרייב")
+            if image_url:
+                session["images"].append(image_url)
+                added.append(f"תמונה ({len(session['images'])} סהכ)")
+            if video_url:
+                session["videos"].append(video_url)
+                added.append(f"וידאו ({len(session['videos'])} סהכ)")
+            if file_url and file_name.lower().endswith(".pdf"):
+                session["pdfs"].append({"url": file_url, "name": file_name})
+                added.append("PDF")
+            if added:
+                wa_edit_sessions[sender] = session
+                wa_send(f"✅ {', '.join(added)} נוסף/ו. המשך או שלח /סיום.")
+            return
+
+
+def _finish_wa_edit(sender, session, sender_name):
+    """שמור שינויי עריכה ועדכן כתבה"""
+    post_id = session.get("post_id")
+    admin_chat = int(SUPER_ADMIN_ID)
+    wa_send("⏳ מעדכן כתבה...")
+
+    try:
+        # תמונה ראשית
+        if session.get("main_image_url"):
+            wa_send("⏳ מעלה תמונה ראשית...")
+            r = requests.get(session["main_image_url"], timeout=30)
+            if r.ok:
+                img_id = upload_image_to_wp(r.content, f"main_{post_id}.jpg")
+                if img_id:
+                    requests.post(f"{WP_URL}/posts/{post_id}",
+                        json={"featured_media": img_id},
+                        auth=(WP_USER, WP_PASSWORD), timeout=10)
+                    wa_send(f"✅ תמונה ראשית עודכנה")
+
+        # תמונות גלריה
+        gallery_ids = []
+        if session.get("images"):
+            wa_send(f"⏳ מעלה {len(session['images'])} תמונות...")
+            for i, img_url in enumerate(session["images"]):
+                r = requests.get(img_url, timeout=30)
+                if r.ok:
+                    img_id = upload_image_to_wp(r.content, f"gallery_{post_id}_{i}.jpg")
+                    if img_id:
+                        gallery_ids.append(img_id)
+            if gallery_ids:
+                wa_send(f"✅ {len(gallery_ids)} תמונות עלו")
+
+        # וידאו ל-Vimeo
+        vimeo_embeds = []
+        if session.get("videos"):
+            wa_send(f"⏳ מעלה {len(session['videos'])} סרטונים ל-Vimeo...")
+            for i, vid_url in enumerate(session["videos"]):
+                wa_send(f"⏳ וידאו {i+1}/{len(session['videos'])}...")
+                r = requests.get(vid_url, timeout=60)
+                if r.ok:
+                    vimeo_url, _ = upload_to_vimeo(r.content, f"כתבה {post_id}", chat_id=admin_chat)
+                    if vimeo_url:
+                        vimeo_embeds.append(vimeo_url)
+                        wa_send(f"✅ וידאו {i+1} עלה")
+
+        # עדכן תוכן עם vimeo
+        if vimeo_embeds or gallery_ids:
+            post_resp = requests.get(f"{WP_URL}/posts/{post_id}",
+                auth=(WP_USER, WP_PASSWORD), timeout=10)
+            if post_resp.ok:
+                current = post_resp.json().get("content",{}).get("raw","")
+                for v in vimeo_embeds:
+                    current += f'\n\n[video src="{v}"]'
+                update_data = {"content": current}
+                if gallery_ids:
+                    update_data["meta"] = {"gallery_ids": gallery_ids}
+                requests.post(f"{WP_URL}/posts/{post_id}",
+                    json=update_data, auth=(WP_USER, WP_PASSWORD), timeout=10)
+
+        del wa_edit_sessions[sender]
+        wa_send("✅ *הכתבה עודכנה בהצלחה!*")
+        send_message(admin_chat,
+            f"✅ <b>כתבה עודכנה מוואטסאפ</b>\n"
+            f"🖼 {len(gallery_ids)} תמונות\n"
+            f"🎬 {len(vimeo_embeds)} וידאו")
+
+    except Exception as e:
+        wa_send(f"❌ שגיאה: {e}")
+        print(f"שגיאה _finish_wa_edit: {e}", flush=True)
+
+
+def _update_wp_field(post_id, field, value):
+    try:
+        requests.post(f"{WP_URL}/posts/{post_id}",
+            json={field: value}, auth=(WP_USER, WP_PASSWORD), timeout=10)
+    except Exception as e:
+        print(f"שגיאה עדכון WP: {e}", flush=True)
+
+def _update_wp_meta(post_id, meta_key, value):
+    try:
+        requests.post(f"{WP_URL}/posts/{post_id}",
+            json={"meta": {meta_key: value}},
+            auth=(WP_USER, WP_PASSWORD), timeout=10)
+    except Exception as e:
+        print(f"שגיאה עדכון meta: {e}", flush=True)
+
 
 def _process_wa_article(buf, sender_name):
     """מעבד כתבה מוואטסאפ ושולח לאישור בטלגרם"""
     try:
-        admin_chat = SUPER_ADMIN_ID
-        full_text = "\n\n".join(buf["texts"])
-
+        admin_chat = int(SUPER_ADMIN_ID)
+        full_text = "\n\n".join(buf.get("texts", []))
         if not full_text:
-            send_message(admin_chat, f"⚠️ כתבה מוואטסאפ ({sender_name}) ללא טקסט.")
+            wa_send(f"⚠️ כתבה ריקה – אין טקסט לעיבוד")
             return
 
         # הורד תמונות
+        wa_send(f"⏳ מוריד {len(buf.get('images',[]))} תמונות...")
         images_bytes = []
-        for img in buf["images"][:10]:
+        for img_url in buf.get("images", [])[:10]:
             try:
-                r = requests.get(img["url"], timeout=15)
+                r = requests.get(img_url, timeout=20)
                 if r.ok:
                     images_bytes.append(r.content)
             except:
                 pass
 
-        # הורד וידאו והעלה ל-Vimeo
+        # הורד וידאו
         vimeo_urls = []
-        for vid in buf.get("videos", [])[:3]:
-            try:
-                edit_message(admin_chat, msg_id if 'msg_id' in dir() else None,
-                    "⏳ מוריד וידאו...")
-                r = requests.get(vid["url"], timeout=60)
-                if r.ok:
-                    vimeo_url, _ = upload_to_vimeo(r.content, full_text[:50], chat_id=admin_chat)
-                    if vimeo_url:
-                        vimeo_urls.append(vimeo_url)
-                        print(f"✅ וידאו WA עלה ל-Vimeo: {vimeo_url}", flush=True)
-            except Exception as e:
-                print(f"שגיאה הורדת וידאו WA: {e}", flush=True)
+        if buf.get("videos"):
+            wa_send(f"⏳ מעלה {len(buf['videos'])} סרטונים ל-Vimeo...")
+            for i, vid_url in enumerate(buf["videos"][:3]):
+                wa_send(f"⏳ וידאו {i+1}/{len(buf['videos'])}...")
+                try:
+                    r = requests.get(vid_url, timeout=60)
+                    if r.ok:
+                        vimeo_url, _ = upload_to_vimeo(r.content, full_text[:50], chat_id=admin_chat)
+                        if vimeo_url:
+                            vimeo_urls.append(vimeo_url)
+                            wa_send(f"✅ וידאו {i+1} עלה")
+                except Exception as e:
+                    print(f"שגיאה וידאו WA: {e}", flush=True)
 
-        # שלח הודעת התראה
-        msg_id = send_message(admin_chat,
-            f"📨 <b>כתבה חדשה מוואטסאפ</b>\n\n"
-            f"👤 שולח: <b>{sender_name}</b>\n"
-            f"📝 {len(buf['texts'])} הודעות טקסט\n"
-            f"🖼 {len(images_bytes)} תמונות\n"
-            f"🎬 {len(buf.get('videos',[]))} סרטונים\n"
-            f"📄 {len(buf.get('pdfs',[]))} קבצי PDF\n"
-            f"🎵 {len(buf.get('audio',[]))} קבצי שמע\n\n"
-            f"⏳ מעבד עם AI...", None)
-
-        # עבד עם AI
+        # עבד AI
+        wa_send("⏳ מעבד עם AI...")
         result = process_with_gemini(full_text)
-
         if not result:
-            send_message(admin_chat, "❌ AI לא הצליח לעבד את הכתבה מוואטסאפ.", {
-                "inline_keyboard": [[{"text": "↩️ סגור", "callback_data": "publish_cancel"}]]
-            })
+            wa_send("❌ AI לא הצליח לעבד. נסה שוב.")
             return
 
-        # שמור ב-draft של האדמין
+        # שמור draft
         user_id = str(SUPER_ADMIN_ID)
         draft = drafts.setdefault(user_id, {})
         draft.update({
             "step": "smart_preview",
-            "title": result.get("title", ""),
-            "subtitle": result.get("subtitle", ""),
-            "red_title": result.get("red_title", ""),
-            "body": result.get("body", ""),
-            "tags": result.get("tags", []),
+            "title": result.get("title",""),
+            "subtitle": result.get("subtitle",""),
+            "red_title": result.get("red_title",""),
+            "body": result.get("body",""),
+            "tags": result.get("tags",[]),
             "from_quick": True,
             "gallery": images_bytes,
             "main_image": images_bytes[0] if images_bytes else None,
@@ -1143,313 +1324,90 @@ def _process_wa_article(buf, sender_name):
             "wa_source": sender_name,
             "summary_msg_id": None,
         })
-
         cats, cat_names = auto_select_categories(draft["title"], draft["body"])
         draft["categories"] = cats
         draft["cat_names"] = cat_names
 
-        # שלח הודעת אישור בוואטסאפ – בלי כפתורים (לא נתמך בחינמי)
-        wa_preview = (
-            f"✅ *כתבה מוכנה לאישור:*\n\n"
+        # שלח תצוגה מקדימה לוואטסאפ
+        wa_send(
+            f"✅ *כתבה מוכנה:*\n\n"
             f"*{result.get('title','')}*\n"
             f"{result.get('subtitle','')[:150]}\n\n"
-            f"📝 לאישור פרסום – שלח: *//אשר*\n"
-            f"✏️ לעריכה בטלגרם – שלח: *//ערוך*\n"
-            f"❌ לביטול – שלח: */////*"
+            f"📸 {len(images_bytes)} תמונות | 🎬 {len(vimeo_urls)} וידאו\n\n"
+            f"*עריכה:*\n"
+            f"/כותרת [טקסט] | /משנה [טקסט]\n"
+            f"/אדומה [טקסט] | /גוף [טקסט]\n"
+            f"/תגיות [מ1, מ2]\n\n"
+            f"//אשר – פרסם | //// – בטל"
         )
-        send_whatsapp(wa_preview)
 
-        # הצג תצוגה מקדימה בטלגרם
+        # שלח לטלגרם עם כל כפתורי העריכה
         import re as _re
-        def esc(s): return str(s).replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
-        body_preview = _re.sub(r'<[^>]+>', '', draft.get("body",""))[:300]
-
-        text_preview = (
+        def esc(s): return str(s).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+        body_preview = _re.sub(r"<[^>]+>","", draft.get("body",""))[:300]
+        new_id = send_message(admin_chat,
             f"📨 <b>כתבה מוואטסאפ – {esc(sender_name)}</b>\n\n"
             f"<b>כותרת:</b> {esc(draft['title'])}\n"
             f"<b>כותרת משנה:</b> {esc(draft['subtitle'])}\n"
             f"<b>כותרת אדומה:</b> {esc(draft.get('red_title',''))}\n"
             f"<b>קטגוריות:</b> {esc(', '.join(cat_names))}\n"
-            f"<b>תגיות:</b> {esc(', '.join(draft.get('tags',[])))}\n\n"
-            f"<b>גוף:</b>\n{esc(body_preview)}..."
-        )
-
-        new_id = send_message(admin_chat, text_preview, {
+            f"<b>תגיות:</b> {esc(', '.join(draft.get('tags',[])))}\n"
+            f"<b>📸</b> {len(images_bytes)} תמונות | <b>🎬</b> {len(vimeo_urls)} וידאו\n\n"
+            f"<b>גוף:</b>\n{esc(body_preview)}...", {
             "inline_keyboard": [
                 [{"text": "✅ מאשר, פרסם", "callback_data": "smart_approve"}],
                 [{"text": "✨ שפר כותרות", "callback_data": "smart_improve_titles"}],
-                [{"text": "✏️ ערוך כותרת", "callback_data": "smart_edit_title"},
-                 {"text": "✏️ ערוך כותרת משנה", "callback_data": "smart_edit_subtitle"}],
-                [{"text": "✏️ ערוך כותרת אדומה", "callback_data": "smart_edit_red_title"},
-                 {"text": "✏️ ערוך גוף", "callback_data": "smart_edit_body"}],
-                [{"text": "✏️ ערוך תגיות", "callback_data": "smart_edit_tags"},
-                 {"text": "🔄 שנה קטגוריות", "callback_data": "change_categories"}],
+                [{"text": "✏️ כותרת", "callback_data": "smart_edit_title"},
+                 {"text": "✏️ כותרת משנה", "callback_data": "smart_edit_subtitle"}],
+                [{"text": "✏️ כותרת אדומה", "callback_data": "smart_edit_red_title"},
+                 {"text": "✏️ גוף", "callback_data": "smart_edit_body"}],
+                [{"text": "✏️ תגיות", "callback_data": "smart_edit_tags"},
+                 {"text": "🔄 קטגוריות", "callback_data": "change_categories"}],
                 [{"text": "❌ בטל", "callback_data": "publish_cancel"}]
             ]
         })
         draft["summary_msg_id"] = new_id
 
     except Exception as e:
-        print(f"שגיאה עיבוד WA כתבה: {e}", flush=True)
+        wa_send(f"❌ שגיאה: {e}")
+        print(f"שגיאה _process_wa_article: {e}", flush=True)
+
+
+def _handle_wa_button(button_id, sender_number):
+    pass  # כפתורים לא נתמכים בחינמי
+
 
 def start_whatsapp_polling():
-    """בודק הודעות חדשות מ-Green API כל 3 שניות"""
-    instance_id = os.environ.get("GREENAPI_ID", "")
-    token = os.environ.get("GREENAPI_TOKEN", "")
+    """בודק הודעות חדשות מ-Green API"""
+    instance_id = os.environ.get("GREENAPI_ID","")
+    token = os.environ.get("GREENAPI_TOKEN","")
     if not instance_id or not token:
-        print("⚠️ WA polling: חסרים GREENAPI_ID או GREENAPI_TOKEN", flush=True)
         return
     base = f"https://7107.api.greenapi.com/waInstance{instance_id}"
     print("🟢 WhatsApp polling מתחיל...", flush=True)
-
     while True:
         try:
-            resp = requests.get(
-                f"{base}/receiveNotification/{token}",
-                timeout=25
-            )
-            if resp.ok:
-                data = resp.json()
-                if data:
-                    print(f"📱 WA הודעה התקבלה: {str(data)[:200]}", flush=True)
+            if whatsapp_settings.get("inbox_active"):
+                resp = requests.get(f"{base}/receiveNotification/{token}", timeout=25)
+                if resp.ok and resp.json():
+                    data = resp.json()
                     receipt_id = data.get("receiptId")
-                    body = data.get("body", {})
-                    # לוג מבנה מלא לדיבוג
-                    msg_data = body.get("messageData", {})
-                    print(f"📱 WA messageData keys: {list(msg_data.keys())}", flush=True)
-                    print(f"📱 WA full messageData: {str(msg_data)[:500]}", flush=True)
-                    if whatsapp_settings.get("inbox_active"):
-                        handle_whatsapp_webhook(body)
-                    else:
-                        print("📱 WA inbox כבוי – מתעלם", flush=True)
+                    body = data.get("body",{})
+                    handle_whatsapp_webhook(body)
                     if receipt_id:
-                        requests.delete(
-                            f"{base}/deleteNotification/{token}/{receipt_id}",
-                            timeout=5
-                        )
-            else:
-                print(f"⚠️ WA polling שגיאה: {resp.status_code} {resp.text[:100]}", flush=True)
+                        requests.delete(f"{base}/deleteNotification/{token}/{receipt_id}", timeout=5)
         except Exception as e:
-            print(f"שגיאה WA polling: {e}", flush=True)
-        time.sleep(3)
+            if "Read timed out" not in str(e):
+                print(f"שגיאה WA polling: {e}", flush=True)
+        time.sleep(1)
 
-
-    """מגדיר Webhook ב-Green API"""
-    instance_id = os.environ.get("GREENAPI_ID", "")
-    token = os.environ.get("GREENAPI_TOKEN", "")
-    render_url = os.environ.get("RENDER_URL", "https://chabad-bot.onrender.com")
-    webhook_url = f"{render_url}/webhook/whatsapp"
-
-    if not instance_id or not token:
-        return
-
-    try:
-        resp = requests.post(
-            f"https://7107.api.greenapi.com/waInstance{instance_id}/setSettings/{token}",
-            json={
-                "webhookUrl": webhook_url,
-                "webhookUrlToken": "",
-                "delaySendMessagesMilliseconds": 1000,
-                "markIncomingMessagesReaded": "no",
-                "markIncomingMessagesReadedOnReply": "no",
-                "incomingWebhook": "yes",
-                "deviceWebhook": "yes",
-                "statusInstanceWebhook": "no",
-                "stateWebhook": "no",
-                "sendFromUTC": "no",
-                "receiveNotifications": "yes"
-            },
-            timeout=10
-        )
-        if resp.ok:
-            print(f"✅ Green API Webhook מוגדר: {webhook_url}", flush=True)
-        else:
-            print(f"⚠️ Green API Webhook שגיאה: {resp.text[:200]}", flush=True)
-    except Exception as e:
-        print(f"שגיאה Webhook setup: {e}", flush=True)
-
-
-def _update_wp_field(post_id, field, value):
-    """עדכן שדה בכתבה בוורדפרס"""
-    try:
-        requests.post(f"{WP_URL}/posts/{post_id}",
-            json={field: value},
-            auth=(WP_USER, WP_PASSWORD), timeout=10)
-    except Exception as e:
-        print(f"שגיאה עדכון WP: {e}", flush=True)
-
-def _update_wp_meta(post_id, meta_key, value):
-    """עדכן meta field בכתבה"""
-    try:
-        requests.post(f"{WP_URL}/posts/{post_id}",
-            json={"meta": {meta_key: value}},
-            auth=(WP_USER, WP_PASSWORD), timeout=10)
-    except Exception as e:
-        print(f"שגיאה עדכון WP meta: {e}", flush=True)
-
-def _finish_wa_edit(sender, session, sender_name):
-    """סיים עריכה מוואטסאפ ועדכן כתבה"""
-    post_id = session["post_id"]
-    admin_chat = SUPER_ADMIN_ID
-    msg_id = send_message(admin_chat, f"⏳ מעדכן כתבה {post_id}...")
-
-    try:
-        # עדכן תמונה ראשית
-        if session.get("main_image"):
-            r = requests.get(session["main_image"], timeout=15)
-            if r.ok:
-                img_id = upload_image_to_wp(r.content, f"main_{post_id}.jpg")
-                if img_id:
-                    requests.post(f"{WP_URL}/posts/{post_id}",
-                        json={"featured_media": img_id},
-                        auth=(WP_USER, WP_PASSWORD), timeout=10)
-
-        # הוסף תמונות לגלריה
-        gallery_ids = []
-        for img_url in session.get("images", []):
-            r = requests.get(img_url, timeout=15)
-            if r.ok:
-                img_id = upload_image_to_wp(r.content, f"gallery_{post_id}.jpg")
-                if img_id:
-                    gallery_ids.append(img_id)
-
-        # הוסף וידאו ל-Vimeo
-        vimeo_urls = []
-        for vid_url in session.get("videos", []):
-            r = requests.get(vid_url, timeout=60)
-            if r.ok:
-                vimeo_url, _ = upload_to_vimeo(r.content, f"כתבה {post_id}", chat_id=admin_chat)
-                if vimeo_url:
-                    vimeo_urls.append(vimeo_url)
-
-        # עדכן גלריה ו-Vimeo בכתבה
-        if gallery_ids or vimeo_urls:
-            post_resp = requests.get(f"{WP_URL}/posts/{post_id}",
-                auth=(WP_USER, WP_PASSWORD), timeout=10)
-            if post_resp.ok:
-                current_content = post_resp.json().get("content", {}).get("raw", "")
-                # הוסף vimeo embeds
-                for v_url in vimeo_urls:
-                    current_content += f'\n\n[video src="{v_url}"]'
-                requests.post(f"{WP_URL}/posts/{post_id}",
-                    json={"content": current_content,
-                          "meta": {"gallery_ids": gallery_ids}},
-                    auth=(WP_USER, WP_PASSWORD), timeout=10)
-
-        del wa_edit_sessions[sender]
-        send_whatsapp("✅ *הכתבה עודכנה בהצלחה!*")
-        edit_message(admin_chat, msg_id,
-            f"✅ <b>כתבה {post_id} עודכנה מוואטסאפ!</b>\n"
-            f"🖼 {len(gallery_ids)} תמונות\n"
-            f"🎬 {len(vimeo_urls)} וידאו")
-
-    except Exception as e:
-        send_whatsapp(f"❌ שגיאה בעדכון: {e}")
-        print(f"שגיאה _finish_wa_edit: {e}", flush=True)
-
-def _handle_wa_button(button_id, sender_number):
-    """מטפל בלחיצת כפתור מוואטסאפ"""
-    admin_chat = SUPER_ADMIN_ID
-    user_id = str(SUPER_ADMIN_ID)
-    draft = drafts.get(user_id, {})
-
-    if button_id == "wa_approve":
-        # פרסם!
-        if not draft.get("title"):
-            send_whatsapp("⚠️ אין כתבה ממתינה לפרסום")
-            return
-        send_whatsapp("⏳ מפרסם...")
-        try:
-            resp = publish_to_wp(draft, "publish")
-            if resp.status_code == 201:
-                post_url = resp.json().get("link", "")
-                post_title = draft.get("title", "")
-                post_subtitle = draft.get("subtitle", "")
-                # הפץ
-                def _dist():
-                    notify_channel(post_title, post_subtitle, post_url)
-                    if whatsapp_settings["active"]:
-                        wa_msg = WHATSAPP_MSG_FORMAT.format(
-                            site_name=SITE_NAME, title=post_title,
-                            subtitle=post_subtitle, url=post_url)
-                        send_whatsapp(wa_msg)
-                threading.Thread(target=_dist, daemon=True).start()
-                send_whatsapp(f"✅ *פורסם בהצלחה!*\n{post_url}")
-                # עדכן טלגרם
-                send_message(admin_chat, f"✅ <b>פורסם מוואטסאפ!</b>\n🔗 {post_url}")
-                drafts[user_id] = {"step": "idle", "gallery": []}
-            else:
-                send_whatsapp("❌ שגיאה בפרסום")
-        except Exception as e:
-            send_whatsapp(f"❌ שגיאה: {e}")
-
-    elif button_id == "wa_edit":
-        send_whatsapp("✏️ פתח את הטלגרם לעריכה")
-        send_message(admin_chat,
-            "📨 <b>עריכה מבוקשת מוואטסאפ</b>\n\nהכתבה ממתינה לעריכה:", {
-            "inline_keyboard": [
-                [{"text": "✅ מאשר, פרסם", "callback_data": "smart_approve"}],
-                [{"text": "✏️ ערוך כותרת", "callback_data": "smart_edit_title"}],
-                [{"text": "❌ בטל", "callback_data": "publish_cancel"}]
-            ]
-        })
-
-    elif button_id == "wa_cancel":
-        drafts[user_id] = {"step": "idle", "gallery": []}
-        send_whatsapp("❌ הכתבה בוטלה")
-        send_message(admin_chat, "❌ הכתבה מוואטסאפ בוטלה")
 
 def send_whatsapp_with_buttons(message, buttons):
-    """שולח הודעה עם כפתורים ב-WhatsApp Business"""
-    instance_id = os.environ.get("GREENAPI_ID", "")
-    token = os.environ.get("GREENAPI_TOKEN", "")
-    group_id = os.environ.get("WHATSAPP_GROUP_ID", "")
-    if not instance_id or not token or not group_id:
-        return False
-    try:
-        # Green API – שליחת הודעה עם כפתורים
-        url = f"https://7107.api.greenapi.com/waInstance{instance_id}/sendButtons/{token}"
-        payload = {
-            "chatId": group_id,
-            "message": message,
-            "buttons": [{"buttonId": b["id"], "buttonText": b["text"]} for b in buttons]
-        }
-        resp = requests.post(url, json=payload, timeout=15)
-        print(f"WA buttons: {resp.status_code}", flush=True)
-        return resp.status_code == 200
-    except Exception as e:
-        print(f"שגיאה WA buttons: {e}", flush=True)
-        # fallback – שלח בלי כפתורים
-        return send_whatsapp(message)
+    return send_whatsapp(message)
+
 
 def send_whatsapp(message, image_url=None):
     """שולח הודעה לקבוצת וואטסאפ דרך Green API"""
-    instance_id = os.environ.get("GREENAPI_ID", "")
-    token = os.environ.get("GREENAPI_TOKEN", "")
-    group_id = os.environ.get("WHATSAPP_GROUP_ID", "")
-    if not instance_id or not token or not group_id:
-        print("⚠️ Green API לא מוגדר", flush=True)
-        return False
-    try:
-        base_url = f"https://7107.api.greenapi.com/waInstance{instance_id}"
-        if image_url:
-            url = f"{base_url}/sendFileByUrl/{token}"
-            payload = {
-                "chatId": group_id,
-                "urlFile": image_url,
-                "fileName": "image.jpg",
-                "caption": message
-            }
-        else:
-            url = f"{base_url}/sendMessage/{token}"
-            payload = {"chatId": group_id, "message": message}
-        resp = requests.post(url, json=payload, timeout=15)
-        print(f"WhatsApp Green API: {resp.status_code} {resp.text[:100]}", flush=True)
-        return resp.status_code == 200
-    except Exception as e:
-        print(f"שגיאה WhatsApp: {e}", flush=True)
-        return False
-
 def get_fb_stats():
     """מושך סטטיסטיקות פייסבוק"""
     try:
