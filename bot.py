@@ -519,7 +519,7 @@ def get_analytics_top_articles(days=7):
             "dimensions": [{"name":"pageTitle"},{"name":"pagePath"}],
             "metrics": [{"name":"screenPageViews"}],
             "orderBys": [{"metric":{"metricName":"screenPageViews"},"desc":True}],
-            "limit": 5
+            "limit": 15
         }
         resp = requests.post(
             f"https://analyticsdata.googleapis.com/v1beta/properties/{property_id}:runReport",
@@ -834,7 +834,7 @@ def handle_whatsapp_webhook(body):
                     if not articles:
                         wa_send("❌ לא הצלחתי למשוך נתונים. בדוק הגדרות Analytics.")
                         return
-                    msg = "🏆 *5 הכתבות הנצפות ביותר השבוע:*\n\n"
+                    msg = f"🏆 *5 הכתבות הנצפות ביותר השבוע באתר \"{SITE_NAME}\":*\n\n"
                     for i, a in enumerate(articles[:5], 1):
                         msg += f"{i}. *{a['title']}*\n"
                         msg += f"{a['url']}\n\n"
@@ -1128,7 +1128,13 @@ def _handle_wa_edit(sender, sender_name, session, txt, text_msg,
         if image_url:
             session["images"].append(image_url)
             wa_edit_sessions[sender] = session
-            wa_send(f"✅ תמונה {len(session['images'])} התקבלה. המשך לשלוח או //אשר לפרסום.")
+            # המתן 5 שניות – אם לא הגיעה תמונה נוספת, שלח סיכום
+            def _check_more(s=sender, count=len(session["images"])):
+                time.sleep(5)
+                current = wa_edit_sessions.get(s, {})
+                if current.get("step") == "mazaltov" and len(current.get("images",[])) == count:
+                    wa_send(f"✅ {count} תמונות התקבלו.\nשלח עוד תמונות או //אשר לפרסום.")
+            threading.Thread(target=_check_more, daemon=True).start()
             return
         return
 
