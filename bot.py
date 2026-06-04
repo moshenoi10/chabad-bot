@@ -698,21 +698,25 @@ def _run_monthly_report(chat_id, year, month):
         edit_message(chat_id, msg_id, f"❌ שגיאה ביצירת הדוח: {e}")
 
 
-# ─── מצב עריכת כתבה מוואטסאפ ────────────────────────────
-wa_edit_sessions = {}  # sender → {post_id, mode, images, videos, pdfs}
-# ─── WhatsApp Webhook ────────────────────────────────────
-# מאגר הודעות לכל שולח (מספר טלפון → רשימת הודעות)
-wa_article_buffer = {}
-
-# מספרים מורשים לשלוח כתבות מוואטסאפ
-def get_wa_allowed_senders():
-    # קודם מה שהוגדר דרך הבוט, אחר כך env var
-    if whatsapp_settings.get("allowed_senders"):
-        return whatsapp_settings["allowed_senders"]
-    env = os.environ.get("WA_ALLOWED_SENDERS", "")
-    return [s.strip() for s in env.split(",") if s.strip()]
-
 # ─── WhatsApp Inbox ──────────────────────────────────────
+WA_SETTINGS_FILE = "/tmp/wa_settings.pkl"
+
+def load_wa_settings():
+    try:
+        with open(WA_SETTINGS_FILE, "rb") as f:
+            saved = pickle.load(f)
+            whatsapp_settings.update(saved)
+            print(f"✅ WA settings נטענו: inbox={whatsapp_settings.get('inbox_active')}, senders={whatsapp_settings.get('allowed_senders')}", flush=True)
+    except:
+        pass
+
+def save_wa_settings():
+    try:
+        with open(WA_SETTINGS_FILE, "wb") as f:
+            pickle.dump(dict(whatsapp_settings), f)
+    except Exception as e:
+        print(f"שגיאה שמירת WA settings: {e}", flush=True)
+
 wa_article_buffer = {}   # sender → {texts, images, videos, pdfs, audio, started}
 wa_edit_sessions  = {}   # sender → {post_id, mode, step, images, videos, pdfs}
 
@@ -4459,6 +4463,7 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             senders = whatsapp_settings.setdefault("allowed_senders", [])
             if number not in senders:
                 senders.append(number)
+            save_wa_settings()
             draft["step"] = "idle"
             send_message(chat_id, f"✅ <b>{number}</b> נוסף!", {
                 "inline_keyboard": [[{"text": "↩️ חזור", "callback_data": "wa_inbox_menu"}]]
@@ -5834,6 +5839,7 @@ def handle_callback(cb):
 
     elif cb_data == "toggle_wa_inbox":
         whatsapp_settings["inbox_active"] = not whatsapp_settings.get("inbox_active", False)
+        save_wa_settings()
         status = "✅ פעיל" if whatsapp_settings["inbox_active"] else "❌ כבוי"
         # עדכן תפריט
         msg_id = draft.get("extra_actions_msg_id")
@@ -5876,6 +5882,7 @@ def handle_callback(cb):
 
     elif cb_data == "wa_clear_senders":
         whatsapp_settings["allowed_senders"] = []
+        save_wa_settings()
         msg_id = draft.get("extra_actions_msg_id")
         if msg_id:
             edit_message(chat_id, msg_id, "✅ כל המספרים נוקו!", {"inline_keyboard": [[get_back_button()[0]]]})
@@ -7871,6 +7878,7 @@ def main():
     global offset
     print("🚀 בוט חבד מתחיל!", flush=True)
     load_drafts()
+    load_wa_settings()
     download_story_template()
     threading.Thread(target=start_whatsapp_polling, daemon=True).start()
 
