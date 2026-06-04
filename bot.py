@@ -1034,7 +1034,9 @@ def _wa_approve(sender, sender_name):
                     wa_msg = WHATSAPP_MSG_FORMAT.format(
                         site_name=SITE_NAME, title=post_title,
                         subtitle=post_subtitle, url=post_url)
-                    send_whatsapp(wa_msg)
+                    print(f"שולח WA: {wa_msg[:100]}", flush=True)
+                    ok = send_whatsapp(wa_msg)
+                    print(f"WA שליחה: {'✅' if ok else '❌'}", flush=True)
                 drafts[user_id] = {"step": "idle", "gallery": []}
                 send_message(int(SUPER_ADMIN_ID), f"✅ <b>פורסם מוואטסאפ!</b>\n🔗 {post_url}")
             else:
