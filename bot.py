@@ -731,8 +731,9 @@ def wa_send(msg, to=None):
     instance_id = os.environ.get("GREENAPI_ID","")
     token = os.environ.get("GREENAPI_TOKEN","")
     chat_id = to or os.environ.get("WHATSAPP_GROUP_ID","")
+    print(f"wa_send: group={chat_id[:20] if chat_id else 'MISSING'}, msg={msg[:30]}", flush=True)
     if not instance_id or not token or not chat_id:
-        print(f"⚠️ wa_send: חסרים פרטי Green API", flush=True)
+        print(f"⚠️ wa_send: חסרים פרטי Green API instance={bool(instance_id)} token={bool(token)} chat={bool(chat_id)}", flush=True)
         return False
     try:
         resp = requests.post(
@@ -740,6 +741,7 @@ def wa_send(msg, to=None):
             json={"chatId": chat_id, "message": msg},
             timeout=10
         )
+        print(f"wa_send result: {resp.status_code}", flush=True)
         return resp.status_code == 200
     except Exception as e:
         print(f"שגיאה wa_send: {e}", flush=True)
@@ -1423,7 +1425,8 @@ def _update_wp_meta(post_id, meta_key, value):
 
 
 def _process_wa_article(buf, sender_name):
-    """מעבד כתבה מוואטסאפ ושולח לאישור בטלגרם"""
+    """מעבד כתבה מוואטסאפ"""
+    print(f"_process_wa_article: מתחיל עיבוד – {len(buf.get('texts',[]))} טקסטים, {len(buf.get('images',[]))} תמונות, {len(buf.get('videos',[]))} וידאו", flush=True)
     try:
         admin_chat = int(SUPER_ADMIN_ID)
         full_text = "\n\n".join(buf.get("texts", []))
