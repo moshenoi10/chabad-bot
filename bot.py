@@ -1086,10 +1086,13 @@ def _wa_edit_pending_field(sender, txt):
         field = field_map.get(cmd)
         if not field or not value:
             continue
+        # שמור ללמידה
+        before = draft.get(field, "")
         if field == "tags":
             draft[field] = [t.strip() for t in value.split(",")]
         else:
             draft[field] = value
+            add_learning_example(field, before, value)
         updated.append(cmd)
 
     if not updated:
@@ -1471,7 +1474,6 @@ def _process_wa_article(buf, sender_name):
             return
 
         # הורד תמונות
-        wa_send(f"⏳ מוריד {len(buf.get('images',[]))} תמונות...")
         images_bytes = []
         for img_url in buf.get("images", [])[:10]:
             try:
@@ -1484,23 +1486,27 @@ def _process_wa_article(buf, sender_name):
         # הורד וידאו
         vimeo_urls = []
         if buf.get("videos"):
-            wa_send(f"⏳ מעלה {len(buf['videos'])} סרטונים ל-Vimeo...")
             for i, vid_url in enumerate(buf["videos"][:3]):
-                wa_send(f"⏳ וידאו {i+1}/{len(buf['videos'])}...")
                 try:
                     r = requests.get(vid_url, timeout=60)
                     if r.ok:
                         vimeo_url, vid_id = upload_to_vimeo(r.content, full_text[:50], chat_id=admin_chat)
                         if vimeo_url and vid_id:
-                            wa_send(f"⏳ ממתין לעיבוד סרטון ב-Vimeo...")
                             wait_for_vimeo(vid_id, max_wait=300)
                             vimeo_urls.append(vimeo_url)
-                            wa_send(f"✅ וידאו {i+1} מוכן!")
                 except Exception as e:
                     print(f"שגיאה וידאו WA: {e}", flush=True)
 
+        # הודעה אחת על מה מעובד
+        status_parts = []
+        if images_bytes:
+            status_parts.append(f"{len(images_bytes)} תמונות")
+        if vimeo_urls:
+            status_parts.append(f"{len(vimeo_urls)} סרטונים")
+        status_parts.append("טקסט")
+        wa_send("⏳ מעבד: " + " • ".join(status_parts) + "...")
+
         # עבד AI
-        wa_send("⏳ מעבד עם AI...")
         result = process_with_gemini(full_text)
         if not result:
             wa_send("❌ AI לא הצליח לעבד. נסה שוב.")
@@ -2632,16 +2638,10 @@ def fix_geresh(text):
             placeholders[ph] = word
             text = re.sub(pattern, ph, text)
 
-    # שלב 3: מחק ״ שנותר – אבל הוסף רווח במקומו אם צריך
-    # ״ בין שתי אותיות → רווח
+    # שלב 3: מחק ״ שנותר – אבל רק גרש עברי, לא מירכאות רגילות
     text = re.sub(r'([א-ת])״([א-ת])', r'\1 \2', text)
-    # ״ בסוף מילה → הסר
     text = re.sub(r'([א-ת])״', r'\1', text)
-    # כל ״ שנשאר → הסר
     text = text.replace('״', '')
-    # גם " רגיל שנשאר
-    text = re.sub(r'([א-ת])"([א-ת])', r'\1 \2', text)
-    text = re.sub(r'([א-ת])"', r'\1', text)
 
     # שלב 4: שחזר מילים מוכרות
     for ph, word in placeholders.items():
@@ -2663,43 +2663,45 @@ def build_groq_prompt(text):
 טקסט: {text}"""
 
 def build_prompt(text):
-    base = GEMINI_PROMPT if GEMINI_PROMPT else """אתה עורך חדשות מקצועי. קרא את הטקסט וצור ממנו כתבה עיתונאית.
+    base = GEMINI_PROMPT if GEMINI_PROMPT else """אתה עורך חדשות מקצועי לאתר חב"ד. קרא את הטקסט וצור ממנו כתבה עיתונאית.
+
+EXAMPLE INPUT:
+תלמידי ישיבת תומכי תמימים בטבריה התאספו בליל י"ז בסיוון בציון משה בן מימון לסיום ספר הפלאה. לאחר הסיום התקיימה התוועדות חסידית. מארגני המעמד הודיעו כי סיום ספר זרעים ייערך בי"ד בתמוז.
+
+EXAMPLE OUTPUT:
+title: סיום הרמב״ם בציון הרמב״ם בטבריה: תלמידי תומכי תמימים חגגו בי״ז בסיוון
+subtitle: תלמידי הישיבה סיימו ספר הפלאה והחלו בספר זרעים • המעמד התקיים בציון משה בן מימון ונחתם בהתוועדות חסידית • סיום ספר זרעים הבא נקבע לי״ד בתמוז בהשתתפות רבנים ומשפיעים
+red_title: סיום הרמב״ם
+---
 
 כותרת ראשית:
-- עד 8 מילים
-- פורמט: נושא + נקודתיים + פרט
-- אסור להתחיל בשם האתר
-- נקודתיים פעם אחת בלבד
-- ללא נקודה בסוף
+- בין 6 ל-10 מילים
+- פורמט: מיקום/נושא + נקודתיים + תיאור מפורט
+- חייב לכלול מיקום, ארוע ומשתתפים
+- נקודתיים פעם אחת בלבד, ללא נקודה בסוף
 
 כותרת משנה:
-- חייב להיות בדיוק 2-3 משפטים מלאים ומפורטים
-- כל משפט חייב להכיל לפחות 5-8 מילים
-- מופרדים בסימן • בלבד
-- הסימן • מופיע בין המשפטים, לא בסוף
-- ללא נקודה בסוף כל משפט – אסור לשים . לפני •
-- אסור כוכביות * או סימני עיצוב אחרים
-- דוגמה נכונה: "עשרות צעירים השתתפו בשבת מיוחדת • האירוע כלל התוועדות ולימוד משותף • האורחים חזרו הביתה עם חוויה בלתי נשכחת"
-- דוגמה שגויה: "שבת מיוחדת • אירוע חשוב"
+- בדיוק 2-3 משפטים מלאים, כל משפט לפחות 6 מילים
+- מופרדים בסימן • בלבד, לא בסוף המשפט
+- ללא נקודה לפני • וללא * או סימני עיצוב
 
 כותרת אדומה:
-- 2-4 מילים בלבד
-- ללא נקודה בסוף
+- 2-4 מילים בלבד, ללא נקודה בסוף
 
 גוף הכתבה:
 - העתק את הטקסט המקורי מילה במילה
 - חלק לפסקאות של 2-4 משפטים
-- הסר * _ ~ אבל שמור על תוכן המילים
+- הסר * _ ~ אבל שמור תוכן מילים
 
 תגיות:
-- 5-8 מילות מפתח מהטקסט
+- 5-8 מילות מפתח
 
-גרשיים – כלל ברזל:
-- גרש ״ מותר רק במילים שבטקסט המקורי כתובות עם " ביניהן
-- אסור על שמות פרטיים, מקומות, ציטוטים
-- אם ספק – אל תשים ״
+גרשיים:
+- במקום מירכאות רגילות " השתמש תמיד בגרש עברי ״ (U+05F4)
+- לדוגמה: חב״ד, רמב״ם, י״ז, בעז״ה
+- זה חשוב למניעת שגיאות JSON
 
-החזר JSON בלבד:
+החזר JSON בלבד ללא הסברים:
 {{"title":"...","subtitle":"...","red_title":"...","body":"...","tags":["..."]}}
 
 טקסט:
@@ -2707,8 +2709,8 @@ def build_prompt(text):
     learning_ctx = build_learning_context()
     if learning_ctx:
         base = base.replace(
-            "\nהחזר JSON בלבד:",
-            f"\nלמד מהעריכות הקודמות שלי וצור כותרות בסגנון דומה:{learning_ctx}\nהחזר JSON בלבד:"
+            "\nהחזר JSON בלבד ללא הסברים:",
+            f"\nלמד מהעריכות הקודמות שלי:{learning_ctx}\nהחזר JSON בלבד ללא הסברים:"
         )
     return base.replace("{text}", text) if "{text}" in base else base + f"\n\nטקסט:\n{text}"
 
