@@ -721,9 +721,24 @@ def get_wa_allowed_senders():
     env = os.environ.get("WA_ALLOWED_SENDERS", "")
     return [s.strip() for s in env.split(",") if s.strip()]
 
-def wa_send(msg):
-    """שלח הודעה לקבוצה"""
-    send_whatsapp(msg)
+def wa_send(msg, to=None):
+    """שלח הודעה – לשולח ספציפי או לקבוצה"""
+    instance_id = os.environ.get("GREENAPI_ID","")
+    token = os.environ.get("GREENAPI_TOKEN","")
+    chat_id = to or os.environ.get("WHATSAPP_GROUP_ID","")
+    if not instance_id or not token or not chat_id:
+        print(f"⚠️ wa_send: חסרים פרטי Green API", flush=True)
+        return False
+    try:
+        resp = requests.post(
+            f"https://7107.api.greenapi.com/waInstance{instance_id}/sendMessage/{token}",
+            json={"chatId": chat_id, "message": msg},
+            timeout=10
+        )
+        return resp.status_code == 200
+    except Exception as e:
+        print(f"שגיאה wa_send: {e}", flush=True)
+        return False
 
 def wa_is_drive_link(text):
     return "drive.google.com" in text or "docs.google.com" in text
@@ -850,6 +865,7 @@ def handle_whatsapp_webhook(body):
 # ─── פונקציות עזר ────────────────────────────────────────
 
 def _wa_start_article(sender, sender_name):
+    def reply(m): wa_send(m, to=sender)
     buf = wa_article_buffer.get(sender, {})
     if buf.get("started"):
         wa_send("⚠️ כבר יש כתבה פתוחה. שלח //// לביטול קודם.")
@@ -876,9 +892,19 @@ def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, f
             return
         wa_article_buffer[sender]["started"] = False
         wa_send("⏳ מעבד עם AI...")
-        threading.Thread(target=_process_wa_article,
-                        args=(buf.copy(), sender_name), daemon=True).start()
-        wa_article_buffer[sender] = {"texts":[], "images":[], "videos":[], "pdfs":[], "audio":[], "started": False}
+        buf_copy = {k: list(v) if isinstance(v, list) else v
+                   for k, v in wa_article_buffer[sender].items()}
+        wa_article_buffer[sender] = {
+            "texts":[], "images":[], "videos":[], "pdfs":[], "audio":[], "started": False
+        }
+        def _run(b=buf_copy, sn=sender_name):
+            try:
+                _process_wa_article(b, sn)
+            except Exception as e:
+                print(f"שגיאה _process_wa_article: {e}", flush=True)
+                import traceback; traceback.print_exc()
+                wa_send(f"❌ שגיאה בעיבוד: {str(e)[:100]}")
+        threading.Thread(target=_run, daemon=True).start()
         return
 
     # זהה דרייב
