@@ -825,6 +825,15 @@ def handle_whatsapp_webhook(body):
             return
 
         # 3. פקודות גלובליות
+        if txt == "/אפס":
+            wa_article_buffer[sender] = {
+                "texts":[], "images":[], "videos":[], "pdfs":[], "audio":[], "started": False
+            }
+            if sender in wa_edit_sessions:
+                del wa_edit_sessions[sender]
+            wa_send("✅ אופס! מוכן להתחלה חדשה.")
+            return
+
         if txt == "//":
             _wa_start_article(sender, sender_name)
             return
@@ -889,9 +898,8 @@ def _wa_cancel(sender):
 def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, file_url, file_name, msg_type):
     """אוסף תוכן לכתבה פתוחה"""
     # סיום כתבה
-    if txt == "//":
+    if txt == "///":
         if not buf["texts"] and not buf["images"] and not buf["videos"]:
-            wa_send("⚠️ הכתבה ריקה.")
             return
         # אפס buffer לפני processing
         buf_copy = {k: list(v) if isinstance(v, list) else v for k, v in buf.items()}
