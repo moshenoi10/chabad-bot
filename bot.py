@@ -699,7 +699,7 @@ def _run_monthly_report(chat_id, year, month):
 
 
 # ─── WhatsApp Inbox ──────────────────────────────────────
-WA_SETTINGS_FILE = "/tmp/wa_settings.pkl"
+WA_SETTINGS_FILE = "/opt/render/project/src/wa_settings.pkl"
 
 def load_wa_settings():
     try:
@@ -1629,8 +1629,8 @@ def run_server():
 import pickle
 
 drafts = {}
-DRAFTS_FILE = "/tmp/drafts.pkl"
-LEARNING_FILE = "/tmp/learning.pkl"
+DRAFTS_FILE = "/opt/render/project/src/drafts.pkl"
+LEARNING_FILE = "/opt/render/project/src/learning.pkl"
 
 def load_learning():
     try:
