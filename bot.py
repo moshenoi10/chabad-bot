@@ -865,20 +865,24 @@ def handle_whatsapp_webhook(body):
 # ─── פונקציות עזר ────────────────────────────────────────
 
 def _wa_start_article(sender, sender_name):
-    def reply(m): wa_send(m, to=sender)
     buf = wa_article_buffer.get(sender, {})
     if buf.get("started"):
-        wa_send("⚠️ כבר יש כתבה פתוחה. שלח //// לביטול קודם.")
-        return
-    wa_article_buffer[sender] = {
-        "texts":[], "images":[], "videos":[], "pdfs":[], "audio":[], "started": True
-    }
-    wa_send("✅ כתבה חדשה נפתחה!\nשלח טקסט, תמונות, וידאו, PDF, או לינק גוגל דרייב.\nשלח // לסיום.")
-    print(f"WA: {sender_name} התחיל כתבה", flush=True)
+        # אפס אוטומטית במקום לשלוח שגיאה
+        wa_article_buffer[sender] = {
+            "texts":[], "images":[], "videos":[], "pdfs":[], "audio":[], "started": True
+        }
+        print(f"WA: {sender_name} אפס ופתח כתבה חדשה", flush=True)
+    else:
+        wa_article_buffer[sender] = {
+            "texts":[], "images":[], "videos":[], "pdfs":[], "audio":[], "started": True
+        }
+        print(f"WA: {sender_name} התחיל כתבה", flush=True)
+    # אל תשלח הודעה מיותרת
 
 def _wa_cancel(sender):
-    if sender in wa_article_buffer:
-        del wa_article_buffer[sender]
+    wa_article_buffer[sender] = {
+        "texts":[], "images":[], "videos":[], "pdfs":[], "audio":[], "started": False
+    }
     if sender in wa_edit_sessions:
         del wa_edit_sessions[sender]
     wa_send("❌ בוטל.")
@@ -888,22 +892,21 @@ def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, f
     # סיום כתבה
     if txt == "//":
         if not buf["texts"] and not buf["images"] and not buf["videos"]:
-            wa_send("⚠️ הכתבה ריקה. שלח תוכן קודם.")
+            wa_send("⚠️ הכתבה ריקה.")
             return
-        wa_article_buffer[sender]["started"] = False
-        wa_send("⏳ מעבד עם AI...")
-        buf_copy = {k: list(v) if isinstance(v, list) else v
-                   for k, v in wa_article_buffer[sender].items()}
+        # אפס buffer לפני processing
+        buf_copy = {k: list(v) if isinstance(v, list) else v for k, v in buf.items()}
         wa_article_buffer[sender] = {
             "texts":[], "images":[], "videos":[], "pdfs":[], "audio":[], "started": False
         }
+        wa_send("⏳ מעבד עם AI...")
         def _run(b=buf_copy, sn=sender_name):
             try:
                 _process_wa_article(b, sn)
             except Exception as e:
                 print(f"שגיאה _process_wa_article: {e}", flush=True)
                 import traceback; traceback.print_exc()
-                wa_send(f"❌ שגיאה בעיבוד: {str(e)[:100]}")
+                wa_send(f"❌ שגיאה: {str(e)[:100]}")
         threading.Thread(target=_run, daemon=True).start()
         return
 
