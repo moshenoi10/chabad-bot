@@ -1363,29 +1363,41 @@ def _handle_wa_edit(sender, sender_name, session, txt, text_msg,
                 added.append(f"{len(media)} פריטים מדרייב")
             if image_url:
                 session["images"].append(image_url)
-                added.append(f"תמונה ({len(session['images'])} סהכ)")
+                wa_edit_sessions[sender] = session
+                def _check(s=sender, count=len(session["images"])):
+                    time.sleep(5)
+                    cur = wa_edit_sessions.get(s, {})
+                    if cur.get("mode") == "media" and len(cur.get("images",[])) == count:
+                        wa_send(f"✅ {count} תמונות. המשך או /סיום.")
+                threading.Thread(target=_check, daemon=True).start()
+                return
             if video_url:
                 session["videos"].append(video_url)
-                added.append(f"וידאו ({len(session['videos'])} סהכ)")
+                wa_edit_sessions[sender] = session
+                wa_send(f"✅ וידאו נוסף. המשך או /סיום.")
+                return
             if file_url and file_name.lower().endswith(".pdf"):
                 session["pdfs"].append({"url": file_url, "name": file_name})
-                added.append("PDF")
-            if added:
                 wa_edit_sessions[sender] = session
-                wa_send(f"✅ {', '.join(added)} נוסף/ו. המשך או שלח /סיום.")
-            return
+                wa_send(f"✅ PDF נוסף. המשך או /סיום.")
+                return
 
 
 def _finish_wa_edit(sender, session, sender_name):
     """שמור שינויי עריכה ועדכן כתבה"""
     post_id = session.get("post_id")
     admin_chat = int(SUPER_ADMIN_ID)
-    wa_send("⏳ מעדכן כתבה...")
+
+    # הודעה אחת בהתחלה
+    parts_count = []
+    if session.get("main_image_url"): parts_count.append("תמונה ראשית")
+    if session.get("images"): parts_count.append(f"{len(session['images'])} תמונות")
+    if session.get("videos"): parts_count.append(f"{len(session['videos'])} סרטונים")
+    wa_send("⏳ מעדכן: " + " • ".join(parts_count) + "..." if parts_count else "⏳ מעדכן...")
 
     try:
         # תמונה ראשית
         if session.get("main_image_url"):
-            wa_send("⏳ מעלה תמונה ראשית...")
             r = requests.get(session["main_image_url"], timeout=30)
             if r.ok:
                 img_id = upload_image_to_wp(r.content, f"main_{post_id}.jpg")
@@ -1393,33 +1405,66 @@ def _finish_wa_edit(sender, session, sender_name):
                     requests.post(f"{WP_URL}/posts/{post_id}",
                         json={"featured_media": img_id},
                         auth=(WP_USER, WP_PASSWORD), timeout=10)
-                    wa_send(f"✅ תמונה ראשית עודכנה")
 
         # תמונות גלריה
         gallery_ids = []
-        if session.get("images"):
-            wa_send(f"⏳ מעלה {len(session['images'])} תמונות...")
-            for i, img_url in enumerate(session["images"]):
+        for i, img_url in enumerate(session.get("images", [])):
+            try:
                 r = requests.get(img_url, timeout=30)
                 if r.ok:
                     img_id = upload_image_to_wp(r.content, f"gallery_{post_id}_{i}.jpg")
                     if img_id:
                         gallery_ids.append(img_id)
-            if gallery_ids:
-                wa_send(f"✅ {len(gallery_ids)} תמונות עלו")
+            except:
+                pass
 
         # וידאו ל-Vimeo
         vimeo_embeds = []
-        if session.get("videos"):
-            wa_send(f"⏳ מעלה {len(session['videos'])} סרטונים ל-Vimeo...")
-            for i, vid_url in enumerate(session["videos"]):
-                wa_send(f"⏳ וידאו {i+1}/{len(session['videos'])}...")
+        for vid_url in session.get("videos", []):
+            try:
                 r = requests.get(vid_url, timeout=60)
                 if r.ok:
-                    vimeo_url, _ = upload_to_vimeo(r.content, f"כתבה {post_id}", chat_id=admin_chat)
-                    if vimeo_url:
+                    vimeo_url, vid_id = upload_to_vimeo(r.content,
+                        f"כתבה {post_id}", chat_id=admin_chat)
+                    if vimeo_url and vid_id:
+                        wait_for_vimeo(vid_id, max_wait=300)
                         vimeo_embeds.append(vimeo_url)
-                        wa_send(f"✅ וידאו {i+1} עלה")
+            except Exception as e:
+                print(f"שגיאה וידאו edit: {e}", flush=True)
+
+        # עדכן תוכן – הוסף בסוף
+        if vimeo_embeds or gallery_ids:
+            post_resp = requests.get(f"{WP_URL}/posts/{post_id}",
+                params={"context": "edit"},
+                auth=(WP_USER, WP_PASSWORD), timeout=10)
+            if post_resp.ok:
+                post_json = post_resp.json()
+                current = (post_json.get("content",{}).get("raw") or
+                          post_json.get("content",{}).get("rendered",""))
+                for v in vimeo_embeds:
+                    vid_id_str = v.split("/")[-1].split("?")[0]
+                    current += f'\n\n<div style="padding:56.25% 0 0 0;position:relative;"><iframe src="https://player.vimeo.com/video/{vid_id_str}" frameborder="0" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen style="position:absolute;top:0;left:0;width:100%;height:100%;"></iframe></div><script src="https://player.vimeo.com/api/player.js"></script>\n'
+                update_data = {"content": current}
+                if gallery_ids:
+                    existing_meta = post_json.get("meta", {})
+                    existing_gallery = existing_meta.get("gallery_ids", [])
+                    update_data["meta"] = {"gallery_ids": existing_gallery + gallery_ids}
+                requests.post(f"{WP_URL}/posts/{post_id}",
+                    json=update_data, auth=(WP_USER, WP_PASSWORD), timeout=10)
+
+        del wa_edit_sessions[sender]
+
+        # הודעה אחת בסיום
+        parts = []
+        if session.get("main_image_url"): parts.append("תמונה ראשית")
+        if gallery_ids: parts.append(f"{len(gallery_ids)} תמונות")
+        if vimeo_embeds: parts.append(f"{len(vimeo_embeds)} סרטונים")
+        wa_send("✅ עודכן: " + " • ".join(parts) + "!" if parts else "✅ עודכן!")
+        send_message(admin_chat, f"✅ <b>כתבה {post_id} עודכנה מוואטסאפ</b>")
+
+    except Exception as e:
+        wa_send(f"❌ שגיאה: {e}")
+        print(f"שגיאה _finish_wa_edit: {e}", flush=True)
 
         # עדכן תוכן עם vimeo
         if vimeo_embeds or gallery_ids:
