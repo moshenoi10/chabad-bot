@@ -1446,7 +1446,29 @@ def send_whatsapp_with_buttons(message, buttons):
 
 def send_whatsapp(message, image_url=None):
     """שולח הודעה לקבוצת וואטסאפ דרך Green API"""
-def get_fb_stats():
+    instance_id = os.environ.get("GREENAPI_ID", "")
+    token = os.environ.get("GREENAPI_TOKEN", "")
+    group_id = os.environ.get("WHATSAPP_GROUP_ID", "")
+    if not instance_id or not token or not group_id:
+        print("⚠️ Green API לא מוגדר", flush=True)
+        return False
+    try:
+        base_url = f"https://7107.api.greenapi.com/waInstance{instance_id}"
+        if image_url:
+            url = f"{base_url}/sendFileByUrl/{token}"
+            payload = {"chatId": group_id, "urlFile": image_url,
+                      "fileName": "image.jpg", "caption": message}
+        else:
+            url = f"{base_url}/sendMessage/{token}"
+            payload = {"chatId": group_id, "message": message}
+        resp = requests.post(url, json=payload, timeout=15)
+        print(f"WhatsApp: {resp.status_code} {resp.text[:100]}", flush=True)
+        return resp.status_code == 200
+    except Exception as e:
+        print(f"שגיאה WhatsApp: {e}", flush=True)
+        return False
+
+
     """מושך סטטיסטיקות פייסבוק"""
     try:
         fb_token = os.environ.get("FB_PAGE_TOKEN","")
