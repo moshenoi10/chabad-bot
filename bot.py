@@ -1547,14 +1547,35 @@ def start_whatsapp_polling():
     while True:
         try:
             if whatsapp_settings.get("inbox_active"):
-                resp = requests.get(f"{base}/receiveNotification/{token}", timeout=25)
-                if resp.ok and resp.json():
+                resp = requests.get(
+                    f"{base}/receiveNotification/{token}",
+                    timeout=25
+                )
+                if resp.ok:
                     data = resp.json()
-                    receipt_id = data.get("receiptId")
-                    body = data.get("body",{})
-                    handle_whatsapp_webhook(body)
-                    if receipt_id:
-                        requests.delete(f"{base}/deleteNotification/{token}/{receipt_id}", timeout=5)
+                    if data:
+                        receipt_id = data.get("receiptId")
+                        body = data.get("body", {})
+                        # טפל בהודעה ב-thread נפרד עם timeout
+                        def _handle(b=body):
+                            try:
+                                handle_whatsapp_webhook(b)
+                            except Exception as e:
+                                print(f"שגיאה WA handler: {e}", flush=True)
+                        t = threading.Thread(target=_handle, daemon=True)
+                        t.start()
+                        t.join(timeout=30)  # מקסימום 30 שניות לטיפול
+                        # מחק תמיד
+                        if receipt_id:
+                            try:
+                                requests.delete(
+                                    f"{base}/deleteNotification/{token}/{receipt_id}",
+                                    timeout=5
+                                )
+                            except:
+                                pass
+        except requests.exceptions.Timeout:
+            pass  # timeout תקין – אין הודעות
         except Exception as e:
             if "Read timed out" not in str(e):
                 print(f"שגיאה WA polling: {e}", flush=True)
