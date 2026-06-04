@@ -817,6 +817,14 @@ def handle_whatsapp_webhook(body):
             return
 
         # 2. פקודות גלובליות
+        # 2. כתבה פתוחה – אסוף תוכן (קודם לפקודות גלובליות!)
+        buf = wa_article_buffer.get(sender)
+        if buf and buf.get("started"):
+            _wa_collect(sender, sender_name, buf, txt, text_msg,
+                       image_url, video_url, file_url, file_name, msg_type)
+            return
+
+        # 3. פקודות גלובליות
         if txt == "//":
             _wa_start_article(sender, sender_name)
             return
@@ -842,21 +850,12 @@ def handle_whatsapp_webhook(body):
             wa_send("🔗 שלח את לינק הכתבה למחיקה:")
             return
 
-        # 3. פקודות עריכה שדה של כתבה ממתינה
-        if txt.startswith("/כותרת ") or txt.startswith("/משנה ") or            txt.startswith("/אדומה ") or txt.startswith("/גוף ") or            txt.startswith("/תגיות "):
+        # 4. פקודות עריכה שדה של כתבה ממתינה
+        if txt.startswith("/כותרת ") or txt.startswith("/משנה ") or \
+           txt.startswith("/אדומה ") or txt.startswith("/גוף ") or \
+           txt.startswith("/תגיות "):
             _wa_edit_pending_field(sender, txt)
             return
-
-        # 4. כתבה פתוחה – אסוף תוכן
-        buf = wa_article_buffer.get(sender)
-        if buf and buf.get("started"):
-            _wa_collect(sender, sender_name, buf, txt, text_msg,
-                       image_url, video_url, file_url, file_name, msg_type)
-            return
-
-        # 5. הודעה לא מזוהה
-        if txt and not txt.startswith("/"):
-            pass  # התעלם מהודעות רגילות שאינן פקודות
 
     except Exception as e:
         print(f"שגיאה handle_whatsapp_webhook: {e}", flush=True)
