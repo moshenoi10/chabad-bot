@@ -59,8 +59,8 @@ email_system = {
 
 whatsapp_settings = {
     "active": True,
-    "inbox_active": False,
-    "allowed_senders": ["972533057480"],
+    "inbox_active": True,
+    "allowed_senders": ["972533057480", "972547487719"],
 }
 
 youtube_tokens = {}
@@ -705,7 +705,17 @@ def load_wa_settings():
     try:
         with open(WA_SETTINGS_FILE, "rb") as f:
             saved = pickle.load(f)
-            whatsapp_settings.update(saved)
+            # עדכן רק הגדרות שהמשתמש שינה ידנית
+            # אל תדרוס allowed_senders קבועים בקוד
+            if saved.get("active") is not None:
+                whatsapp_settings["active"] = saved["active"]
+            if saved.get("inbox_active") is not None:
+                whatsapp_settings["inbox_active"] = saved["inbox_active"]
+            # הוסף מספרים שנוספו דרך הבוט לרשימה הקיימת
+            extra = [s for s in saved.get("allowed_senders", [])
+                    if s not in whatsapp_settings["allowed_senders"]]
+            if extra:
+                whatsapp_settings["allowed_senders"].extend(extra)
             print(f"✅ WA settings נטענו: inbox={whatsapp_settings.get('inbox_active')}, senders={whatsapp_settings.get('allowed_senders')}", flush=True)
     except:
         pass
@@ -1400,7 +1410,7 @@ def _finish_wa_edit(sender, session, sender_name):
         if session.get("main_image_url"):
             r = requests.get(session["main_image_url"], timeout=30)
             if r.ok:
-                img_id = upload_image_to_wp(r.content, f"main_{post_id}.jpg")
+                img_id, _ = upload_image_to_wp(r.content, f"main_{post_id}.jpg")
                 if img_id:
                     requests.post(f"{WP_URL}/posts/{post_id}",
                         json={"featured_media": img_id},
@@ -1412,11 +1422,15 @@ def _finish_wa_edit(sender, session, sender_name):
             try:
                 r = requests.get(img_url, timeout=30)
                 if r.ok:
-                    img_id = upload_image_to_wp(r.content, f"gallery_{post_id}_{i}.jpg")
+                    print(f"מעלה תמונה {i+1}: {len(r.content)} bytes", flush=True)
+                    img_id, img_src = upload_image_to_wp(r.content, f"gallery_{post_id}_{i}.jpg")
+                    print(f"תמונה {i+1} → img_id={img_id}", flush=True)
                     if img_id:
                         gallery_ids.append(img_id)
-            except:
-                pass
+                else:
+                    print(f"שגיאה הורדת תמונה {i+1}: {r.status_code}", flush=True)
+            except Exception as e:
+                print(f"שגיאה תמונה {i+1}: {e}", flush=True)
 
         # וידאו ל-Vimeo
         vimeo_embeds = []
