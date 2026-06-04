@@ -536,9 +536,10 @@ def get_analytics_top_articles(days=7):
             title = dims[0].get("value","") if dims else ""
             path = dims[1].get("value","") if len(dims)>1 else ""
             views = int(mets[0].get("value",0)) if mets else 0
-            if title and title != "(not set)":
+            # רק כתבות – חייב להיות /archives/ בנתיב
+            if title and title != "(not set)" and "/archives/" in path:
                 results.append({"title": title, "url": wp_url+path, "views": views})
-        return results
+        return results[:5]
     except Exception as e:
         print(f"שגיאה Top Articles: {e}", flush=True)
         return None
@@ -825,6 +826,32 @@ def handle_whatsapp_webhook(body):
             return
 
         # 3. פקודות גלובליות
+        if txt == "/מובילות":
+            wa_send("⏳ מושך 5 הכתבות הנצפות...")
+            def _top():
+                try:
+                    articles = get_analytics_top_articles(7)
+                    if not articles:
+                        wa_send("❌ לא הצלחתי למשוך נתונים. בדוק הגדרות Analytics.")
+                        return
+                    msg = "🏆 *5 הכתבות הנצפות ביותר השבוע:*\n\n"
+                    for i, a in enumerate(articles[:5], 1):
+                        msg += f"{i}. *{a['title']}*\n"
+                        msg += f"{a['url']}\n\n"
+                    wa_send(msg)
+                except Exception as e:
+                    wa_send(f"❌ שגיאה: {e}")
+            threading.Thread(target=_top, daemon=True).start()
+            return
+
+        if txt == "/מזל":
+            wa_edit_sessions[sender] = {
+                "step": "mazaltov",
+                "images": []
+            }
+            wa_send("🎉 מצב מזל טוב!\n\nשלח תמונה אחת או כמה תמונות.\nשלח //אשר לסיום ופרסום.")
+            return
+
         if txt == "/אפס":
             wa_article_buffer[sender] = {
                 "texts":[], "images":[], "videos":[], "pdfs":[], "audio":[], "started": False
@@ -1053,6 +1080,57 @@ def _handle_wa_edit(sender, sender_name, session, txt, text_msg,
     """מנהל מצב עריכת כתבה קיימת"""
     step = session.get("step")
     post_id = session.get("post_id")
+
+    # מצב מזל טוב
+    if step == "mazaltov":
+        if txt == "////":
+            del wa_edit_sessions[sender]
+            wa_send("❌ בוטל.")
+            return
+        if txt == "//אשר":
+            images = session.get("images", [])
+            if not images:
+                wa_send("⚠️ לא התקבלו תמונות. שלח תמונות קודם.")
+                return
+            del wa_edit_sessions[sender]
+            wa_send(f"⏳ מעלה {len(images)} מזל טוב לאתר...")
+            def _publish_mazaltov(imgs=images):
+                try:
+                    success = 0
+                    for i, img_url in enumerate(imgs):
+                        r = requests.get(img_url, timeout=20)
+                        if not r.ok:
+                            continue
+                        img_data = r.content
+                        featured_id, _ = upload_image_to_wp(img_data, f"mazaltov_{i}.jpg")
+                        post_data = {
+                            "title": "מזל טוב",
+                            "content": "",
+                            "status": "publish",
+                            "categories": [18, 103]
+                        }
+                        if featured_id:
+                            post_data["featured_media"] = featured_id
+                        resp = requests.post(f"{WP_URL}/posts", json=post_data,
+                                           auth=(WP_USER, WP_PASSWORD), timeout=30)
+                        if resp.status_code == 201:
+                            success += 1
+                    # שלח הודעה לוואטסאפ בלבד
+                    wa_send(f"✅ {success} מודעות מזל טוב הועלו לאתר בהצלחה!")
+                    # שלח לטלגרם בלבד (ללא שליחה לוואטסאפ)
+                    send_message(int(SUPER_ADMIN_ID),
+                        f"🎉 <b>{success} מזל טוב פורסמו מוואטסאפ!</b>")
+                except Exception as e:
+                    wa_send(f"❌ שגיאה: {e}")
+            threading.Thread(target=_publish_mazaltov, daemon=True).start()
+            return
+        # קבלת תמונות
+        if image_url:
+            session["images"].append(image_url)
+            wa_edit_sessions[sender] = session
+            wa_send(f"✅ תמונה {len(session['images'])} התקבלה. המשך לשלוח או //אשר לפרסום.")
+            return
+        return
 
     # שלב 1 – המתנה ללינק עריכה
     if step == "wait_link":
