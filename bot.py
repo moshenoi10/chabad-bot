@@ -1464,10 +1464,23 @@ def _finish_wa_edit(sender, session, sender_name):
                     existing_gallery = existing_meta.get("gallery_ids", [])
                     new_gallery = existing_gallery + gallery_ids
                     update_data["meta"] = {"gallery_ids": new_gallery}
+                    # הוסף תמונות לתוכן ישירות
+                    for gid in gallery_ids:
+                        # מושך URL של התמונה
+                        try:
+                            img_resp = requests.get(f"{WP_URL}/media/{gid}",
+                                auth=(WP_USER, WP_PASSWORD), timeout=10)
+                            if img_resp.ok:
+                                img_url = img_resp.json().get("source_url","")
+                                if img_url:
+                                    current += f'\n<figure class="wp-block-image size-full"><img src="{img_url}" class="wp-image-{gid}"/></figure>\n'
+                        except:
+                            pass
+                    update_data["content"] = current
                     print(f"מעדכן גלריה: {existing_gallery} + {gallery_ids} = {new_gallery}", flush=True)
                 resp = requests.post(f"{WP_URL}/posts/{post_id}",
                     json=update_data, auth=(WP_USER, WP_PASSWORD), timeout=10)
-                print(f"עדכון כתבה: {resp.status_code} {resp.text[:200]}", flush=True)
+                print(f"עדכון כתבה: {resp.status_code}", flush=True)
 
         del wa_edit_sessions[sender]
 
