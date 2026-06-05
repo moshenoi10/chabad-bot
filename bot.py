@@ -1462,9 +1462,12 @@ def _finish_wa_edit(sender, session, sender_name):
                 if gallery_ids:
                     existing_meta = post_json.get("meta", {})
                     existing_gallery = existing_meta.get("gallery_ids", [])
-                    update_data["meta"] = {"gallery_ids": existing_gallery + gallery_ids}
-                requests.post(f"{WP_URL}/posts/{post_id}",
+                    new_gallery = existing_gallery + gallery_ids
+                    update_data["meta"] = {"gallery_ids": new_gallery}
+                    print(f"מעדכן גלריה: {existing_gallery} + {gallery_ids} = {new_gallery}", flush=True)
+                resp = requests.post(f"{WP_URL}/posts/{post_id}",
                     json=update_data, auth=(WP_USER, WP_PASSWORD), timeout=10)
+                print(f"עדכון כתבה: {resp.status_code} {resp.text[:200]}", flush=True)
 
         del wa_edit_sessions[sender]
 
