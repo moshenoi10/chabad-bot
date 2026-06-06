@@ -1651,15 +1651,22 @@ def _process_wa_article(buf, sender_name):
             wa_send(f"⚠️ כתבה ריקה – אין טקסט לעיבוד")
             return
 
-        # הורד תמונות
+        # הורד תמונות – תמיכה בbytes (מדרייב) וב-URL
         images_bytes = []
-        for img_url in buf.get("images", [])[:10]:
+        for img in buf.get("images", [])[:10]:
             try:
-                r = requests.get(img_url, timeout=20)
-                if r.ok:
-                    images_bytes.append(r.content)
-            except:
-                pass
+                if isinstance(img, (bytes, bytearray)):
+                    # תמונה שכבר הורדה (מדרייב)
+                    if len(img) > 1000:
+                        images_bytes.append(bytes(img))
+                elif isinstance(img, str):
+                    # URL – הורד
+                    r = requests.get(img, timeout=20)
+                    if r.ok and len(r.content) > 1000:
+                        images_bytes.append(r.content)
+            except Exception as e:
+                print(f"שגיאה תמונה: {e}", flush=True)
+        print(f"images_bytes: {len(images_bytes)} תמונות מוכנות", flush=True)
 
         # הורד וידאו
         vimeo_urls = []
