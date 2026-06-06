@@ -1025,6 +1025,14 @@ def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, f
     """אוסף תוכן לכתבה פתוחה"""
     # סיום כתבה
     if txt == "///":
+        # אם יש הורדה פעילה – המתן עד 30 שניות
+        if buf.get("downloading"):
+            wa_send("⏳ ממתין לסיום הורדת מדיה...")
+            for _ in range(30):
+                time.sleep(1)
+                buf = wa_article_buffer.get(sender, {})
+                if not buf.get("downloading"):
+                    break
         if not buf["texts"] and not buf["images"] and not buf["videos"]:
             return
         # אפס buffer לפני processing
@@ -1045,23 +1053,26 @@ def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, f
 
     # זהה דרייב
     if wa_is_drive_link(text_msg):
+        buf["downloading"] = True
         wa_send("⏳ מוריד מגוגל דרייב...")
         media = wa_extract_drive_media(text_msg)
         count = 0
         for m in media:
             if m.get("type") == "image":
                 if m.get("content"):
-                    buf["images"].append(m["content"])  # bytes ישירות
+                    buf["images"].append(m["content"])
                 elif m.get("url"):
                     buf["images"].append(m["url"])
                 count += 1
             elif m.get("type") == "video" and m.get("url"):
                 buf["videos"].append(m["url"])
                 count += 1
+        buf["downloading"] = False
         if count:
-            wa_send(f"✅ דרייב: {count} פריטים נוספו")
+            wa_send(f"✅ דרייב: {count} פריטים נוספו. שלח /// לעיבוד.")
         else:
-            wa_send("⚠️ לא נמצאו קבצים בדרייב.\nודא שהתיקייה/הקובץ משותפים עם 'כל מי שיש לו לינק'")
+            wa_send("⚠️ לא נמצאו קבצים בדרייב.")
+        return
         return
 
     # תוכן רגיל
