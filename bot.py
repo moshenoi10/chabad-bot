@@ -1044,10 +1044,9 @@ def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, f
     """אוסף תוכן לכתבה פתוחה"""
     # סיום כתבה
     if txt == "///":
-        # אם יש הורדה פעילה – המתן עד 30 שניות
+        # אם יש הורדת דרייב פעילה – המתן בשקט עד שתסיים
         if buf.get("downloading"):
-            wa_send("⏳ ממתין לסיום הורדת מדיה...")
-            for _ in range(30):
+            for _ in range(120):
                 time.sleep(1)
                 buf = wa_article_buffer.get(sender, {})
                 if not buf.get("downloading"):
@@ -1059,7 +1058,6 @@ def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, f
         wa_article_buffer[sender] = {
             "texts":[], "images":[], "videos":[], "pdfs":[], "audio":[], "started": False
         }
-        wa_send("⏳ מעבד עם AI...")
         def _run(b=buf_copy, sn=sender_name):
             try:
                 _process_wa_article(b, sn)
@@ -1088,7 +1086,7 @@ def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, f
                 count += 1
         buf["downloading"] = False
         if count:
-            wa_send(f"✅ דרייב: {count} פריטים נוספו. שלח /// לעיבוד.")
+            wa_send(f"✅ {count} תמונות מוכנות – שלח /// לעיבוד")
         else:
             wa_send("⚠️ לא נמצאו קבצים בדרייב.")
         return
@@ -1705,14 +1703,7 @@ def _process_wa_article(buf, sender_name):
                 except Exception as e:
                     print(f"שגיאה וידאו WA: {e}", flush=True)
 
-        # הודעה אחת על מה מעובד
-        status_parts = []
-        if images_bytes:
-            status_parts.append(f"{len(images_bytes)} תמונות")
-        if vimeo_urls:
-            status_parts.append(f"{len(vimeo_urls)} סרטונים")
-        status_parts.append("טקסט")
-        wa_send("⏳ מעבד: " + " • ".join(status_parts) + "...")
+        # מעבד – ללא הודעה
 
         # עבד AI
         result = process_with_gemini(full_text)
@@ -1819,7 +1810,7 @@ def start_whatsapp_polling():
                                 print(f"שגיאה WA handler: {e}", flush=True)
                         t = threading.Thread(target=_handle, daemon=True)
                         t.start()
-                        t.join(timeout=30)  # מקסימום 30 שניות לטיפול
+                        t.join(timeout=180)  # עד 3 דקות לטיפול
                         # מחק תמיד
                         if receipt_id:
                             try:
