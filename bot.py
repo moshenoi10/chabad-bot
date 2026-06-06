@@ -760,34 +760,91 @@ def wa_send(msg, to=None):
 def wa_is_drive_link(text):
     return "drive.google.com" in text or "docs.google.com" in text
 
+def get_drive_token():
+    """מקבל access token ל-Google Drive דרך Service Account"""
+    try:
+        import json as _json, base64, time as _time
+        sa_json = os.environ.get("GA_SERVICE_ACCOUNT_JSON","")
+        if not sa_json:
+            return None
+        sa = _json.loads(sa_json)
+        now = int(_time.time())
+        header = base64.urlsafe_b64encode(_json.dumps({"alg":"RS256","typ":"JWT"}).encode()).rstrip(b'=').decode()
+        payload = base64.urlsafe_b64encode(_json.dumps({
+            "iss": sa["client_email"],
+            "scope": "https://www.googleapis.com/auth/drive.readonly",
+            "aud": "https://oauth2.googleapis.com/token",
+            "exp": now + 3600, "iat": now
+        }).encode()).rstrip(b'=').decode()
+        from cryptography.hazmat.primitives import serialization, hashes
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.backends import default_backend
+        key = serialization.load_pem_private_key(sa["private_key"].encode(), password=None, backend=default_backend())
+        sig = base64.urlsafe_b64encode(key.sign(f"{header}.{payload}".encode(), padding.PKCS1v15(), hashes.SHA256())).rstrip(b'=').decode()
+        jwt_token = f"{header}.{payload}.{sig}"
+        resp = requests.post("https://oauth2.googleapis.com/token",
+            data={"grant_type":"urn:ietf:params:oauth:grant-type:jwt-bearer","assertion":jwt_token}, timeout=15)
+        if resp.ok:
+            return resp.json().get("access_token")
+    except Exception as e:
+        print(f"שגיאה Drive token: {e}", flush=True)
+    return None
+
 def wa_extract_drive_media(link):
-    """חלץ מדיה מגוגל דרייב"""
+    """חלץ מדיה מגוגל דרייב – תומך בקבצים ותיקיות"""
     try:
         drive_id, drive_type = extract_drive_id(link)
         if not drive_id:
             return []
+
         results = []
-        if drive_type == "folder":
-            # תיקייה – נסה לקבל את הקבצים
-            api_url = f"https://www.googleapis.com/drive/v3/files"
+
+        if drive_type == "file":
+            # קובץ בודד
+            content = download_drive_file(drive_id)
+            if content and len(content) > 1000:
+                # זהה סוג לפי תוכן
+                img_types = [b'\xff\xd8', b'\x89PNG', b'GIF', b'RIFF', b'WEBP']
+                is_img = any(content[:10].startswith(t) for t in img_types)
+                results.append({"type": "image" if is_img else "video",
+                               "content": content, "url": link})
+
+        elif drive_type == "folder":
+            # תיקייה – נסה עם Service Account קודם
+            token = get_drive_token()
+            headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+            # קבל רשימת קבצים
+            api_url = "https://www.googleapis.com/drive/v3/files"
             params = {
                 "q": f"'{drive_id}' in parents and trashed=false",
-                "fields": "files(id,name,mimeType,webContentLink)",
-                "supportsAllDrives": True
+                "fields": "files(id,name,mimeType)",
+                "pageSize": 50
             }
-            # נסה גישה ציבורית
-            r = requests.get(api_url, params=params, timeout=10)
+            r = requests.get(api_url, params=params, headers=headers, timeout=15)
+
             if r.ok:
-                for f in r.json().get("files", []):
+                files = r.json().get("files", [])
+                print(f"Drive folder: {len(files)} קבצים", flush=True)
+                for f in files:
                     mime = f.get("mimeType","")
-                    if "image" in mime:
-                        dl_url = f"https://drive.google.com/uc?export=download&id={f['id']}"
-                        results.append({"type": "image", "url": dl_url})
+                    fid = f["id"]
+                    if "image" in mime or "jpeg" in mime or "png" in mime:
+                        # הורד תמונה
+                        dl_url = f"https://www.googleapis.com/drive/v3/files/{fid}?alt=media"
+                        dl_resp = requests.get(dl_url, headers=headers, timeout=20)
+                        if dl_resp.ok and len(dl_resp.content) > 1000:
+                            results.append({"type": "image", "content": dl_resp.content, "url": ""})
                     elif "video" in mime:
-                        results.append({"type": "video", "url": f"https://drive.google.com/uc?export=download&id={f['id']}"})
-        elif drive_type == "file":
-            dl_url = f"https://drive.google.com/uc?export=download&id={drive_id}"
-            results.append({"type": "image", "url": dl_url})
+                        dl_url = f"https://drive.google.com/uc?export=download&id={fid}"
+                        results.append({"type": "video", "url": dl_url, "content": None})
+            else:
+                # fallback – נסה הורדה ישירה ציבורית
+                print(f"Drive API נכשל: {r.status_code} – מנסה ציבורי", flush=True)
+                content = download_drive_file(drive_id)
+                if content and len(content) > 1000:
+                    results.append({"type": "image", "content": content, "url": link})
+
         return results
     except Exception as e:
         print(f"שגיאה דרייב: {e}", flush=True)
@@ -989,12 +1046,21 @@ def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, f
     if wa_is_drive_link(text_msg):
         wa_send("⏳ מוריד מגוגל דרייב...")
         media = wa_extract_drive_media(text_msg)
+        count = 0
         for m in media:
             if m.get("type") == "image":
-                buf["images"].append(m["url"])
-            elif m.get("type") == "video":
+                if m.get("content"):
+                    buf["images"].append(m["content"])  # bytes ישירות
+                elif m.get("url"):
+                    buf["images"].append(m["url"])
+                count += 1
+            elif m.get("type") == "video" and m.get("url"):
                 buf["videos"].append(m["url"])
-        wa_send(f"✅ דרייב: {len(media)} פריטים נוספו")
+                count += 1
+        if count:
+            wa_send(f"✅ דרייב: {count} פריטים נוספו")
+        else:
+            wa_send("⚠️ לא נמצאו קבצים בדרייב.\nודא שהתיקייה/הקובץ משותפים עם 'כל מי שיש לו לינק'")
         return
 
     # תוכן רגיל
@@ -2721,7 +2787,7 @@ def auto_detect_geresh(text):
             print(f"📝 נוסף לרשימת גרשיים: {normalized}", flush=True)
 
 def fix_geresh(text):
-    """מנקה גרשיים בטקסט – מוחק כל ״ שלא שייך למילה מוכרת"""
+    """מנקה גרשיים בטקסט – שומר על כל גרש בין אותיות עבריות"""
     import re
     if not text:
         return text
@@ -2738,16 +2804,22 @@ def fix_geresh(text):
             placeholders[ph] = word
             text = re.sub(pattern, ph, text)
 
-    # שלב 3: מחק ״ שנותר – אבל רק גרש עברי, לא מירכאות רגילות
-    text = re.sub(r'([א-ת])״([א-ת])', r'\1 \2', text)
+    # שלב 3: שמור גרש בין אותיות עבריות (תאריכים, ראשי תיבות)
+    # י״ז, י״ט, ב״ה וכו' – אל תמחק!
+    text = re.sub(r'([א-ת])״([א-ת])', r'\1__GERESH__\2', text)
+
+    # שלב 4: מחק ״ שנותר בסוף מילה או לבד
     text = re.sub(r'([א-ת])״', r'\1', text)
     text = text.replace('״', '')
 
-    # שלב 4: שחזר מילים מוכרות
+    # שלב 5: שחזר גרש שמור
+    text = text.replace('__GERESH__', '״')
+
+    # שלב 6: שחזר מילים מוכרות
     for ph, word in placeholders.items():
         text = text.replace(ph, word)
 
-    # שלב 5: נקה רווחים כפולים
+    # שלב 7: נקה רווחים כפולים
     text = re.sub(r'  +', ' ', text)
 
     return text
@@ -2763,45 +2835,43 @@ def build_groq_prompt(text):
 טקסט: {text}"""
 
 def build_prompt(text):
-    base = GEMINI_PROMPT if GEMINI_PROMPT else """אתה עורך חדשות מקצועי לאתר חב"ד. קרא את הטקסט וצור ממנו כתבה עיתונאית.
+    base = GEMINI_PROMPT if GEMINI_PROMPT else """אתה עורך חדשות מקצועי. קרא את הטקסט וצור כתבה עיתונאית.
 
-EXAMPLE INPUT:
-תלמידי ישיבת תומכי תמימים בטבריה התאספו בליל י"ז בסיוון בציון משה בן מימון לסיום ספר הפלאה. לאחר הסיום התקיימה התוועדות חסידית. מארגני המעמד הודיעו כי סיום ספר זרעים ייערך בי"ד בתמוז.
+דוגמה 1:
+טקסט: תלמידי ישיבת אוהלי תורה התמודדו בחידון תניא שנתי. שמואל דוד מורוזוב זכה במקום הראשון.
+כותרת טובה: חידון התניא השנתי בישיבת אוהלי תורה: מורוזוב זכה במקום הראשון
+כותרת רעה: קראון הייטס/חידון התניא: תלמידים הצטיינו בחידון
 
-EXAMPLE OUTPUT:
-title: סיום הרמב״ם בציון הרמב״ם בטבריה: תלמידי תומכי תמימים חגגו בי״ז בסיוון
-subtitle: תלמידי הישיבה סיימו ספר הפלאה והחלו בספר זרעים • המעמד התקיים בציון משה בן מימון ונחתם בהתוועדות חסידית • סיום ספר זרעים הבא נקבע לי״ד בתמוז בהשתתפות רבנים ומשפיעים
-red_title: סיום הרמב״ם
----
+דוגמה 2:
+טקסט: תלמידי תומכי תמימים בטבריה סיימו ספר הפלאה בציון הרמב״ם.
+כותרת טובה: סיום הרמב״ם בטבריה: תלמידי תומכי תמימים חגגו בציון משה בן מימון
+כותרת רעה: טבריה: תלמידים סיימו ספר
 
 כותרת ראשית:
-- בין 6 ל-10 מילים
-- פורמט: מיקום/נושא + נקודתיים + תיאור מפורט
-- חייב לכלול מיקום, ארוע ומשתתפים
-- נקודתיים פעם אחת בלבד, ללא נקודה בסוף
+- 7-12 מילים
+- ללא סלש / בין מילים
+- נקודתיים אחת בלבד
+- ללא נקודה בסוף
 
 כותרת משנה:
-- בדיוק 2-3 משפטים מלאים, כל משפט לפחות 6 מילים
-- מופרדים בסימן • בלבד, לא בסוף המשפט
-- ללא נקודה לפני • וללא * או סימני עיצוב
+- 2-3 משפטים מלאים, כל אחד לפחות 7 מילים
+- מופרדים ב-• בלבד, לא בסוף
+- ללא נקודה לפני •
 
 כותרת אדומה:
-- 2-4 מילים בלבד, ללא נקודה בסוף
+- 2-4 מילים בלבד
 
-גוף הכתבה:
-- העתק את הטקסט המקורי מילה במילה
-- חלק לפסקאות של 2-4 משפטים
-- הסר * _ ~ אבל שמור תוכן מילים
+גוף:
+- העתק מהמקור מילה במילה, חלק לפסקאות
 
 תגיות:
 - 5-8 מילות מפתח
 
 גרשיים:
-- במקום מירכאות רגילות " השתמש תמיד בגרש עברי ״ (U+05F4)
-- לדוגמה: חב״ד, רמב״ם, י״ז, בעז״ה
-- זה חשוב למניעת שגיאות JSON
+- השתמש ב-״ (גרש עברי) לא ב-" רגיל
+- שמור: חב״ד, י״ט, בעז״ה, רמב״ם וכו׳
 
-החזר JSON בלבד ללא הסברים:
+החזר JSON בלבד:
 {{"title":"...","subtitle":"...","red_title":"...","body":"...","tags":["..."]}}
 
 טקסט:
@@ -2809,8 +2879,8 @@ red_title: סיום הרמב״ם
     learning_ctx = build_learning_context()
     if learning_ctx:
         base = base.replace(
-            "\nהחזר JSON בלבד ללא הסברים:",
-            f"\nלמד מהעריכות הקודמות שלי:{learning_ctx}\nהחזר JSON בלבד ללא הסברים:"
+            "\nהחזר JSON בלבד:",
+            f"\nלמד מהעריכות הקודמות שלי:{learning_ctx}\nהחזר JSON בלבד:"
         )
     return base.replace("{text}", text) if "{text}" in base else base + f"\n\nטקסט:\n{text}"
 
