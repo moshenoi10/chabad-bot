@@ -761,11 +761,36 @@ def wa_is_drive_link(text):
     return "drive.google.com" in text or "docs.google.com" in text
 
 def wa_extract_drive_media(link):
-    """חלץ מדיה מגוגל דרייב – מחזיר רשימת URLs"""
+    """חלץ מדיה מגוגל דרייב"""
     try:
-        return extract_google_drive_media(link)
+        drive_id, drive_type = extract_drive_id(link)
+        if not drive_id:
+            return []
+        results = []
+        if drive_type == "folder":
+            # תיקייה – נסה לקבל את הקבצים
+            api_url = f"https://www.googleapis.com/drive/v3/files"
+            params = {
+                "q": f"'{drive_id}' in parents and trashed=false",
+                "fields": "files(id,name,mimeType,webContentLink)",
+                "supportsAllDrives": True
+            }
+            # נסה גישה ציבורית
+            r = requests.get(api_url, params=params, timeout=10)
+            if r.ok:
+                for f in r.json().get("files", []):
+                    mime = f.get("mimeType","")
+                    if "image" in mime:
+                        dl_url = f"https://drive.google.com/uc?export=download&id={f['id']}"
+                        results.append({"type": "image", "url": dl_url})
+                    elif "video" in mime:
+                        results.append({"type": "video", "url": f"https://drive.google.com/uc?export=download&id={f['id']}"})
+        elif drive_type == "file":
+            dl_url = f"https://drive.google.com/uc?export=download&id={drive_id}"
+            results.append({"type": "image", "url": dl_url})
+        return results
     except Exception as e:
-        print(f"שגיאה דרייב WA: {e}", flush=True)
+        print(f"שגיאה דרייב: {e}", flush=True)
         return []
 
 def handle_whatsapp_webhook(body):
