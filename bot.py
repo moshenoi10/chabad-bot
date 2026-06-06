@@ -760,7 +760,24 @@ def wa_send(msg, to=None):
 def wa_is_drive_link(text):
     return "drive.google.com" in text or "docs.google.com" in text
 
-def get_drive_token():
+def compress_image(content):
+    """דחוס תמונה ל-1920px JPEG"""
+    try:
+        from PIL import Image
+        import io
+        Image.MAX_IMAGE_PIXELS = None
+        im = Image.open(io.BytesIO(content))
+        if im.mode not in ("RGB", "L"):
+            im = im.convert("RGB")
+        im.thumbnail((1920, 1920), Image.LANCZOS)
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=82)
+        result = buf.getvalue()
+        print(f"דחוסה: {len(content)//1024}KB → {len(result)//1024}KB", flush=True)
+        return result
+    except Exception as e:
+        print(f"דחיסה נכשלה: {e}", flush=True)
+        return content if len(content) < 5_000_000 else None
     """מקבל access token ל-Google Drive דרך Service Account"""
     try:
         import json as _json, base64, time as _time
@@ -837,8 +854,10 @@ def wa_extract_drive_media(link):
                                              headers=headers_browser)
                         content_type = dl_resp.headers.get("Content-Type","")
                         if dl_resp.ok and "image" in content_type and len(dl_resp.content) > 5000:
-                            results.append({"type": "image", "content": dl_resp.content, "url": ""})
-                            print(f"✅ תמונה: {fid} ({len(dl_resp.content)} bytes)", flush=True)
+                            compressed = compress_image(dl_resp.content)
+                            if compressed:
+                                results.append({"type": "image", "content": compressed, "url": ""})
+                                print(f"✅ תמונה: {fid} ({len(compressed)//1024}KB)", flush=True)
                         elif dl_resp.ok and "video" in content_type:
                             results.append({"type": "video",
                                           "url": f"https://drive.google.com/uc?export=download&id={fid}",
@@ -1664,19 +1683,9 @@ def _process_wa_article(buf, sender_name):
                     continue
                 if not content or len(content) < 1000:
                     continue
-                # דחוס תמונות גדולות מ-2MB
+                # דחוס תמונות גדולות
                 if len(content) > 2_000_000:
-                    try:
-                        from PIL import Image
-                        import io
-                        im = Image.open(io.BytesIO(content))
-                        im.thumbnail((1920, 1920), Image.LANCZOS)
-                        buf_io = io.BytesIO()
-                        im.save(buf_io, format="JPEG", quality=85)
-                        content = buf_io.getvalue()
-                        print(f"דחוסה: {len(content)} bytes", flush=True)
-                    except Exception as ce:
-                        print(f"דחיסה נכשלה: {ce}", flush=True)
+                    content = compress_image(content) or content
                 images_bytes.append(content)
             except Exception as e:
                 print(f"שגיאה תמונה: {e}", flush=True)
