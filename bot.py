@@ -2688,6 +2688,8 @@ def clean_json_string(result):
     import re
     result = result.strip().replace("```json", "").replace("```", "").strip()
     result = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', result)
+    # תקן {{ }} כפול שGemini לפעמים שולח
+    result = result.replace("{{", "{").replace("}}", "}")
     first_brace = result.find("{")
     last_brace = result.rfind("}")
     if first_brace == -1 or last_brace == -1:
