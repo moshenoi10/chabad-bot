@@ -810,48 +810,41 @@ def wa_extract_drive_media(link):
                                "content": content, "url": link})
 
         elif drive_type == "folder":
-            # נסה קודם בלי auth (תיקייה ציבורית)
-            api_url = "https://www.googleapis.com/drive/v3/files"
-            params = {
-                "q": f"'{drive_id}' in parents and trashed=false",
-                "fields": "files(id,name,mimeType)",
-                "pageSize": 50,
-                "key": "AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY"  # public API key
+            import re as _re
+            # גרד את דף HTML של התיקייה לחלץ file IDs
+            headers_browser = {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
             }
-            r = requests.get(api_url, params=params, timeout=15)
-            print(f"Drive public: {r.status_code} {r.text[:200]}", flush=True)
-
-            if not r.ok or not r.json().get("files"):
-                # נסה עם Service Account token
-                token = get_drive_token()
-                if token:
-                    headers = {"Authorization": f"Bearer {token}"}
-                    params.pop("key", None)
-                    r = requests.get(api_url, params=params, headers=headers, timeout=15)
-                    print(f"Drive SA: {r.status_code} {r.text[:200]}", flush=True)
+            r = requests.get(link, headers=headers_browser, timeout=15)
+            print(f"Drive HTML: {r.status_code} len={len(r.text)}", flush=True)
 
             if r.ok:
-                files = r.json().get("files", [])
-                print(f"Drive folder: {len(files)} קבצים", flush=True)
-                token = get_drive_token()
-                headers = {"Authorization": f"Bearer {token}"} if token else {}
-                for f in files:
-                    mime = f.get("mimeType","")
-                    fid = f["id"]
-                    if "image" in mime or "jpeg" in mime or "png" in mime:
-                        dl_url = f"https://www.googleapis.com/drive/v3/files/{fid}?alt=media"
-                        dl_resp = requests.get(dl_url, headers=headers, timeout=20)
-                        if not dl_resp.ok:
-                            # נסה הורדה ציבורית
-                            dl_resp = requests.get(
-                                f"https://drive.google.com/uc?export=download&id={fid}",
-                                timeout=20)
-                        if dl_resp.ok and len(dl_resp.content) > 1000:
+                # חלץ IDs של קבצים מה-HTML
+                ids = _re.findall(r'"([\w-]{25,})"', r.text)
+                # סנן IDs שנראים כמו file IDs (25-44 תווים)
+                file_ids = list(dict.fromkeys([
+                    i for i in ids
+                    if 25 <= len(i) <= 44
+                    and drive_id not in i
+                ]))[:30]
+                print(f"Drive: נמצאו {len(file_ids)} IDs אפשריים", flush=True)
+
+                for fid in file_ids:
+                    try:
+                        # נסה להוריד כתמונה
+                        dl_url = f"https://drive.google.com/uc?export=download&id={fid}&confirm=t"
+                        dl_resp = requests.get(dl_url, timeout=15, allow_redirects=True,
+                                             headers=headers_browser)
+                        content_type = dl_resp.headers.get("Content-Type","")
+                        if dl_resp.ok and "image" in content_type and len(dl_resp.content) > 5000:
                             results.append({"type": "image", "content": dl_resp.content, "url": ""})
-                    elif "video" in mime:
-                        results.append({"type": "video",
-                                       "url": f"https://drive.google.com/uc?export=download&id={fid}",
-                                       "content": None})
+                            print(f"✅ תמונה: {fid} ({len(dl_resp.content)} bytes)", flush=True)
+                        elif dl_resp.ok and "video" in content_type:
+                            results.append({"type": "video",
+                                          "url": f"https://drive.google.com/uc?export=download&id={fid}",
+                                          "content": None})
+                    except:
+                        pass
 
         return results
     except Exception as e:
