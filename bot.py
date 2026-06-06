@@ -810,40 +810,48 @@ def wa_extract_drive_media(link):
                                "content": content, "url": link})
 
         elif drive_type == "folder":
-            # תיקייה – נסה עם Service Account קודם
-            token = get_drive_token()
-            headers = {"Authorization": f"Bearer {token}"} if token else {}
-
-            # קבל רשימת קבצים
+            # נסה קודם בלי auth (תיקייה ציבורית)
             api_url = "https://www.googleapis.com/drive/v3/files"
             params = {
                 "q": f"'{drive_id}' in parents and trashed=false",
                 "fields": "files(id,name,mimeType)",
-                "pageSize": 50
+                "pageSize": 50,
+                "key": "AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY"  # public API key
             }
-            r = requests.get(api_url, params=params, headers=headers, timeout=15)
+            r = requests.get(api_url, params=params, timeout=15)
+            print(f"Drive public: {r.status_code} {r.text[:200]}", flush=True)
+
+            if not r.ok or not r.json().get("files"):
+                # נסה עם Service Account token
+                token = get_drive_token()
+                if token:
+                    headers = {"Authorization": f"Bearer {token}"}
+                    params.pop("key", None)
+                    r = requests.get(api_url, params=params, headers=headers, timeout=15)
+                    print(f"Drive SA: {r.status_code} {r.text[:200]}", flush=True)
 
             if r.ok:
                 files = r.json().get("files", [])
                 print(f"Drive folder: {len(files)} קבצים", flush=True)
+                token = get_drive_token()
+                headers = {"Authorization": f"Bearer {token}"} if token else {}
                 for f in files:
                     mime = f.get("mimeType","")
                     fid = f["id"]
                     if "image" in mime or "jpeg" in mime or "png" in mime:
-                        # הורד תמונה
                         dl_url = f"https://www.googleapis.com/drive/v3/files/{fid}?alt=media"
                         dl_resp = requests.get(dl_url, headers=headers, timeout=20)
+                        if not dl_resp.ok:
+                            # נסה הורדה ציבורית
+                            dl_resp = requests.get(
+                                f"https://drive.google.com/uc?export=download&id={fid}",
+                                timeout=20)
                         if dl_resp.ok and len(dl_resp.content) > 1000:
                             results.append({"type": "image", "content": dl_resp.content, "url": ""})
                     elif "video" in mime:
-                        dl_url = f"https://drive.google.com/uc?export=download&id={fid}"
-                        results.append({"type": "video", "url": dl_url, "content": None})
-            else:
-                # fallback – נסה הורדה ישירה ציבורית
-                print(f"Drive API נכשל: {r.status_code} – מנסה ציבורי", flush=True)
-                content = download_drive_file(drive_id)
-                if content and len(content) > 1000:
-                    results.append({"type": "image", "content": content, "url": link})
+                        results.append({"type": "video",
+                                       "url": f"https://drive.google.com/uc?export=download&id={fid}",
+                                       "content": None})
 
         return results
     except Exception as e:
