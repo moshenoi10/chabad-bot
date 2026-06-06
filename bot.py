@@ -1653,17 +1653,31 @@ def _process_wa_article(buf, sender_name):
 
         # הורד תמונות – תמיכה בbytes (מדרייב) וב-URL
         images_bytes = []
-        for img in buf.get("images", [])[:10]:
+        for img in buf.get("images", []):
             try:
                 if isinstance(img, (bytes, bytearray)):
-                    # תמונה שכבר הורדה (מדרייב)
-                    if len(img) > 1000:
-                        images_bytes.append(bytes(img))
+                    content = bytes(img)
                 elif isinstance(img, str):
-                    # URL – הורד
                     r = requests.get(img, timeout=20)
-                    if r.ok and len(r.content) > 1000:
-                        images_bytes.append(r.content)
+                    content = r.content if r.ok else None
+                else:
+                    continue
+                if not content or len(content) < 1000:
+                    continue
+                # דחוס תמונות גדולות מ-2MB
+                if len(content) > 2_000_000:
+                    try:
+                        from PIL import Image
+                        import io
+                        im = Image.open(io.BytesIO(content))
+                        im.thumbnail((1920, 1920), Image.LANCZOS)
+                        buf_io = io.BytesIO()
+                        im.save(buf_io, format="JPEG", quality=85)
+                        content = buf_io.getvalue()
+                        print(f"דחוסה: {len(content)} bytes", flush=True)
+                    except Exception as ce:
+                        print(f"דחיסה נכשלה: {ce}", flush=True)
+                images_bytes.append(content)
             except Exception as e:
                 print(f"שגיאה תמונה: {e}", flush=True)
         print(f"images_bytes: {len(images_bytes)} תמונות מוכנות", flush=True)
