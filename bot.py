@@ -1618,7 +1618,6 @@ def _finish_wa_edit(sender, session, sender_name):
                     current += f'\n\n<div class="wp-block-file"><object data="{pdf["url"]}" type="application/pdf" width="100%" height="600px"><a href="{pdf["url"]}">{pdf["name"]}</a></object></div>'
                 if pdf_embeds:
                     update_data["content"] = current
-                    print(f"מעדכן גלריה: {existing_gallery} + {gallery_ids} = {new_gallery}", flush=True)
                 resp = requests.post(f"{WP_URL}/posts/{post_id}",
                     json=update_data, auth=(WP_USER, WP_PASSWORD), timeout=10)
                 print(f"עדכון כתבה: {resp.status_code}", flush=True)
