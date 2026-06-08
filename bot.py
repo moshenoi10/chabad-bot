@@ -1271,7 +1271,7 @@ def _wa_approve(sender, sender_name):
                                 featured_url = media[0].get("source_url","")
                     except:
                         pass
-                    ok = send_whatsapp(wa_msg)
+                    ok = send_whatsapp_publish(wa_msg)
                     print(f"WA שליחה: {'✅' if ok else '❌'}", flush=True)
                 drafts[user_id] = {"step": "idle", "gallery": []}
                 send_message(int(SUPER_ADMIN_ID), f"✅ <b>פורסם מוואטסאפ!</b>\n🔗 {post_url}")
@@ -1866,6 +1866,14 @@ def start_whatsapp_polling():
                 print(f"שגיאה WA polling: {e}", flush=True)
         time.sleep(1)
 
+
+
+def send_whatsapp_publish(message):
+    """שולח הודעת פרסום לקבוצה הייעודית"""
+    publish_group = os.environ.get("WHATSAPP_PUBLISH_GROUP_ID","")
+    if publish_group:
+        return send_whatsapp(message, to=publish_group)
+    return send_whatsapp(message)
 
 def send_whatsapp_with_buttons(message, buttons):
     return send_whatsapp(message)
@@ -5625,7 +5633,7 @@ def handle_callback(cb):
                 if os.environ.get("WHATSAPP_GROUP_ID") and whatsapp_settings["active"]:
                     wa_msg = WHATSAPP_MSG_FORMAT.format(
                         site_name=SITE_NAME, title=pt, subtitle=ps, url=pu)
-                    send_whatsapp(wa_msg)
+                    send_whatsapp_publish(wa_msg)
             threading.Thread(target=_post_publish, daemon=True).start()
         else:
             edit_message(chat_id, msg_id, f"❌ <b>שגיאה בפרסום</b>\n\n{resp.text[:200]}")
@@ -6151,7 +6159,7 @@ def handle_callback(cb):
             wa_subtitle = draft.get("subtitle", "")
             wa_msg = WHATSAPP_MSG_FORMAT.format(
                 site_name=SITE_NAME, title=post_title, subtitle=wa_subtitle, url=post_url)
-            ok = send_whatsapp(wa_msg)
+            ok = send_whatsapp_publish(wa_msg)
             edit_message(chat_id, msg_id,
                 "✅ <b>נשלח ל-WhatsApp!</b>" if ok else "❌ שגיאה בשליחה ל-WhatsApp")
         else:
@@ -6932,7 +6940,7 @@ def handle_callback(cb):
         def _wa():
             wa_subtitle = draft.get('subtitle','')
             wa_msg = WHATSAPP_MSG_FORMAT.format(site_name=SITE_NAME, title=post_title, subtitle=wa_subtitle, url=post_url)
-            ok = send_whatsapp(wa_msg)
+            ok = send_whatsapp_publish(wa_msg)
             edit_message(chat_id, msg_id,
                 "✅ <b>נשלח ל-WhatsApp!</b>" if ok else
                 "❌ שגיאה בשליחה ל-WhatsApp\n\nבדוק שה-WHATSAPP_GROUP_ID מוגדר ב-Render")
