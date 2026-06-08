@@ -1705,6 +1705,22 @@ def _process_wa_article(buf, sender_name):
 
         # מעבד – ללא הודעה
 
+        # העלה PDF לוורדפרס
+        pdf_urls = []
+        for pdf in buf.get("pdfs", []):
+            try:
+                pdf_url_val = pdf.get("url","")
+                pdf_name = pdf.get("name","document.pdf")
+                if pdf_url_val:
+                    r = requests.get(pdf_url_val, timeout=30)
+                    if r.ok:
+                        _, pdf_link = upload_pdf_to_wp(r.content, pdf_name)
+                        if pdf_link:
+                            pdf_urls.append({"url": pdf_link, "name": pdf_name})
+                            print(f"✅ PDF עלה: {pdf_name}", flush=True)
+            except Exception as e:
+                print(f"שגיאה PDF: {e}", flush=True)
+
         # עבד AI
         result = process_with_gemini(full_text)
         if not result:
@@ -1726,6 +1742,7 @@ def _process_wa_article(buf, sender_name):
             "main_image": images_bytes[0] if images_bytes else None,
             "vimeo_urls": vimeo_urls,
             "vimeo_url": vimeo_urls[0] if vimeo_urls else None,
+            "pdf_urls": pdf_urls,
             "wa_source": sender_name,
             "summary_msg_id": None,
         })
@@ -2565,6 +2582,12 @@ def publish_to_wp(draft, status="publish", schedule_date=None):
     for pdf in draft.get("pdf_embeds", []):
         pdf_url = pdf["url"]
         pdf_name = pdf["name"]
+        content += f'\n\n<div class="wp-block-file"><object data="{pdf_url}" type="application/pdf" width="100%" height="600px"><a href="{pdf_url}">{pdf_name}</a></object></div>'
+
+    # PDF מוואטסאפ
+    for pdf in draft.get("pdf_urls", []):
+        pdf_url = pdf["url"]
+        pdf_name = pdf.get("name","PDF")
         content += f'\n\n<div class="wp-block-file"><object data="{pdf_url}" type="application/pdf" width="100%" height="600px"><a href="{pdf_url}">{pdf_name}</a></object></div>'
 
     # העלאת PDF ישן (גיבוי)
