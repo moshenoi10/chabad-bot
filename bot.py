@@ -740,7 +740,7 @@ def wa_send(msg, to=None):
     """שלח הודעה – לשולח ספציפי או לקבוצה"""
     instance_id = os.environ.get("GREENAPI_ID","")
     token = os.environ.get("GREENAPI_TOKEN","")
-    chat_id = to or os.environ.get("WHATSAPP_GROUP_ID","")
+    chat_id = to or os.environ.get("WHATSAPP_PUBLISH_GROUP_ID") or os.environ.get("WHATSAPP_GROUP_ID","")
     print(f"wa_send: group={chat_id[:20] if chat_id else 'MISSING'}, msg={msg[:30]}", flush=True)
     if not instance_id or not token or not chat_id:
         print(f"⚠️ wa_send: חסרים פרטי Green API instance={bool(instance_id)} token={bool(token)} chat={bool(chat_id)}", flush=True)
@@ -888,8 +888,9 @@ def handle_whatsapp_webhook(body):
         sender_number = sender.replace("@c.us","").replace("@s.whatsapp.net","")
 
         # בדוק קבוצה
-        target_group = os.environ.get("WHATSAPP_GROUP_ID", "")
-        if target_group and chat_id_wa != target_group:
+        # קבוצת אינבוקס – ממנה מקבלים כתבות
+        inbox_group = os.environ.get("WHATSAPP_INBOX_GROUP_ID") or os.environ.get("WHATSAPP_GROUP_ID", "")
+        if inbox_group and chat_id_wa != inbox_group:
             return
 
         # בדוק הרשאה
@@ -1874,7 +1875,7 @@ def send_whatsapp(message, image_url=None):
     """שולח הודעה לקבוצת וואטסאפ דרך Green API"""
     instance_id = os.environ.get("GREENAPI_ID", "")
     token = os.environ.get("GREENAPI_TOKEN", "")
-    group_id = os.environ.get("WHATSAPP_GROUP_ID", "")
+    group_id = os.environ.get("WHATSAPP_PUBLISH_GROUP_ID") or os.environ.get("WHATSAPP_GROUP_ID", "")
     if not instance_id or not token or not group_id:
         print("⚠️ Green API לא מוגדר", flush=True)
         return False
