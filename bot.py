@@ -737,10 +737,11 @@ def get_wa_allowed_senders():
     return [s.strip() for s in env.split(",") if s.strip()]
 
 def wa_send(msg, to=None):
-    """שלח הודעה – לשולח ספציפי או לקבוצה"""
+    """שלח הודעה – לקבוצת העבודה כברירת מחדל"""
     instance_id = os.environ.get("GREENAPI_ID","")
     token = os.environ.get("GREENAPI_TOKEN","")
-    chat_id = to or os.environ.get("WHATSAPP_PUBLISH_GROUP_ID") or os.environ.get("WHATSAPP_GROUP_ID","")
+    # ברירת מחדל = קבוצת העבודה (WHATSAPP_GROUP_ID) – לא קבוצת הפרסום!
+    chat_id = to or os.environ.get("WHATSAPP_GROUP_ID","")
     print(f"wa_send: group={chat_id[:20] if chat_id else 'MISSING'}, msg={msg[:30]}", flush=True)
     if not instance_id or not token or not chat_id:
         print(f"⚠️ wa_send: חסרים פרטי Green API instance={bool(instance_id)} token={bool(token)} chat={bool(chat_id)}", flush=True)
@@ -2891,6 +2892,26 @@ def fix_geresh(text):
             ph = f"__GW{i}__"
             placeholders[ph] = word
             text = re.sub(pattern, ph, text)
+
+    # שלב 2.5: גרש שמפריד בין תואר לשם פרטי → רווח
+    import re as _re
+    # רשימת תוארים שצריך לטפל בהם במיוחד (2 אותיות)
+    _TITLES_2 = {'רב', 'פה', 'רי', 'רמ'}
+
+    def fix_title_geresh(m):
+        before = m.group(1)
+        after = m.group(2)
+        # ראשי תיבות = 1-2 אותיות שאינן תואר, או מילים מוכרות ב-GERESH_WORDS
+        full = before + '״' + after
+        if any(full.startswith(w) for w in GERESH_WORDS):
+            return m.group(0)  # מילה מוכרת – שמור
+        if len(before) <= 2 and before not in _TITLES_2:
+            return m.group(0)  # ראשי תיבות קצרים – שמור
+        if len(before) <= 2 and before in _TITLES_2:
+            return before + ' ' + after  # תואר קצר – רווח
+        return before + ' ' + after  # מילה ארוכה לפני שם – רווח
+
+    text = _re.sub(r'([א-ת]+)״([א-ת])', fix_title_geresh, text)
 
     # שלב 3: שמור גרש בין אותיות עבריות (תאריכים, ראשי תיבות)
     # י״ז, י״ט, ב״ה וכו' – אל תמחק!
