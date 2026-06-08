@@ -1566,8 +1566,24 @@ def _finish_wa_edit(sender, session, sender_name):
             except Exception as e:
                 print(f"שגיאה וידאו edit: {e}", flush=True)
 
+        # PDF
+        pdf_embeds = []
+        for pdf in session.get("pdfs", []):
+            try:
+                pdf_url_val = pdf.get("url","")
+                pdf_name = pdf.get("name","document.pdf")
+                if pdf_url_val:
+                    r = requests.get(pdf_url_val, timeout=30)
+                    if r.ok:
+                        _, pdf_link = upload_pdf_to_wp(r.content, pdf_name)
+                        if pdf_link:
+                            pdf_embeds.append({"url": pdf_link, "name": pdf_name})
+                            print(f"✅ PDF עלה: {pdf_name}", flush=True)
+            except Exception as e:
+                print(f"שגיאה PDF edit: {e}", flush=True)
+
         # עדכן תוכן – הוסף בסוף
-        if vimeo_embeds or gallery_ids:
+        if vimeo_embeds or gallery_ids or pdf_embeds:
             post_resp = requests.get(f"{WP_URL}/posts/{post_id}",
                 params={"context": "edit"},
                 auth=(WP_USER, WP_PASSWORD), timeout=10)
@@ -1597,6 +1613,11 @@ def _finish_wa_edit(sender, session, sender_name):
                         except:
                             pass
                     update_data["content"] = current
+                # הוסף PDFs לתוכן
+                for pdf in pdf_embeds:
+                    current += f'\n\n<div class="wp-block-file"><object data="{pdf["url"]}" type="application/pdf" width="100%" height="600px"><a href="{pdf["url"]}">{pdf["name"]}</a></object></div>'
+                if pdf_embeds:
+                    update_data["content"] = current
                     print(f"מעדכן גלריה: {existing_gallery} + {gallery_ids} = {new_gallery}", flush=True)
                 resp = requests.post(f"{WP_URL}/posts/{post_id}",
                     json=update_data, auth=(WP_USER, WP_PASSWORD), timeout=10)
@@ -1609,6 +1630,7 @@ def _finish_wa_edit(sender, session, sender_name):
         if session.get("main_image_url"): parts.append("תמונה ראשית")
         if gallery_ids: parts.append(f"{len(gallery_ids)} תמונות")
         if vimeo_embeds: parts.append(f"{len(vimeo_embeds)} סרטונים")
+        if pdf_embeds: parts.append(f"{len(pdf_embeds)} PDF")
         wa_send("✅ עודכן: " + " • ".join(parts) + "!" if parts else "✅ עודכן!")
         send_message(admin_chat, f"✅ <b>כתבה {post_id} עודכנה מוואטסאפ</b>")
 
