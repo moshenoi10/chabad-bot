@@ -844,7 +844,7 @@ def wa_extract_drive_media(link):
                     i for i in ids
                     if 25 <= len(i) <= 44
                     and drive_id not in i
-                ]))[:30]
+                ]))
                 print(f"Drive: נמצאו {len(file_ids)} IDs אפשריים", flush=True)
 
                 for fid in file_ids:
