@@ -699,7 +699,7 @@ def _run_monthly_report(chat_id, year, month):
 
 
 # ─── WhatsApp Inbox ──────────────────────────────────────
-WA_SETTINGS_FILE = "/data/wa_settings.pkl"
+WA_SETTINGS_FILE = "/tmp/wa_settings.pkl"
 
 def load_wa_settings():
     try:
@@ -901,6 +901,7 @@ def handle_whatsapp_webhook(body):
 
         # חלץ תוכן
         msg_type   = message_data.get("typeMessage", "")
+        print(f"📱 WA {sender_name}: type={msg_type} keys={list(message_data.keys())}", flush=True)
         text_msg   = ""
         image_url  = ""
         video_url  = ""
@@ -1958,8 +1959,8 @@ def run_server():
 import pickle
 
 drafts = {}
-DRAFTS_FILE = "/data/drafts.pkl"
-LEARNING_FILE = "/data/learning.pkl"
+DRAFTS_FILE = "/tmp/drafts.pkl"
+LEARNING_FILE = "/tmp/learning.pkl"
 
 def load_learning():
     try:
