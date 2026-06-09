@@ -1077,11 +1077,18 @@ def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, f
         threading.Thread(target=_run, daemon=True).start()
         return
 
-    # זהה דרייב
+    # זהה דרייב – חלץ לינק מתוך הודעה
     if wa_is_drive_link(text_msg):
+        import re as _re
+        drive_links = _re.findall(r'https://(?:drive|docs)\.google\.com/\S+', text_msg)
+        drive_link = drive_links[0] if drive_links else text_msg.strip()
+        # הוסף את שאר הטקסט (ללא הלינק) לbuffer
+        text_without_link = _re.sub(r'https://(?:drive|docs)\.google\.com/\S+', '', text_msg).strip()
+        if text_without_link:
+            buf["texts"].append(text_without_link)
         buf["downloading"] = True
         wa_send("⏳ מוריד מגוגל דרייב...")
-        media = wa_extract_drive_media(text_msg)
+        media = wa_extract_drive_media(drive_link)
         count = 0
         for m in media:
             if m.get("type") == "image":
