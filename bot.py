@@ -1060,6 +1060,13 @@ def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, f
         wa_article_buffer[sender] = {
             "texts":[], "images":[], "videos":[], "pdfs":[], "audio":[], "started": False
         }
+        imgs = len(buf_copy.get("images",[]))
+        vids = len(buf_copy.get("videos",[]))
+        parts = []
+        if imgs: parts.append(f"{imgs} תמונות")
+        if vids: parts.append(f"{vids} סרטונים")
+        if buf_copy.get("texts"): parts.append("טקסט")
+        wa_send("⏳ קיבלתי! מעבד " + " • ".join(parts) + "...")
         def _run(b=buf_copy, sn=sender_name):
             try:
                 _process_wa_article(b, sn)
@@ -1715,7 +1722,7 @@ def _process_wa_article(buf, sender_name):
         # הורד וידאו
         vimeo_urls = []
         if buf.get("videos"):
-            for i, vid_url in enumerate(buf["videos"][:3]):
+            for i, vid_url in enumerate(buf["videos"]):
                 try:
                     r = requests.get(vid_url, timeout=60)
                     if r.ok:
