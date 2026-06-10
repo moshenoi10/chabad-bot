@@ -928,6 +928,7 @@ def handle_whatsapp_webhook(body):
 
         txt = text_msg.strip()
         print(f"📱 WA {sender_name}: {txt[:50] or msg_type}", flush=True)
+        print(f"  inbox_active={whatsapp_settings.get('inbox_active')}, allowed={get_wa_allowed_senders()}, sender={sender_number}", flush=True)
 
         # ─── נתב לפי מצב ────────────────────────────────────
         edit_session = wa_edit_sessions.get(sender)
