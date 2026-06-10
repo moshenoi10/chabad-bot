@@ -932,6 +932,7 @@ def handle_whatsapp_webhook(body):
 
         # ─── נתב לפי מצב ────────────────────────────────────
         edit_session = wa_edit_sessions.get(sender)
+        print(f"  edit_session={edit_session is not None}, step={edit_session.get('step') if edit_session else None}", flush=True)
 
         # 1. מצב עריכה פעיל
         if edit_session:
