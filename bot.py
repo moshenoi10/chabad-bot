@@ -975,12 +975,18 @@ def handle_whatsapp_webhook(body):
             return
 
         if txt == "/אפס":
+            print(f"→ _wa_cancel (אפס)", flush=True)
             wa_article_buffer[sender] = {
-                "texts":[], "images":[], "videos":[], "pdfs":[], "audio":[], "started": False
+                "texts":[], "images":[], "videos":[], "pdfs":[], "audio":[],
+                "started": False, "downloading": False, "cancelled": True
             }
             if sender in wa_edit_sessions:
                 del wa_edit_sessions[sender]
-            wa_send("✅ אופס! מוכן להתחלה חדשה.")
+            # אפס גם draft ממתין
+            user_id = str(SUPER_ADMIN_ID)
+            if drafts.get(user_id, {}).get("wa_source"):
+                drafts[user_id] = {"step": "idle", "gallery": []}
+            wa_send("✅ אופס! כל הפעולות בוטלו. מוכן להתחלה חדשה.")
             return
 
         if txt == "//":
@@ -993,6 +999,7 @@ def handle_whatsapp_webhook(body):
             _wa_approve(sender, sender_name)
             return
         if txt == "//סטטוס":
+            print(f"→ _wa_status", flush=True)
             _wa_status()
             return
         if txt == "//עזרה":
@@ -1700,6 +1707,9 @@ def _update_wp_meta(post_id, meta_key, value):
 def _process_wa_article(buf, sender_name):
     """מעבד כתבה מוואטסאפ"""
     print(f"_process_wa_article: מתחיל עיבוד – {len(buf.get('texts',[]))} טקסטים, {len(buf.get('images',[]))} תמונות, {len(buf.get('videos',[]))} וידאו", flush=True)
+    if buf.get("cancelled"):
+        print("_process_wa_article: בוטל", flush=True)
+        return
     try:
         admin_chat = int(SUPER_ADMIN_ID)
         full_text = "\n\n".join(buf.get("texts", []))
