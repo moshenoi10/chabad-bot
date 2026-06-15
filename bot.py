@@ -1875,10 +1875,8 @@ def start_whatsapp_polling():
                                 handle_whatsapp_webhook(b)
                             except Exception as e:
                                 print(f"שגיאה WA handler: {e}", flush=True)
-                        t = threading.Thread(target=_handle, daemon=True)
-                        t.start()
-                        t.join(timeout=180)  # עד 3 דקות לטיפול
-                        # מחק תמיד
+                        threading.Thread(target=_handle, daemon=True).start()
+                        # מחק מהתור מיד – לא לחכות לסיום
                         if receipt_id:
                             try:
                                 requests.delete(
@@ -4175,27 +4173,24 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                 draft.setdefault("audio_files", []).append({"bytes": content, "name": msg["audio"].get("file_name", "audio.mp3")})
                 send_message(chat_id, f"✅ קובץ שמע נוסף!\n\nשלח עוד או /done:")
         elif text and text.startswith("http") and "drive.google.com" in text:
-            drive_id, drive_type = extract_drive_id(text)
-            if drive_id:
-                msg_id = send_status(chat_id, "⏳ מוריד תמונות מ-Drive...")
-                if drive_type == "folder":
-                    images, _ = list_drive_folder(drive_id)
-                    count = 0
-                    for i, img in enumerate(images):
-                        content = download_drive_file(img["id"])
-                        if content:
-                            draft.setdefault("gallery", []).append(content)
-                            count += 1
-                        if (i + 1) % 10 == 0:
-                            edit_message(chat_id, msg_id, f"☁️ <b>מוריד מ-Drive...</b>\n\n{progress_bar(count, len(images))} {count}/{len(images)}")
-                    edit_message(chat_id, msg_id, f"✅ <b>{count} תמונות הורדו!</b>\n\nשלח עוד או /done:")
-                elif drive_type == "file":
-                    content = download_drive_file(drive_id)
-                    if content:
-                        draft.setdefault("gallery", []).append(content)
-                        send_message(chat_id, f"✅ תמונה הורדה! ({len(draft['gallery'])} סה\"כ)\n\nשלח עוד או /done:")
+            msg_id = send_status(chat_id, "⏳ מוריד מ-Drive...")
+            media = wa_extract_drive_media(text)
+            img_count = 0
+            vid_count = 0
+            for m in media:
+                if m.get("type") == "image" and m.get("content"):
+                    draft.setdefault("gallery", []).append(m["content"])
+                    img_count += 1
+                elif m.get("type") == "video" and m.get("url"):
+                    draft.setdefault("quick_videos", []).append(m["url"])
+                    vid_count += 1
+            if img_count or vid_count:
+                summary = []
+                if img_count: summary.append(f"{img_count} תמונות")
+                if vid_count: summary.append(f"{vid_count} סרטונים")
+                edit_message(chat_id, msg_id, f"✅ {' + '.join(summary)} מ-Drive!\n\nשלח עוד או /done:")
             else:
-                send_message(chat_id, "❌ לינק Drive לא תקין.")
+                edit_message(chat_id, msg_id, "❌ לא נמצאו קבצים בדרייב.")
         elif text == "/done":
             draft["step"] = "video"
             count = len(draft.get('gallery', []))
@@ -4814,7 +4809,22 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
     elif step == "quick_upload_collect":
         msg_id = draft.get("quick_status_msg_id")
         collected = []
-        if text and text not in ("✅ סיום", "/done"):
+        if text and "drive.google.com" in text:
+            wmsg = send_status(chat_id, "⏳ מוריד מגוגל דרייב...")
+            media = wa_extract_drive_media(text)
+            count = 0
+            for m in media:
+                if m.get("type") == "image" and m.get("content"):
+                    draft["gallery"].append(m["content"])
+                    if not draft.get("main_image"):
+                        draft["main_image"] = m["content"]
+                    count += 1
+                elif m.get("type") == "video" and m.get("url"):
+                    draft["quick_videos"].append(m["url"])
+                    count += 1
+            edit_message(chat_id, wmsg, f"✅ {count} פריטים מדרייב נוספו!")
+            collected.append(f"☁️ {count} מדרייב")
+        elif text and text not in ("✅ סיום", "/done"):
             draft["quick_texts"].append(text)
             collected.append("📝 טקסט")
         if "photo" in msg:
