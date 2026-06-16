@@ -1056,15 +1056,31 @@ def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, f
     """אוסף תוכן לכתבה פתוחה"""
     # סיום כתבה
     if txt == "///":
-        # אם יש הורדת דרייב פעילה – המתן בשקט עד שתסיים
+        # אם יש הורדת דרייב פעילה – המתן בשקט עד שתסיים (עד 15 דקות, 50+ תמונות כבדות לוקחות זמן)
         if buf.get("downloading"):
-            for _ in range(120):
-                time.sleep(1)
+            waited = 0
+            while waited < 900:  # 15 דקות
+                time.sleep(2)
+                waited += 2
                 buf = wa_article_buffer.get(sender, {})
                 if not buf.get("downloading"):
                     break
+                if waited % 60 == 0:
+                    cur_imgs = len(buf.get("images",[]))
+                    wa_send(f"⏳ עדיין מוריד... ({cur_imgs} תמונות עד כה)")
+            else:
+                wa_send("⚠️ ההורדה לוקחת זמן רב. שלח /// שוב כשתראה שהדרייב הסתיים.")
+                return
         if not buf["texts"] and not buf["images"] and not buf["videos"]:
             return
+        # תקופת חסד – המתן 5 שניות לבדוק אם עוד מדיה מגיעה (סרטונים כבדים מתעכבים)
+        prev_count = len(buf.get("images",[])) + len(buf.get("videos",[]))
+        for _ in range(5):
+            time.sleep(1)
+            buf = wa_article_buffer.get(sender, {})
+            new_count = len(buf.get("images",[])) + len(buf.get("videos",[]))
+            if new_count > prev_count:
+                prev_count = new_count  # עוד הגיע – המשך להמתין
         # אפס buffer לפני processing
         buf_copy = {k: list(v) if isinstance(v, list) else v for k, v in buf.items()}
         wa_article_buffer[sender] = {
@@ -1092,30 +1108,42 @@ def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, f
         import re as _re
         drive_links = _re.findall(r'https://(?:drive|docs)\.google\.com/\S+', text_msg)
         drive_link = drive_links[0] if drive_links else text_msg.strip()
-        # הוסף את שאר הטקסט (ללא הלינק) לbuffer
         text_without_link = _re.sub(r'https://(?:drive|docs)\.google\.com/\S+', '', text_msg).strip()
         if text_without_link:
             buf["texts"].append(text_without_link)
-        buf["downloading"] = True
+        wa_article_buffer[sender]["downloading"] = True
         wa_send("⏳ מוריד מגוגל דרייב...")
-        media = wa_extract_drive_media(drive_link)
-        count = 0
-        for m in media:
-            if m.get("type") == "image":
-                if m.get("content"):
-                    buf["images"].append(m["content"])
-                elif m.get("url"):
-                    buf["images"].append(m["url"])
-                count += 1
-            elif m.get("type") == "video" and m.get("url"):
-                buf["videos"].append(m["url"])
-                count += 1
-        buf["downloading"] = False
-        if count:
-            wa_send(f"✅ {count} תמונות מוכנות – שלח /// לעיבוד")
-        else:
-            wa_send("⚠️ לא נמצאו קבצים בדרייב.")
-        return
+
+        def _download_drive_bg(s=sender, link=drive_link):
+            try:
+                media = wa_extract_drive_media(link)
+                target = wa_article_buffer.get(s)
+                if target is None:
+                    return  # בוטל בינתיים
+                count = 0
+                for m in media:
+                    if m.get("type") == "image":
+                        if m.get("content"):
+                            target["images"].append(m["content"])
+                        elif m.get("url"):
+                            target["images"].append(m["url"])
+                        count += 1
+                    elif m.get("type") == "video" and m.get("url"):
+                        target["videos"].append(m["url"])
+                        count += 1
+                target["downloading"] = False
+                if count:
+                    wa_send(f"✅ {count} תמונות מוכנות – שלח /// לעיבוד")
+                else:
+                    wa_send("⚠️ לא נמצאו קבצים בדרייב.")
+            except Exception as e:
+                print(f"שגיאה הורדת דרייב ברקע: {e}", flush=True)
+                target = wa_article_buffer.get(s)
+                if target is not None:
+                    target["downloading"] = False
+                wa_send(f"❌ שגיאה בהורדה מדרייב: {str(e)[:100]}")
+
+        threading.Thread(target=_download_drive_bg, daemon=True).start()
         return
 
     # תוכן רגיל
@@ -4007,22 +4035,10 @@ def show_smart_preview(chat_id, draft, msg_id=None):
             [{"text": "❌ ביטול", "callback_data": "publish_cancel"}]
         ]
     }
-    if msg_id:
-        print(f"show_smart_preview: edit msg_id={msg_id}", flush=True)
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText"
-        data = {"chat_id": chat_id, "message_id": msg_id, "text": preview,
-                "parse_mode": "HTML", "reply_markup": json.dumps(keyboard)}
-        resp = requests.post(url, json=data, timeout=10)
-        if resp.ok:
-            draft["summary_msg_id"] = msg_id
-        else:
-            print(f"show_smart_preview edit failed: {resp.text[:100]} – sending new", flush=True)
-            new_id = send_status(chat_id, preview, keyboard)
-            draft["summary_msg_id"] = new_id
-    else:
-        print("show_smart_preview: send new", flush=True)
-        new_id = send_status(chat_id, preview, keyboard)
-        draft["summary_msg_id"] = new_id
+    # תמיד שלח הודעה חדשה – לא לערוך הודעה ישנה (כדי שהמשתמש לא יצטרך לגלול אחורה)
+    print("show_smart_preview: send new", flush=True)
+    new_id = send_status(chat_id, preview, keyboard)
+    draft["summary_msg_id"] = new_id
 
 def handle_smart_edit_inputs(chat_id, user_id, step, text, draft, drafts):
     """מטפל בכניסות עריכה חכמה - נקרא מתוך handle_message"""
@@ -4031,37 +4047,31 @@ def handle_smart_edit_inputs(chat_id, user_id, step, text, draft, drafts):
         draft["subtitle"] = text
         draft["step"] = "smart_preview"
         add_learning_example("subtitle", before, text)
-        msg_id = draft.get("edit_request_msg_id") or draft.get("summary_msg_id")
-        show_smart_preview(chat_id, draft, msg_id=msg_id)
-        draft["edit_request_msg_id"] = draft.get("summary_msg_id")
+        show_smart_preview(chat_id, draft)
         return True
     elif step == "smart_edit_title_input":
         before = draft.get("title", "")
         draft["title"] = text
         draft["step"] = "smart_preview"
         add_learning_example("title", before, text)
-        msg_id = draft.get("edit_request_msg_id") or draft.get("summary_msg_id")
-        show_smart_preview(chat_id, draft, msg_id=msg_id)
-        draft["edit_request_msg_id"] = draft.get("summary_msg_id")
+        show_smart_preview(chat_id, draft)
         return True
     elif step == "smart_edit_red_title_input":
         before = draft.get("red_title", "")
         draft["red_title"] = text
         draft["step"] = "smart_preview"
         add_learning_example("red_title", before, text)
-        msg_id = draft.get("edit_request_msg_id") or draft.get("summary_msg_id")
-        show_smart_preview(chat_id, draft, msg_id=msg_id)
-        draft["edit_request_msg_id"] = draft.get("summary_msg_id")
+        show_smart_preview(chat_id, draft)
         return True
     elif step == "smart_edit_body_input":
         draft["body"] = text
         draft["step"] = "smart_preview"
-        show_smart_preview(chat_id, draft, msg_id=draft.get("summary_msg_id"))
+        show_smart_preview(chat_id, draft)
         return True
     elif step == "smart_edit_tags_input":
         draft["tags"] = [t.strip() for t in text.split(",")]
         draft["step"] = "smart_preview"
-        show_smart_preview(chat_id, draft, msg_id=draft.get("summary_msg_id"))
+        show_smart_preview(chat_id, draft)
         return True
     return False
 
@@ -4864,18 +4874,33 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                 draft["quick_videos"].append(content)
                 collected.append("🎬 וידאו")
 
-        # עדכן הודעת סטטוס
-        if collected and msg_id:
-            summary = []
-            if draft["quick_texts"]: summary.append(f"📝 {len(draft['quick_texts'])} טקסטים")
-            if draft["gallery"]: summary.append(f"🖼 {len(draft['gallery'])} תמונות")
-            if draft["quick_videos"]: summary.append(f"🎬 {len(draft['quick_videos'])} סרטונים")
-            if draft["quick_pdfs"]: summary.append(f"📄 {len(draft['quick_pdfs'])} PDF")
-            if draft["quick_audio"]: summary.append(f"🎵 {len(draft['quick_audio'])} שמע")
-            edit_message(chat_id, msg_id,
-                f"⚡ <b>מקבל חומרים...</b>\n\n" + "\n".join(summary) + "\n\nכשתסיים לחץ <b>✅ סיום</b>", {
-                "inline_keyboard": [[{"text": "✅ סיום – עבד!", "callback_data": "quick_upload_done"}]]
-            })
+        # debounce – המתן 15 שניות שקט, ואז שלח הודעה חדשה עם כפתור סיום
+        if collected:
+            draft["quick_last_input_time"] = time.time()
+            gen = draft.get("quick_debounce_gen", 0) + 1
+            draft["quick_debounce_gen"] = gen
+
+            def _send_summary_after_quiet(uid=user_id, cid=chat_id, my_gen=gen):
+                time.sleep(15)
+                d = drafts.get(uid)
+                if not d or d.get("step") != "quick_upload_collect":
+                    return
+                if d.get("quick_debounce_gen") != my_gen:
+                    return  # הגיע עוד קלט בינתיים – ויתר, generation חדש ישלח את ההודעה
+                summary = []
+                if d["quick_texts"]: summary.append(f"📝 {len(d['quick_texts'])} טקסטים")
+                if d["gallery"]: summary.append(f"🖼 {len(d['gallery'])} תמונות")
+                if d["quick_videos"]: summary.append(f"🎬 {len(d['quick_videos'])} סרטונים")
+                if d["quick_pdfs"]: summary.append(f"📄 {len(d['quick_pdfs'])} PDF")
+                if d["quick_audio"]: summary.append(f"🎵 {len(d['quick_audio'])} שמע")
+                new_id = send_message(cid,
+                    f"✅ <b>התקבלו חומרים:</b>\n\n" + "\n".join(summary) +
+                    "\n\nשלח עוד או לחץ <b>סיום</b>:", {
+                    "inline_keyboard": [[{"text": "✅ סיום – עבד!", "callback_data": "quick_upload_done"}]]
+                })
+                d["quick_status_msg_id"] = new_id
+
+            threading.Thread(target=_send_summary_after_quiet, daemon=True).start()
         return True
 
     elif step == "wa_add_sender_input":
@@ -5349,6 +5374,7 @@ def handle_callback(cb):
     chat_id = cb["message"]["chat"]["id"]
     user_id = str(cb["from"]["id"])
     cb_data = cb["data"]
+    clicked_msg_id = cb["message"]["message_id"]  # ה-ID האמיתי של ההודעה שנלחץ עליה הכפתור
 
     print(f"📲 callback: {cb_data} | user: {user_id} | step: {drafts.get(user_id, {}).get('step','אין')}", flush=True)
 
@@ -5473,7 +5499,7 @@ def handle_callback(cb):
             cats, cat_names = auto_select_categories(draft.get("title",""), draft.get("body",""))
             draft["categories"] = cats
             draft["cat_names"] = cat_names
-        current_msg_id = draft.get("quick_status_msg_id") or draft.get("summary_msg_id")
+        current_msg_id = clicked_msg_id  # תמיד ההודעה שבה בפועל נלחץ הכפתור
         step = draft.get("step","")
         print(f"smart_approve: step={step}, msg_id={current_msg_id}, from_quick={draft.get('from_quick')}, has_image={bool(draft.get('main_image'))}", flush=True)
         # אם כבר בשלב confirm – עדכן אותה הודעה
@@ -5626,25 +5652,19 @@ def handle_callback(cb):
 
     elif cb_data == "smart_edit_red_title":
         draft["step"] = "smart_edit_red_title_input"
-        new_id = send_status(chat_id, f"כותרת אדומה נוכחית:\n<b>{draft.get('red_title','')}</b>\n\nשלח כותרת אדומה חדשה (2-4 מילים):")
-        draft["edit_request_msg_id"] = new_id
+        send_status(chat_id, f"כותרת אדומה נוכחית:\n<b>{draft.get('red_title','')}</b>\n\nשלח כותרת אדומה חדשה (2-4 מילים):")
 
     elif cb_data == "smart_edit_subtitle":
         draft["step"] = "smart_edit_subtitle_input"
-        new_id = send_status(chat_id, f"כותרת משנה נוכחית:\n{draft.get('subtitle','')}\n\nשלח כותרת משנה חדשה:")
-        draft["edit_request_msg_id"] = new_id
+        send_status(chat_id, f"כותרת משנה נוכחית:\n{draft.get('subtitle','')}\n\nשלח כותרת משנה חדשה:")
 
     elif cb_data == "smart_edit_title":
         draft["step"] = "smart_edit_title_input"
-        # שמור את msg_id של התצוגה המקדימה
-        preview_msg_id = draft.get("summary_msg_id")
-        new_msg = send_message(chat_id, f"כותרת נוכחית:\n<b>{draft.get('title','')}</b>\n\nשלח כותרת חדשה:")
-        # summary_msg_id נשאר כמו שהוא
+        send_message(chat_id, f"כותרת נוכחית:\n<b>{draft.get('title','')}</b>\n\nשלח כותרת חדשה:")
 
     elif cb_data == "smart_edit_body":
         draft["step"] = "smart_edit_body_input"
-        new_id = send_status(chat_id, "שלח גוף כתבה חדש:")
-        draft["edit_request_msg_id"] = new_id
+        send_status(chat_id, "שלח גוף כתבה חדש:")
 
     elif cb_data == "smart_edit_tags":
         draft["step"] = "smart_edit_tags_input"
@@ -6656,12 +6676,13 @@ def handle_callback(cb):
                     [{"text": "✨ שפר כותרות", "callback_data": "smart_improve_titles"}],
                     [{"text": "✏️ ערוך כותרת", "callback_data": "smart_edit_title"},
                      {"text": "✏️ ערוך כותרת משנה", "callback_data": "smart_edit_subtitle"}],
-                    [{"text": "✏️ ערוך כותרת אדומה", "callback_data": "smart_edit_red"},
+                    [{"text": "✏️ ערוך כותרת אדומה", "callback_data": "smart_edit_red_title"},
                      {"text": "✏️ ערוך גוף", "callback_data": "smart_edit_body"}],
-                    [{"text": "🔄 שנה קטגוריות", "callback_data": "smart_change_cats"}],
+                    [{"text": "🔄 שנה קטגוריות", "callback_data": "change_categories"}],
                     [{"text": "❌ ביטול", "callback_data": "publish_cancel"}]
                 ]
             })
+            draft["summary_msg_id"] = msg_id
 
         threading.Thread(target=_process, daemon=True).start()
 
