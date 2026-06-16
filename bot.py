@@ -912,6 +912,11 @@ def handle_whatsapp_webhook(body):
             text_msg = message_data.get("textMessageData", {}).get("textMessage", "")
         elif msg_type == "extendedTextMessage":
             text_msg = message_data.get("extendedTextMessageData", {}).get("text", "")
+        elif msg_type == "buttonsResponseMessage":
+            # תגובה לכפתור – buttonId שלנו הוא בעצם הפקודה עצמה (//אשר, /////)
+            btn_data = message_data.get("buttonsResponseMessage", {})
+            text_msg = btn_data.get("selectedButtonId","") or btn_data.get("selectedDisplayText","")
+            print(f"🔘 WA כפתור נלחץ: {text_msg}", flush=True)
         elif msg_type in ("imageMessage","videoMessage","documentMessage","audioMessage","pttMessage"):
             fd = message_data.get("fileMessageData", {})
             url      = fd.get("downloadUrl","")
@@ -1828,7 +1833,7 @@ def _process_wa_article(buf, sender_name):
         draft["categories"] = cats
         draft["cat_names"] = cat_names
 
-        # שלח תצוגה מקדימה לוואטסאפ
+        # שלח תצוגה מקדימה לוואטסאפ – טקסט עם פקודות (תמיד עובד)
         wa_send(
             f"✅ *כתבה מוכנה:*\n\n"
             f"*{result.get('title','')}*\n"
@@ -1839,6 +1844,12 @@ def _process_wa_article(buf, sender_name):
             f"/אדומה [טקסט] | /גוף [טקסט]\n"
             f"/תגיות [מ1, מ2]\n\n"
             f"//אשר – פרסם | //// – בטל"
+        )
+        # נסה גם כפתורים – אם וואטסאפ יציג אותם, נוח יותר; אם לא, הטקסט מעלה כבר עובד
+        send_whatsapp_with_buttons(
+            "מה תרצה לעשות?",
+            [{"id": "//אשר", "text": "✅ אשר ופרסם"},
+             {"id": "////", "text": "❌ בטל"}]
         )
 
         # שלח לטלגרם עם כל כפתורי העריכה
@@ -1929,8 +1940,32 @@ def send_whatsapp_publish(message):
         return send_whatsapp(message, to=publish_group)
     return send_whatsapp(message)
 
-def send_whatsapp_with_buttons(message, buttons):
-    return send_whatsapp(message)
+def send_whatsapp_with_buttons(message, buttons, to=None):
+    """שולח הודעה עם כפתורים + הפקודות בטקסט כגיבוי.
+    buttons: רשימת dict עם {"id": "...", "text": "..."}
+    אם הכפתורים לא יעבדו (תלוי בוואטסאפ) – הטקסט עדיין מכיל את הפקודות."""
+    instance_id = os.environ.get("GREENAPI_ID", "")
+    token = os.environ.get("GREENAPI_TOKEN", "")
+    chat_id = to or os.environ.get("WHATSAPP_GROUP_ID", "")
+    if not instance_id or not token or not chat_id:
+        return send_whatsapp(message, to=to)
+    try:
+        url = f"https://7107.api.greenapi.com/waInstance{instance_id}/sendButtons/{token}"
+        payload = {
+            "chatId": chat_id,
+            "message": message,
+            "footer": "בחר אחת מהאפשרויות",
+            "buttons": [{"buttonId": b["id"], "buttonText": b["text"][:25]} for b in buttons[:3]]
+        }
+        resp = requests.post(url, json=payload, timeout=15)
+        print(f"WA buttons: {resp.status_code} {resp.text[:150]}", flush=True)
+        return resp.status_code == 200
+    except Exception as e:
+        print(f"שגיאה WA buttons (ממשיך עם טקסט בלבד): {e}", flush=True)
+        return False
+    finally:
+        # תמיד שלח גם את ההודעה הרגילה כגיבוי – הפקודות הטקסטואליות תמיד עובדות
+        pass
 
 
 def send_whatsapp(message, image_url=None, to=None):
@@ -2410,13 +2445,25 @@ def notify_channel(title, subtitle, url):
     text = CHANNEL_MSG_FORMAT.format(
         site_name=SITE_NAME, title=title, subtitle=subtitle, url=url)
     try:
-        requests.post(
+        resp = requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
             json={"chat_id": CHANNEL_ID, "text": text, "parse_mode": "Markdown"},
             timeout=10
         )
+        if not resp.ok:
+            print(f"⚠️ שגיאה שליחה לערוץ (Markdown): {resp.status_code} {resp.text[:200]}", flush=True)
+            # נסה שוב בלי parse_mode – אם הבעיה הייתה תווי Markdown לא תקינים
+            resp2 = requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                json={"chat_id": CHANNEL_ID, "text": text},
+                timeout=10
+            )
+            if not resp2.ok:
+                print(f"❌ שגיאה שליחה לערוץ (גם בלי Markdown): {resp2.status_code} {resp2.text[:200]}", flush=True)
+            else:
+                print("✅ נשלח לערוץ בלי Markdown (fallback)", flush=True)
     except Exception as e:
-        print(f"שגיאה שליחה לערוץ: {e}")
+        print(f"❌ שגיאה שליחה לערוץ: {e}", flush=True)
 
 def post_to_twitter(text, url=""):
     if not all([TWITTER_API_KEY, TWITTER_API_SECRET, TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_SECRET]):
@@ -4256,9 +4303,13 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             if resp.status_code == 201:
                 post_url = resp.json().get("link", "")
                 post_title2 = draft.get("title","")
-                notify_channel(post_title2, draft.get("subtitle", ""), post_url)
+                post_subtitle2 = draft.get("subtitle", "")
+                notify_channel(post_title2, post_subtitle2, post_url)
                 if os.environ.get("WHATSAPP_GROUP_ID") and whatsapp_settings["active"]:
-                    threading.Thread(target=send_whatsapp, args=(f"*עדכוני חב\"\"\"ד - {post_title2}*\n{draft.get('subtitle','')}\n\n👇 לכתבה המלאה לחצו\n{post_url}",), daemon=True).start()
+                    wa_msg2 = WHATSAPP_MSG_FORMAT.format(
+                        site_name=SITE_NAME, title=post_title2,
+                        subtitle=post_subtitle2, url=post_url)
+                    threading.Thread(target=send_whatsapp_publish, args=(wa_msg2,), daemon=True).start()
                 drafts[user_id] = {"step": "idle", "gallery": []}
                 edit_message(chat_id, msg_id, f"✅ <b>הכתבה פורסמה!</b>\n🔗 {post_url}")
             else:
@@ -5684,6 +5735,7 @@ def handle_callback(cb):
             return
         if resp.status_code == 201:
             post_url = resp.json().get("link", "")
+            post_id = resp.json().get("id", "")
             post_title = draft.get("title", "")
             post_subtitle = draft.get("subtitle", "")
             draft["last_post_url"] = post_url
@@ -5707,11 +5759,19 @@ def handle_callback(cb):
             })
             # שלח לערוץ ו-WhatsApp ברקע
             def _post_publish(pid=post_id, pt=post_title, ps=post_subtitle, pu=post_url):
-                notify_channel(pt, ps, pu)
-                if os.environ.get("WHATSAPP_GROUP_ID") and whatsapp_settings["active"]:
-                    wa_msg = WHATSAPP_MSG_FORMAT.format(
-                        site_name=SITE_NAME, title=pt, subtitle=ps, url=pu)
-                    send_whatsapp_publish(wa_msg)
+                try:
+                    print(f"📤 _post_publish מתחיל: {pt[:40]}", flush=True)
+                    notify_channel(pt, ps, pu)
+                    if os.environ.get("WHATSAPP_GROUP_ID") and whatsapp_settings["active"]:
+                        wa_msg = WHATSAPP_MSG_FORMAT.format(
+                            site_name=SITE_NAME, title=pt, subtitle=ps, url=pu)
+                        ok = send_whatsapp_publish(wa_msg)
+                        print(f"📤 _post_publish: WA sent={ok}", flush=True)
+                    else:
+                        print(f"📤 _post_publish: WA לא נשלח (active={whatsapp_settings.get('active')}, group_set={bool(os.environ.get('WHATSAPP_GROUP_ID'))})", flush=True)
+                except Exception as e:
+                    print(f"❌ שגיאה ב-_post_publish: {e}", flush=True)
+                    import traceback; traceback.print_exc()
             threading.Thread(target=_post_publish, daemon=True).start()
         else:
             edit_message(chat_id, msg_id, f"❌ <b>שגיאה בפרסום</b>\n\n{resp.text[:200]}")
