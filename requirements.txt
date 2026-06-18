@@ -4,3 +4,4 @@ gunicorn
 requests-toolbelt
 cryptography
 Pillow
+stream-unzip
