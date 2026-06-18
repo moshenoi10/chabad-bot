@@ -775,68 +775,99 @@ def wa_is_dropbox_link(text):
     return "dropbox.com" in text
 
 def wa_extract_dropbox_media(link, cancel_check=None):
-    """חלץ מדיה מקובץ/תיקיית Dropbox ציבורית – משתמש בטריק dl=1
-    תומך בתיקיות כבדות (ZIP גדול) ובדחיסת תמונות גדולות, בדיוק כמו Drive"""
-    import re as _re, zipfile, io as _io
+    """חלץ מדיה מקובץ/תיקיית Dropbox ציבורית – משתמש בטריק dl=1.
+    תומך בתיקיות גדולות (גם כמה GB) – משתמש ב-stream_unzip כך שלעולם לא טוען
+    את כל ה-ZIP או קובץ שלם בזיכרון בבת אחת. מתאים לשרת עם זיכרון מוגבל (Render 512MB)."""
+    import re as _re
     results = []
+    MAX_SINGLE_FILE = 80 * 1024 * 1024  # קובץ בודד מעל 80MB מדולג (וידאו ענק וכו')
     try:
-        # הפוך כל לינק לdl=1 (הורדה ישירה)
         dl_link = _re.sub(r'[?&]dl=0', '', link)
-        if "?" in dl_link:
-            dl_link += "&dl=1"
-        else:
-            dl_link += "?dl=1"
+        dl_link += "&dl=1" if "?" in dl_link else "?dl=1"
 
         headers = {"User-Agent": "Mozilla/5.0"}
-        print("Dropbox: מתחיל הורדה...", flush=True)
-        # timeout גבוה – ZIP של תיקייה עם תמונות כבדות יכול לקחת דקות
-        r = requests.get(dl_link, headers=headers, timeout=300, allow_redirects=True, stream=False)
+        print("Dropbox: מתחיל הורדה בזרימה (stream_unzip)...", flush=True)
+        r = requests.get(dl_link, headers=headers, timeout=600, allow_redirects=True, stream=True)
         if not r.ok:
             print(f"שגיאה Dropbox: {r.status_code}", flush=True)
             return results
 
-        if cancel_check and cancel_check():
-            print("Dropbox: בוטל אחרי הורדה", flush=True)
-            return results
-
         content_type = r.headers.get("Content-Type","")
-        content = r.content
-        print(f"Dropbox: הורדה הושלמה – {len(content)//1024//1024}MB, type={content_type}", flush=True)
 
-        # אם זה ZIP (תיקייה) – פתח ועבור על כל הקבצים
-        if content_type == "application/zip" or content[:4] == b'PK\x03\x04':
-            print("Dropbox: זוהה ZIP – מחלץ תיקייה", flush=True)
-            try:
-                with zipfile.ZipFile(_io.BytesIO(content)) as z:
-                    names = [n for n in z.namelist() if not n.endswith("/")]
-                    print(f"Dropbox: {len(names)} קבצים בתיקייה", flush=True)
-                    for idx, name in enumerate(names):
-                        if cancel_check and cancel_check():
-                            print(f"Dropbox: בוטל באמצע חילוץ (עובד {idx}/{len(names)})", flush=True)
-                            return results
-                        ext = name.lower().rsplit(".",1)[-1] if "." in name else ""
-                        file_bytes = z.read(name)
-                        if ext in ("jpg","jpeg","png","webp","gif"):
-                            # דחוס תמונות גדולות – בדיוק כמו ב-Drive
-                            if len(file_bytes) > 2_000_000:
-                                compressed = compress_image(file_bytes)
-                            else:
-                                compressed = file_bytes
-                            if compressed:
-                                results.append({"type":"image","content":compressed,"url":""})
-                                print(f"✅ תמונה {idx+1}/{len(names)} מ-Dropbox: {len(compressed)//1024}KB", flush=True)
-                        elif ext in ("mp4","mov","avi","mkv"):
-                            results.append({"type":"video","content":file_bytes,"url":""})
-                            print(f"✅ וידאו {idx+1}/{len(names)} מ-Dropbox: {len(file_bytes)//1024//1024}MB", flush=True)
-            except zipfile.BadZipFile:
-                print("שגיאה Dropbox: ZIP פגום", flush=True)
+        # נסה לזהות אם זה ZIP - נבדוק את 4 הבייטים הראשונים בלי לאבד אותם
+        peek_iter = r.iter_content(chunk_size=256*1024)
+        first_chunk = next(peek_iter, b"")
+        is_zip = content_type == "application/zip" or first_chunk[:4] == b'PK\x03\x04'
+
+        def _full_stream():
+            yield first_chunk
+            yield from peek_iter
+
+        if is_zip:
+            print("Dropbox: זוהה ZIP – מחלץ בזרימה (קובץ-קובץ, לא הכל בזיכרון)", flush=True)
+            from stream_unzip import stream_unzip
+            idx = 0
+            for file_name_b, file_size, unzipped_chunks in stream_unzip(_full_stream()):
+                idx += 1
+                if cancel_check and cancel_check():
+                    print(f"Dropbox: בוטל באמצע זרימה (קובץ {idx})", flush=True)
+                    r.close()
+                    return results
+                name = file_name_b.decode("utf-8", errors="ignore")
+                ext = name.lower().rsplit(".",1)[-1] if "." in name else ""
+                if ext not in ("jpg","jpeg","png","webp","gif","mp4","mov","avi","mkv"):
+                    # קרא וזרוק – stream_unzip מחייב לצרוך את ה-generator לפני שעובר לקובץ הבא
+                    for _ in unzipped_chunks:
+                        pass
+                    continue
+                # בנה את הקובץ הבודד הזה בזיכרון (קובץ אחד, לא כל ה-ZIP)
+                parts = []
+                size_so_far = 0
+                too_big = False
+                for chunk in unzipped_chunks:
+                    size_so_far += len(chunk)
+                    if size_so_far > MAX_SINGLE_FILE:
+                        too_big = True
+                        # ממשיכים לצרוך כדי שlib הפנימית תוכל לעבור לקובץ הבא
+                        continue
+                    parts.append(chunk)
+                if too_big:
+                    print(f"⚠️ Dropbox: '{name}' מעל {MAX_SINGLE_FILE//1024//1024}MB – דולג", flush=True)
+                    continue
+                file_bytes = b"".join(parts)
+                parts = None
+                if ext in ("jpg","jpeg","png","webp","gif"):
+                    if len(file_bytes) > 2_000_000:
+                        compressed = compress_image(file_bytes)
+                    else:
+                        compressed = file_bytes
+                    file_bytes = None
+                    if compressed:
+                        results.append({"type":"image","content":compressed,"url":""})
+                        print(f"✅ תמונה {idx} מ-Dropbox: {len(compressed)//1024}KB", flush=True)
+                elif ext in ("mp4","mov","avi","mkv"):
+                    results.append({"type":"video","content":file_bytes,"url":""})
+                    print(f"✅ וידאו {idx} מ-Dropbox: {len(file_bytes)//1024//1024}MB", flush=True)
+            r.close()
         else:
-            # קובץ בודד
+            # קובץ בודד – צרוך הstream עד MAX_SINGLE_FILE
+            parts = []
+            size_so_far = 0
+            for chunk in _full_stream():
+                if cancel_check and cancel_check():
+                    r.close()
+                    return results
+                size_so_far += len(chunk)
+                if size_so_far > MAX_SINGLE_FILE:
+                    print(f"⚠️ Dropbox: הקובץ מעל {MAX_SINGLE_FILE//1024//1024}MB – דולג", flush=True)
+                    r.close()
+                    return results
+                parts.append(chunk)
+            content = b"".join(parts)
+            parts = None
+            r.close()
             if "image" in content_type:
-                if len(content) > 2_000_000:
-                    compressed = compress_image(content)
-                else:
-                    compressed = content
+                compressed = compress_image(content) if len(content) > 2_000_000 else content
                 if compressed:
                     results.append({"type":"image","content":compressed,"url":""})
             elif "video" in content_type:
@@ -1290,7 +1321,7 @@ def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, f
                 if count:
                     wa_send(f"✅ {count} פריטים מוכנים – שלח /// לעיבוד")
                 else:
-                    wa_send("⚠️ לא נמצאו קבצים.")
+                    wa_send("⚠️ לא נמצאו קבצים, או שהתיקייה כבדה מאוד (מעל 350MB) ולא ניתן להוריד אותה. נסה לחלק לתיקיות קטנות יותר.")
             except Exception as e:
                 print(f"שגיאה הורדת קבצים מהעננת: {e}", flush=True)
                 target = wa_article_buffer.get(s)
