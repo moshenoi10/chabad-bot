@@ -1059,6 +1059,44 @@ def _wa_cancel(sender):
 
 def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, file_url, file_name, msg_type):
     """אוסף תוכן לכתבה פתוחה"""
+    # פקודות גלובליות עובדות גם כשכתבה פתוחה – אל תבלע אותן בשקט!
+    if txt == "/אפס":
+        print(f"→ _wa_cancel (אפס) תוך כתבה פתוחה", flush=True)
+        wa_article_buffer[sender] = {
+            "texts":[], "images":[], "videos":[], "pdfs":[], "audio":[],
+            "started": False, "downloading": False, "cancelled": True
+        }
+        if sender in wa_edit_sessions:
+            del wa_edit_sessions[sender]
+        user_id = str(SUPER_ADMIN_ID)
+        if drafts.get(user_id, {}).get("wa_source"):
+            drafts[user_id] = {"step": "idle", "gallery": []}
+        wa_send("✅ אופס! כל הפעולות בוטלו. מוכן להתחלה חדשה.")
+        return
+    if txt == "//סטטוס":
+        _wa_status()
+        return
+    if txt == "//עזרה":
+        _wa_help()
+        return
+    if txt == "/מובילות":
+        wa_send("⏳ מושך 5 הכתבות הנצפות...")
+        def _top():
+            try:
+                articles = get_analytics_top_articles(7)
+                if not articles:
+                    wa_send("❌ לא הצלחתי למשוך נתונים. בדוק הגדרות Analytics.")
+                    return
+                msg = f"🏆 *5 הכתבות הנצפות ביותר השבוע באתר \"{SITE_NAME}\":*\n\n"
+                for i, a in enumerate(articles[:5], 1):
+                    msg += f"{i}. *{a['title']}*\n"
+                    msg += f"{a['url']}\n\n"
+                wa_send(msg)
+            except Exception as e:
+                wa_send(f"❌ שגיאה: {e}")
+        threading.Thread(target=_top, daemon=True).start()
+        return
+
     # סיום כתבה
     if txt == "///":
         # אם יש הורדת דרייב פעילה – המתן בשקט עד שתסיים (עד 15 דקות, 50+ תמונות כבדות לוקחות זמן)
@@ -1077,6 +1115,7 @@ def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, f
                 wa_send("⚠️ ההורדה לוקחת זמן רב. שלח /// שוב כשתראה שהדרייב הסתיים.")
                 return
         if not buf["texts"] and not buf["images"] and not buf["videos"]:
+            wa_send("⚠️ עדיין לא שלחת שום תוכן. שלח טקסט/תמונות/וידאו ואז /// לסיום.\n(הכתבה עדיין פתוחה)")
             return
         # תקופת חסד – המתן 5 שניות לבדוק אם עוד מדיה מגיעה (סרטונים כבדים מתעכבים)
         prev_count = len(buf.get("images",[])) + len(buf.get("videos",[]))
@@ -1152,6 +1191,10 @@ def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, f
         return
 
     # תוכן רגיל
+    if text_msg.strip().startswith("/") and text_msg.strip() not in ("///",):
+        # פקודה שלא הוכרה – אל תבלע בשקט, תן פידבק
+        wa_send(f"⚠️ פקודה לא מוכרת: {text_msg.strip()[:30]}\nאם זה לא היה פקודה, שלח /אפס ונסה שוב, או שלח //עזרה לרשימת הפקודות.")
+        return
     added = []
     if text_msg and not text_msg.startswith("/"):
         buf["texts"].append(text_msg)
@@ -1844,12 +1887,6 @@ def _process_wa_article(buf, sender_name):
             f"/אדומה [טקסט] | /גוף [טקסט]\n"
             f"/תגיות [מ1, מ2]\n\n"
             f"//אשר – פרסם | //// – בטל"
-        )
-        # נסה גם כפתורים – אם וואטסאפ יציג אותם, נוח יותר; אם לא, הטקסט מעלה כבר עובד
-        send_whatsapp_with_buttons(
-            "מה תרצה לעשות?",
-            [{"id": "//אשר", "text": "✅ אשר ופרסם"},
-             {"id": "////", "text": "❌ בטל"}]
         )
 
         # שלח לטלגרם עם כל כפתורי העריכה
