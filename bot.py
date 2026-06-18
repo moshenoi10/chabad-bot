@@ -729,6 +729,16 @@ def save_wa_settings():
 
 wa_article_buffer = {}   # sender → {texts, images, videos, pdfs, audio, started}
 wa_edit_sessions  = {}   # sender → {post_id, mode, step, images, videos, pdfs}
+wa_cancel_gen     = {}   # sender → מספר generation נוכחי. כל thread רקע בודק את זה כדי לדעת אם בוטל
+
+def wa_is_cancelled(sender, my_gen):
+    """בודק אם generation זה בוטל (כי /אפס נשלח אחריו)"""
+    return wa_cancel_gen.get(sender, 0) != my_gen
+
+def wa_bump_cancel_gen(sender):
+    """מעלה את ה-generation – כל threads ישנים שבודקים יראו שהם בוטלו"""
+    wa_cancel_gen[sender] = wa_cancel_gen.get(sender, 0) + 1
+    return wa_cancel_gen[sender]
 
 def get_wa_allowed_senders():
     if whatsapp_settings.get("allowed_senders"):
@@ -760,6 +770,83 @@ def wa_send(msg, to=None):
 
 def wa_is_drive_link(text):
     return "drive.google.com" in text or "docs.google.com" in text
+
+def wa_is_dropbox_link(text):
+    return "dropbox.com" in text
+
+def wa_extract_dropbox_media(link, cancel_check=None):
+    """חלץ מדיה מקובץ/תיקיית Dropbox ציבורית – משתמש בטריק dl=1
+    תומך בתיקיות כבדות (ZIP גדול) ובדחיסת תמונות גדולות, בדיוק כמו Drive"""
+    import re as _re, zipfile, io as _io
+    results = []
+    try:
+        # הפוך כל לינק לdl=1 (הורדה ישירה)
+        dl_link = _re.sub(r'[?&]dl=0', '', link)
+        if "?" in dl_link:
+            dl_link += "&dl=1"
+        else:
+            dl_link += "?dl=1"
+
+        headers = {"User-Agent": "Mozilla/5.0"}
+        print("Dropbox: מתחיל הורדה...", flush=True)
+        # timeout גבוה – ZIP של תיקייה עם תמונות כבדות יכול לקחת דקות
+        r = requests.get(dl_link, headers=headers, timeout=300, allow_redirects=True, stream=False)
+        if not r.ok:
+            print(f"שגיאה Dropbox: {r.status_code}", flush=True)
+            return results
+
+        if cancel_check and cancel_check():
+            print("Dropbox: בוטל אחרי הורדה", flush=True)
+            return results
+
+        content_type = r.headers.get("Content-Type","")
+        content = r.content
+        print(f"Dropbox: הורדה הושלמה – {len(content)//1024//1024}MB, type={content_type}", flush=True)
+
+        # אם זה ZIP (תיקייה) – פתח ועבור על כל הקבצים
+        if content_type == "application/zip" or content[:4] == b'PK\x03\x04':
+            print("Dropbox: זוהה ZIP – מחלץ תיקייה", flush=True)
+            try:
+                with zipfile.ZipFile(_io.BytesIO(content)) as z:
+                    names = [n for n in z.namelist() if not n.endswith("/")]
+                    print(f"Dropbox: {len(names)} קבצים בתיקייה", flush=True)
+                    for idx, name in enumerate(names):
+                        if cancel_check and cancel_check():
+                            print(f"Dropbox: בוטל באמצע חילוץ (עובד {idx}/{len(names)})", flush=True)
+                            return results
+                        ext = name.lower().rsplit(".",1)[-1] if "." in name else ""
+                        file_bytes = z.read(name)
+                        if ext in ("jpg","jpeg","png","webp","gif"):
+                            # דחוס תמונות גדולות – בדיוק כמו ב-Drive
+                            if len(file_bytes) > 2_000_000:
+                                compressed = compress_image(file_bytes)
+                            else:
+                                compressed = file_bytes
+                            if compressed:
+                                results.append({"type":"image","content":compressed,"url":""})
+                                print(f"✅ תמונה {idx+1}/{len(names)} מ-Dropbox: {len(compressed)//1024}KB", flush=True)
+                        elif ext in ("mp4","mov","avi","mkv"):
+                            results.append({"type":"video","content":file_bytes,"url":""})
+                            print(f"✅ וידאו {idx+1}/{len(names)} מ-Dropbox: {len(file_bytes)//1024//1024}MB", flush=True)
+            except zipfile.BadZipFile:
+                print("שגיאה Dropbox: ZIP פגום", flush=True)
+        else:
+            # קובץ בודד
+            if "image" in content_type:
+                if len(content) > 2_000_000:
+                    compressed = compress_image(content)
+                else:
+                    compressed = content
+                if compressed:
+                    results.append({"type":"image","content":compressed,"url":""})
+            elif "video" in content_type:
+                results.append({"type":"video","content":content,"url":""})
+        print(f"Dropbox: {len(results)} פריטים חולצו", flush=True)
+    except requests.exceptions.Timeout:
+        print("שגיאה Dropbox: timeout – הקובץ/תיקייה כבדים מדי", flush=True)
+    except Exception as e:
+        print(f"שגיאה Dropbox: {e}", flush=True)
+    return results
 
 def compress_image(content):
     """דחוס תמונה ל-1920px JPEG"""
@@ -807,6 +894,15 @@ def compress_image(content):
     except Exception as e:
         print(f"שגיאה Drive token: {e}", flush=True)
     return None
+
+def wa_is_cloud_link(text):
+    return wa_is_drive_link(text) or wa_is_dropbox_link(text)
+
+def wa_extract_cloud_media(link, cancel_check=None):
+    """מנתב לפי סוג הלינק – Drive או Dropbox"""
+    if wa_is_dropbox_link(link):
+        return wa_extract_dropbox_media(link, cancel_check=cancel_check)
+    return wa_extract_drive_media(link)
 
 def wa_extract_drive_media(link):
     """חלץ מדיה מגוגל דרייב – תומך בקבצים ותיקיות"""
@@ -982,17 +1078,18 @@ def handle_whatsapp_webhook(body):
 
         if txt == "/אפס":
             print(f"→ _wa_cancel (אפס)", flush=True)
+            wa_bump_cancel_gen(sender)  # מבטל כל thread רקע פעיל
             wa_article_buffer[sender] = {
                 "texts":[], "images":[], "videos":[], "pdfs":[], "audio":[],
                 "started": False, "downloading": False, "cancelled": True
             }
             if sender in wa_edit_sessions:
-                del wa_edit_sessions[sender]
+                wa_edit_sessions.pop(sender, None)
             # אפס גם draft ממתין
             user_id = str(SUPER_ADMIN_ID)
             if drafts.get(user_id, {}).get("wa_source"):
                 drafts[user_id] = {"step": "idle", "gallery": []}
-            wa_send("✅ אופס! כל הפעולות בוטלו. מוכן להתחלה חדשה.")
+            wa_send("✅ אופס! כל הפעולות (כולל תהליכי רקע) בוטלו. מוכן להתחלה חדשה.")
             return
 
         if txt == "//":
@@ -1054,7 +1151,7 @@ def _wa_cancel(sender):
         "texts":[], "images":[], "videos":[], "pdfs":[], "audio":[], "started": False
     }
     if sender in wa_edit_sessions:
-        del wa_edit_sessions[sender]
+        wa_edit_sessions.pop(sender, None)
     wa_send("❌ בוטל.")
 
 def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, file_url, file_name, msg_type):
@@ -1062,16 +1159,17 @@ def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, f
     # פקודות גלובליות עובדות גם כשכתבה פתוחה – אל תבלע אותן בשקט!
     if txt == "/אפס":
         print(f"→ _wa_cancel (אפס) תוך כתבה פתוחה", flush=True)
+        wa_bump_cancel_gen(sender)  # מבטל כל thread רקע פעיל
         wa_article_buffer[sender] = {
             "texts":[], "images":[], "videos":[], "pdfs":[], "audio":[],
             "started": False, "downloading": False, "cancelled": True
         }
         if sender in wa_edit_sessions:
-            del wa_edit_sessions[sender]
+            wa_edit_sessions.pop(sender, None)
         user_id = str(SUPER_ADMIN_ID)
         if drafts.get(user_id, {}).get("wa_source"):
             drafts[user_id] = {"step": "idle", "gallery": []}
-        wa_send("✅ אופס! כל הפעולות בוטלו. מוכן להתחלה חדשה.")
+        wa_send("✅ אופס! כל הפעולות (כולל תהליכי רקע) בוטלו. מוכן להתחלה חדשה.")
         return
     if txt == "//סטטוס":
         _wa_status()
@@ -1130,6 +1228,7 @@ def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, f
         wa_article_buffer[sender] = {
             "texts":[], "images":[], "videos":[], "pdfs":[], "audio":[], "started": False
         }
+        my_gen = wa_bump_cancel_gen(sender)  # generation לבדיקת ביטול
         imgs = len(buf_copy.get("images",[]))
         vids = len(buf_copy.get("videos",[]))
         parts = []
@@ -1137,55 +1236,68 @@ def _wa_collect(sender, sender_name, buf, txt, text_msg, image_url, video_url, f
         if vids: parts.append(f"{vids} סרטונים")
         if buf_copy.get("texts"): parts.append("טקסט")
         wa_send("⏳ קיבלתי! מעבד " + " • ".join(parts) + "...")
-        def _run(b=buf_copy, sn=sender_name):
+        def _run(b=buf_copy, sn=sender_name, s=sender, my_g=my_gen):
             try:
-                _process_wa_article(b, sn)
+                _process_wa_article(b, sn, cancel_check=lambda: wa_is_cancelled(s, my_g))
             except Exception as e:
                 print(f"שגיאה _process_wa_article: {e}", flush=True)
                 import traceback; traceback.print_exc()
-                wa_send(f"❌ שגיאה: {str(e)[:100]}")
+                if not wa_is_cancelled(s, my_g):
+                    wa_send(f"❌ שגיאה: {str(e)[:100]}")
         threading.Thread(target=_run, daemon=True).start()
         return
 
-    # זהה דרייב – חלץ לינק מתוך הודעה
-    if wa_is_drive_link(text_msg):
+    # זהה דרייב/דרופבוקס – חלץ לינק מתוך הודעה
+    if wa_is_cloud_link(text_msg):
         import re as _re
-        drive_links = _re.findall(r'https://(?:drive|docs)\.google\.com/\S+', text_msg)
-        drive_link = drive_links[0] if drive_links else text_msg.strip()
-        text_without_link = _re.sub(r'https://(?:drive|docs)\.google\.com/\S+', '', text_msg).strip()
+        cloud_links = _re.findall(r'https://(?:drive|docs)\.google\.com/\S+|https://(?:www\.)?dropbox\.com/\S+', text_msg)
+        cloud_link = cloud_links[0] if cloud_links else text_msg.strip()
+        text_without_link = _re.sub(r'https://(?:drive|docs)\.google\.com/\S+|https://(?:www\.)?dropbox\.com/\S+', '', text_msg).strip()
         if text_without_link:
             buf["texts"].append(text_without_link)
         wa_article_buffer[sender]["downloading"] = True
-        wa_send("⏳ מוריד מגוגל דרייב...")
+        my_gen = wa_bump_cancel_gen(sender)  # generation לבדיקת ביטול
+        service_name = "דרופבוקס" if wa_is_dropbox_link(cloud_link) else "גוגל דרייב"
+        wa_send(f"⏳ מוריד מ{service_name}...")
 
-        def _download_drive_bg(s=sender, link=drive_link):
+        def _download_drive_bg(s=sender, link=cloud_link, my_g=my_gen):
             try:
-                media = wa_extract_drive_media(link)
+                media = wa_extract_cloud_media(link, cancel_check=lambda: wa_is_cancelled(s, my_g))
+                if wa_is_cancelled(s, my_g):
+                    print(f"_download_drive_bg: בוטל ע\"י /אפס", flush=True)
+                    return
                 target = wa_article_buffer.get(s)
                 if target is None:
                     return  # בוטל בינתיים
                 count = 0
                 for m in media:
+                    if wa_is_cancelled(s, my_g):
+                        print(f"_download_drive_bg: בוטל באמצע הוספה", flush=True)
+                        return
                     if m.get("type") == "image":
                         if m.get("content"):
                             target["images"].append(m["content"])
                         elif m.get("url"):
                             target["images"].append(m["url"])
                         count += 1
-                    elif m.get("type") == "video" and m.get("url"):
-                        target["videos"].append(m["url"])
+                    elif m.get("type") == "video":
+                        if m.get("content"):
+                            target["videos"].append(m["content"])
+                        elif m.get("url"):
+                            target["videos"].append(m["url"])
                         count += 1
                 target["downloading"] = False
                 if count:
-                    wa_send(f"✅ {count} תמונות מוכנות – שלח /// לעיבוד")
+                    wa_send(f"✅ {count} פריטים מוכנים – שלח /// לעיבוד")
                 else:
-                    wa_send("⚠️ לא נמצאו קבצים בדרייב.")
+                    wa_send("⚠️ לא נמצאו קבצים.")
             except Exception as e:
-                print(f"שגיאה הורדת דרייב ברקע: {e}", flush=True)
+                print(f"שגיאה הורדת קבצים מהעננת: {e}", flush=True)
                 target = wa_article_buffer.get(s)
                 if target is not None:
                     target["downloading"] = False
-                wa_send(f"❌ שגיאה בהורדה מדרייב: {str(e)[:100]}")
+                if not wa_is_cancelled(s, my_g):
+                    wa_send(f"❌ שגיאה בהורדה: {str(e)[:100]}")
 
         threading.Thread(target=_download_drive_bg, daemon=True).start()
         return
@@ -1235,7 +1347,7 @@ def _wa_help():
         "📤 *העלאת כתבה חדשה*\n"
         "━━━━━━━━━━━━━━━\n"
         "1️⃣ שלח // לפתיחה\n"
-        "2️⃣ שלח תוכן: טקסט, תמונות, וידאו, PDF, לינק דרייב\n"
+        "2️⃣ שלח תוכן: טקסט, תמונות, וידאו, PDF, לינק דרייב/דרופבוקס\n"
         "3️⃣ שלח /// לסיום ועיבוד AI\n\n"
         "━━━━━━━━━━━━━━━\n"
         "✏️ *עריכה לפני פרסום*\n"
@@ -1277,7 +1389,7 @@ def _wa_help():
         "💡 *טיפים*\n"
         "━━━━━━━━━━━━━━━\n"
         "• אפשר לשלוח כמה תמונות בזו אחר זו\n"
-        "• אפשר לשלוח לינק גוגל דרייב\n"
+        "• אפשר לשלוח לינק גוגל דרייב או דרופבוקס\n"
         "• אם נתקעת – שלח /אפס"
     )
     wa_send(msg)
@@ -1394,7 +1506,7 @@ def _handle_wa_edit(sender, sender_name, session, txt, text_msg,
     # מצב מזל טוב
     if step == "mazaltov":
         if txt == "////":
-            del wa_edit_sessions[sender]
+            wa_edit_sessions.pop(sender, None)
             wa_send("❌ בוטל.")
             return
         if txt == "//אשר":
@@ -1402,7 +1514,7 @@ def _handle_wa_edit(sender, sender_name, session, txt, text_msg,
             if not images:
                 wa_send("⚠️ לא התקבלו תמונות. שלח תמונות קודם.")
                 return
-            del wa_edit_sessions[sender]
+            wa_edit_sessions.pop(sender, None)
             wa_send(f"⏳ מעלה {len(images)} מזל טוב לאתר...")
             def _publish_mazaltov(imgs=images):
                 try:
@@ -1478,7 +1590,7 @@ def _handle_wa_edit(sender, sender_name, session, txt, text_msg,
                 )
             else:
                 wa_send("❌ כתבה לא נמצאה")
-                del wa_edit_sessions[sender]
+                wa_edit_sessions.pop(sender, None)
         except Exception as e:
             wa_send(f"❌ שגיאה: {e}")
         return
@@ -1498,7 +1610,7 @@ def _handle_wa_edit(sender, sender_name, session, txt, text_msg,
                 wa_send(f"⚠️ למחוק את:\n*{title}*\n\n//אשר לאישור | //// לביטול")
             else:
                 wa_send("❌ כתבה לא נמצאה")
-                del wa_edit_sessions[sender]
+                wa_edit_sessions.pop(sender, None)
         except Exception as e:
             wa_send(f"❌ שגיאה: {e}")
         return
@@ -1514,9 +1626,9 @@ def _handle_wa_edit(sender, sender_name, session, txt, text_msg,
                     f"🗑️ <b>כתבה נמחקה מוואטסאפ</b>\nID: {post_id}")
             except Exception as e:
                 wa_send(f"❌ שגיאה: {e}")
-            del wa_edit_sessions[sender]
+            wa_edit_sessions.pop(sender, None)
         elif txt == "////":
-            del wa_edit_sessions[sender]
+            wa_edit_sessions.pop(sender, None)
             wa_send("❌ ביטול.")
         return
 
@@ -1524,25 +1636,33 @@ def _handle_wa_edit(sender, sender_name, session, txt, text_msg,
     if step == "editing":
 
         if txt == "////":
-            del wa_edit_sessions[sender]
+            wa_edit_sessions.pop(sender, None)
             wa_send("❌ עריכה בוטלה.")
             return
 
         if txt == "/סיום":
+            if session.get("finishing"):
+                wa_send("⏳ כבר מעבד... רגע בבקשה.")
+                return
+            session["finishing"] = True
+            wa_edit_sessions[sender] = session
+            my_gen = wa_bump_cancel_gen(sender)
             threading.Thread(target=_finish_wa_edit,
-                            args=(sender, session, sender_name), daemon=True).start()
+                            args=(sender, session, sender_name),
+                            kwargs={"cancel_check": lambda: wa_is_cancelled(sender, my_gen)},
+                            daemon=True).start()
             return
 
         if txt == "/תמונה":
             session["mode"] = "main_image"
             wa_edit_sessions[sender] = session
-            wa_send("🖼 שלח את התמונה הראשית (תמונה או לינק דרייב):")
+            wa_send("🖼 שלח את התמונה הראשית (תמונה או לינק דרייב/דרופבוקס):")
             return
 
         if txt == "/מדיה":
             session["mode"] = "media"
             wa_edit_sessions[sender] = session
-            wa_send("📎 שלח תמונות/וידאו/PDF/לינק דרייב. שלח /סיום לסיום.")
+            wa_send("📎 שלח תמונות/וידאו/PDF/לינק דרייב/דרופבוקס. שלח /סיום לסיום.")
             return
 
         # עריכת שדות טקסט
@@ -1564,17 +1684,18 @@ def _handle_wa_edit(sender, sender_name, session, txt, text_msg,
         mode = session.get("mode")
 
         if mode == "main_image":
-            if wa_is_drive_link(text_msg):
-                wa_send("⏳ מוריד מדרייב...")
-                media = wa_extract_drive_media(text_msg)
-                imgs = [m["url"] for m in media if m.get("type") == "image"]
-                if imgs:
-                    session["main_image_url"] = imgs[0]
+            if wa_is_cloud_link(text_msg):
+                wa_send("⏳ מוריד...")
+                media = wa_extract_cloud_media(text_msg)
+                img_items = [m for m in media if m.get("type") == "image"]
+                if img_items:
+                    first = img_items[0]
+                    session["main_image_url"] = first.get("content") or first.get("url")
                     session["mode"] = None
                     wa_edit_sessions[sender] = session
-                    wa_send("✅ תמונה ראשית נשמרה מדרייב. שלח /סיום.")
+                    wa_send("✅ תמונה ראשית נשמרה. שלח /סיום.")
                 else:
-                    wa_send("❌ לא נמצאו תמונות בדרייב")
+                    wa_send("❌ לא נמצאו תמונות.")
             elif image_url:
                 session["main_image_url"] = image_url
                 session["mode"] = None
@@ -1584,15 +1705,15 @@ def _handle_wa_edit(sender, sender_name, session, txt, text_msg,
 
         if mode == "media":
             added = []
-            if wa_is_drive_link(text_msg):
-                wa_send("⏳ מוריד מדרייב...")
-                media = wa_extract_drive_media(text_msg)
+            if wa_is_cloud_link(text_msg):
+                wa_send("⏳ מוריד...")
+                media = wa_extract_cloud_media(text_msg)
                 for m in media:
                     if m.get("type") == "image":
-                        session["images"].append(m["url"])
+                        session["images"].append(m.get("content") or m.get("url"))
                     elif m.get("type") == "video":
-                        session["videos"].append(m["url"])
-                added.append(f"{len(media)} פריטים מדרייב")
+                        session["videos"].append(m.get("content") or m.get("url"))
+                added.append(f"{len(media)} פריטים")
             if image_url:
                 session["images"].append(image_url)
                 wa_edit_sessions[sender] = session
@@ -1606,17 +1727,30 @@ def _handle_wa_edit(sender, sender_name, session, txt, text_msg,
             if video_url:
                 session["videos"].append(video_url)
                 wa_edit_sessions[sender] = session
-                wa_send(f"✅ וידאו נוסף. המשך או /סיום.")
+                def _check_v(s=sender, count=len(session["videos"])):
+                    time.sleep(5)
+                    cur = wa_edit_sessions.get(s, {})
+                    if cur.get("mode") == "media" and len(cur.get("videos",[])) == count:
+                        wa_send(f"✅ {count} סרטונים. המשך או /סיום.")
+                threading.Thread(target=_check_v, daemon=True).start()
                 return
             if file_url and file_name.lower().endswith(".pdf"):
                 session["pdfs"].append({"url": file_url, "name": file_name})
                 wa_edit_sessions[sender] = session
-                wa_send(f"✅ PDF נוסף. המשך או /סיום.")
+                def _check_p(s=sender, count=len(session["pdfs"])):
+                    time.sleep(5)
+                    cur = wa_edit_sessions.get(s, {})
+                    if cur.get("mode") == "media" and len(cur.get("pdfs",[])) == count:
+                        wa_send(f"✅ {count} PDF. המשך או /סיום.")
+                threading.Thread(target=_check_p, daemon=True).start()
                 return
 
 
-def _finish_wa_edit(sender, session, sender_name):
-    """שמור שינויי עריכה ועדכן כתבה"""
+def _finish_wa_edit(sender, session, sender_name, cancel_check=None):
+    """שמור שינויי עריכה ועדכן כתבה. cancel_check: פונקציה שמחזירה True אם בוטל"""
+    def _cancelled():
+        return cancel_check() if cancel_check else False
+
     post_id = session.get("post_id")
     admin_chat = int(SUPER_ADMIN_ID)
 
@@ -1628,45 +1762,75 @@ def _finish_wa_edit(sender, session, sender_name):
     wa_send("⏳ מעדכן: " + " • ".join(parts_count) + "..." if parts_count else "⏳ מעדכן...")
 
     try:
+        if _cancelled():
+            print("_finish_wa_edit: בוטל בהתחלה", flush=True)
+            return
         # תמונה ראשית
-        if session.get("main_image_url"):
-            r = requests.get(session["main_image_url"], timeout=30)
-            if r.ok:
-                img_id, _ = upload_image_to_wp(r.content, f"main_{post_id}.jpg")
+        main_img = session.get("main_image_url")
+        if main_img:
+            if isinstance(main_img, (bytes, bytearray)):
+                content = bytes(main_img)
+            else:
+                r = requests.get(main_img, timeout=30)
+                content = r.content if r.ok else None
+            if content:
+                img_id, _ = upload_image_to_wp(content, f"main_{post_id}.jpg")
                 if img_id:
                     requests.post(f"{WP_URL}/posts/{post_id}",
                         json={"featured_media": img_id},
                         auth=(WP_USER, WP_PASSWORD), timeout=10)
 
-        # תמונות גלריה
+        # תמונות גלריה – תמיכה ב-bytes (מדרופבוקס) וב-URL (מדרייב/וואטסאפ)
         gallery_ids = []
-        for i, img_url in enumerate(session.get("images", [])):
+        for i, img in enumerate(session.get("images", [])):
+            if _cancelled():
+                print(f"_finish_wa_edit: בוטל באמצע תמונות (עלו {len(gallery_ids)})", flush=True)
+                return
             try:
-                r = requests.get(img_url, timeout=30)
-                if r.ok:
-                    print(f"מעלה תמונה {i+1}: {len(r.content)} bytes", flush=True)
-                    img_id, img_src = upload_image_to_wp(r.content, f"gallery_{post_id}_{i}.jpg")
+                if isinstance(img, (bytes, bytearray)):
+                    content = bytes(img)
+                else:
+                    r = requests.get(img, timeout=30)
+                    content = r.content if r.ok else None
+                if content:
+                    print(f"מעלה תמונה {i+1}: {len(content)} bytes", flush=True)
+                    img_id, img_src = upload_image_to_wp(content, f"gallery_{post_id}_{i}.jpg")
                     print(f"תמונה {i+1} → img_id={img_id}", flush=True)
                     if img_id:
                         gallery_ids.append(img_id)
                 else:
-                    print(f"שגיאה הורדת תמונה {i+1}: {r.status_code}", flush=True)
+                    print(f"שגיאה הורדת תמונה {i+1}", flush=True)
             except Exception as e:
                 print(f"שגיאה תמונה {i+1}: {e}", flush=True)
 
-        # וידאו ל-Vimeo
+        if _cancelled():
+            print("_finish_wa_edit: בוטל לפני וידאו", flush=True)
+            return
+
+        # וידאו ל-Vimeo – תמיכה ב-bytes (מדרופבוקס) וב-URL (מדרייב/וואטסאפ)
         vimeo_embeds = []
-        for vid_url in session.get("videos", []):
+        for vid in session.get("videos", []):
+            if _cancelled():
+                print(f"_finish_wa_edit: בוטל באמצע וידאו (עלו {len(vimeo_embeds)})", flush=True)
+                return
             try:
-                r = requests.get(vid_url, timeout=60)
-                if r.ok:
-                    vimeo_url, vid_id = upload_to_vimeo(r.content,
+                if isinstance(vid, (bytes, bytearray)):
+                    content = bytes(vid)
+                else:
+                    r = requests.get(vid, timeout=60)
+                    content = r.content if r.ok else None
+                if content:
+                    vimeo_url, vid_id = upload_to_vimeo(content,
                         f"כתבה {post_id}", chat_id=admin_chat)
                     if vimeo_url and vid_id:
                         wait_for_vimeo(vid_id, max_wait=300)
                         vimeo_embeds.append(vimeo_url)
             except Exception as e:
                 print(f"שגיאה וידאו edit: {e}", flush=True)
+
+        if _cancelled():
+            print("_finish_wa_edit: בוטל לפני PDF", flush=True)
+            return
 
         # PDF
         pdf_embeds = []
@@ -1683,6 +1847,10 @@ def _finish_wa_edit(sender, session, sender_name):
                             print(f"✅ PDF עלה: {pdf_name}", flush=True)
             except Exception as e:
                 print(f"שגיאה PDF edit: {e}", flush=True)
+
+        if _cancelled():
+            print("_finish_wa_edit: בוטל לפני עדכון תוכן – לא שומר שינויים", flush=True)
+            return
 
         # עדכן תוכן – הוסף בסוף
         if vimeo_embeds or gallery_ids or pdf_embeds:
@@ -1724,7 +1892,7 @@ def _finish_wa_edit(sender, session, sender_name):
                     json=update_data, auth=(WP_USER, WP_PASSWORD), timeout=10)
                 print(f"עדכון כתבה: {resp.status_code}", flush=True)
 
-        del wa_edit_sessions[sender]
+        wa_edit_sessions.pop(sender, None)
 
         # הודעה אחת בסיום
         parts = []
@@ -1753,7 +1921,7 @@ def _finish_wa_edit(sender, session, sender_name):
                 requests.post(f"{WP_URL}/posts/{post_id}",
                     json=update_data, auth=(WP_USER, WP_PASSWORD), timeout=10)
 
-        del wa_edit_sessions[sender]
+        wa_edit_sessions.pop(sender, None)
         wa_send("✅ *הכתבה עודכנה בהצלחה!*")
         send_message(admin_chat,
             f"✅ <b>כתבה עודכנה מוואטסאפ</b>\n"
@@ -1781,8 +1949,11 @@ def _update_wp_meta(post_id, meta_key, value):
         print(f"שגיאה עדכון meta: {e}", flush=True)
 
 
-def _process_wa_article(buf, sender_name):
-    """מעבד כתבה מוואטסאפ"""
+def _process_wa_article(buf, sender_name, cancel_check=None):
+    """מעבד כתבה מוואטסאפ. cancel_check: פונקציה שמחזירה True אם בוטל"""
+    def _cancelled():
+        return cancel_check() if cancel_check else False
+
     print(f"_process_wa_article: מתחיל עיבוד – {len(buf.get('texts',[]))} טקסטים, {len(buf.get('images',[]))} תמונות, {len(buf.get('videos',[]))} וידאו", flush=True)
     if buf.get("cancelled"):
         print("_process_wa_article: בוטל", flush=True)
@@ -1797,6 +1968,9 @@ def _process_wa_article(buf, sender_name):
         # הורד תמונות – תמיכה בbytes (מדרייב) וב-URL
         images_bytes = []
         for img in buf.get("images", []):
+            if _cancelled():
+                print("_process_wa_article: בוטל באמצע תמונות", flush=True)
+                return
             try:
                 if isinstance(img, (bytes, bytearray)):
                     content = bytes(img)
@@ -1815,10 +1989,17 @@ def _process_wa_article(buf, sender_name):
                 print(f"שגיאה תמונה: {e}", flush=True)
         print(f"images_bytes: {len(images_bytes)} תמונות מוכנות", flush=True)
 
+        if _cancelled():
+            print("_process_wa_article: בוטל לפני וידאו", flush=True)
+            return
+
         # הורד וידאו
         vimeo_urls = []
         if buf.get("videos"):
             for i, vid_url in enumerate(buf["videos"]):
+                if _cancelled():
+                    print("_process_wa_article: בוטל באמצע וידאו", flush=True)
+                    return
                 try:
                     r = requests.get(vid_url, timeout=60)
                     if r.ok:
@@ -1828,6 +2009,10 @@ def _process_wa_article(buf, sender_name):
                             vimeo_urls.append(vimeo_url)
                 except Exception as e:
                     print(f"שגיאה וידאו WA: {e}", flush=True)
+
+        if _cancelled():
+            print("_process_wa_article: בוטל לפני PDF", flush=True)
+            return
 
         # מעבד – ללא הודעה
 
@@ -1847,10 +2032,18 @@ def _process_wa_article(buf, sender_name):
             except Exception as e:
                 print(f"שגיאה PDF: {e}", flush=True)
 
+        if _cancelled():
+            print("_process_wa_article: בוטל לפני AI", flush=True)
+            return
+
         # עבד AI
         result = process_with_gemini(full_text)
         if not result:
             wa_send("❌ AI לא הצליח לעבד. נסה שוב.")
+            return
+
+        if _cancelled():
+            print("_process_wa_article: בוטל אחרי AI – לא שולח תצוגה מקדימה", flush=True)
             return
 
         # שמור draft
@@ -3362,42 +3555,25 @@ def list_drive_folder(folder_id):
     return [], []
 
 def handle_drive_link(chat_id, user_id, url, draft):
-    """מטפל בלינק Drive בthread נפרד"""
+    """מטפל בלינק Drive/Dropbox בthread נפרד"""
     def _download():
-        drive_id, drive_type = extract_drive_id(url)
-        if not drive_id:
-            send_message(chat_id, "⚠️ <b>לינק לא תקין</b>\n\nשלח לינק תקין מ-Google Drive.")
+        service = "דרופבוקס" if wa_is_dropbox_link(url) else "Drive"
+        if not wa_is_cloud_link(url):
+            send_message(chat_id, "⚠️ <b>לינק לא תקין</b>\n\nשלח לינק תקין מ-Google Drive או Dropbox.")
             return
-
-        if drive_type == "file":
-            msg_id = send_status(chat_id, "☁️ <b>מוריד מ-Drive...</b>")
-            content = download_drive_file(drive_id)
-            if content:
-                draft.setdefault("gallery", []).append(content)
-                send_message(chat_id, f"✅ קובץ הורד! ({len(draft['gallery'])} תמונות)\n\nשלח עוד או /done:")
-            else:
-                send_message(chat_id, "⚠️ <b>שגיאת הורדה</b>\n\nוודא שהקובץ פתוח לצפייה ונסה שוב.")
-
-        elif drive_type == "folder":
-            msg_id = send_status(chat_id, "🔍 <b>סורק תיקייה ב-Drive...</b>")
-            images, videos = list_drive_folder(drive_id)
-            if not images:
-                edit_message(chat_id, msg_id, "📭 לא נמצאו תמונות בתיקייה.")
-                return
-            edit_message(chat_id, msg_id, f"📁 נמצאו <b>{len(images)}</b> תמונות\n\n{progress_bar(0, len(images))}")
-            count = 0
-            for i, img in enumerate(images):
-                content = download_drive_file(img["id"])
-                if content:
-                    draft.setdefault("gallery", []).append(content)
-                    count += 1
-                if (i + 1) % 5 == 0 or i == len(images) - 1:
-                    edit_message(chat_id, msg_id,
-                        f"☁️ <b>מוריד מ-Drive...</b>\n\n"
-                        f"{progress_bar(i+1, len(images))}\n"
-                        f"📸 {count}/{len(images)} תמונות"
-                    )
-            edit_message(chat_id, msg_id, f"✅ <b>{count} תמונות הורדו!</b>\n\nשלח עוד או /done:")
+        msg_id = send_status(chat_id, f"☁️ <b>מוריד מ{service}...</b>")
+        media = wa_extract_cloud_media(url)
+        if not media:
+            edit_message(chat_id, msg_id, "📭 לא נמצאו קבצים בלינק.")
+            return
+        count = 0
+        for m in media:
+            if m.get("type") == "image":
+                draft.setdefault("gallery", []).append(m.get("content") or m.get("url"))
+                count += 1
+            elif m.get("type") == "video":
+                draft.setdefault("quick_videos", []).append(m.get("content") or m.get("url"))
+        edit_message(chat_id, msg_id, f"✅ <b>{count} תמונות הורדו!</b>\n\nשלח עוד או /done:")
 
     t = threading.Thread(target=_download, daemon=True)
     t.start()
@@ -3670,7 +3846,7 @@ def handle_message(msg):
     if text == "🎥 הפצת וידאו" and is_editor(user_id):
         drafts[user_id]["step"] = "social_video"
         drafts[user_id]["social_data"] = {}
-        send_message(chat_id, "🎥 <b>הפצת וידאו</b>\n\nשלח את קובץ הסרטון (עד 20MB) או לינק Drive:", {
+        send_message(chat_id, "🎥 <b>הפצת וידאו</b>\n\nשלח את קובץ הסרטון (עד 20MB) או לינק Drive/Dropbox:", {
             "inline_keyboard": [[{"text": "❌ ביטול", "callback_data": "publish_cancel"}]]
         })
         return
@@ -4266,31 +4442,32 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
             if content:
                 draft.setdefault("audio_files", []).append({"bytes": content, "name": msg["audio"].get("file_name", "audio.mp3")})
                 send_message(chat_id, f"✅ קובץ שמע נוסף!\n\nשלח עוד או /done:")
-        elif text and text.startswith("http") and "drive.google.com" in text:
-            msg_id = send_status(chat_id, "⏳ מוריד מ-Drive...")
-            media = wa_extract_drive_media(text)
+        elif text and text.startswith("http") and wa_is_cloud_link(text):
+            service = "דרופבוקס" if wa_is_dropbox_link(text) else "Drive"
+            msg_id = send_status(chat_id, f"⏳ מוריד מ{service}...")
+            media = wa_extract_cloud_media(text)
             img_count = 0
             vid_count = 0
             for m in media:
-                if m.get("type") == "image" and m.get("content"):
-                    draft.setdefault("gallery", []).append(m["content"])
+                if m.get("type") == "image":
+                    draft.setdefault("gallery", []).append(m.get("content") or m.get("url"))
                     img_count += 1
-                elif m.get("type") == "video" and m.get("url"):
-                    draft.setdefault("quick_videos", []).append(m["url"])
+                elif m.get("type") == "video":
+                    draft.setdefault("quick_videos", []).append(m.get("content") or m.get("url"))
                     vid_count += 1
             if img_count or vid_count:
                 summary = []
                 if img_count: summary.append(f"{img_count} תמונות")
                 if vid_count: summary.append(f"{vid_count} סרטונים")
-                edit_message(chat_id, msg_id, f"✅ {' + '.join(summary)} מ-Drive!\n\nשלח עוד או /done:")
+                edit_message(chat_id, msg_id, f"✅ {' + '.join(summary)} מ{service}!\n\nשלח עוד או /done:")
             else:
-                edit_message(chat_id, msg_id, "❌ לא נמצאו קבצים בדרייב.")
+                edit_message(chat_id, msg_id, "❌ לא נמצאו קבצים.")
         elif text == "/done":
             draft["step"] = "video"
             count = len(draft.get('gallery', []))
             send_message(chat_id, f"✅ התקבלו {count} תמונות!\n\nשלח <b>קובץ סרטון</b> להעלאה ל-Vimeo, <b>לינק</b> ידני, או /skip:")
         else:
-            send_message(chat_id, "שלח תמונות, PDF, קובץ שמע, לינק Drive, או /done:")
+            send_message(chat_id, "שלח תמונות, PDF, קובץ שמע, לינק Drive/Dropbox, או /done:")
         return True
 
     elif step == "video":
@@ -4694,37 +4871,31 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
         return True
 
     elif step == "drive_link_input":
-        if text and "drive.google.com" in text:
+        if text and wa_is_cloud_link(text):
+            service = "דרופבוקס" if wa_is_dropbox_link(text) else "Drive"
             def _drive_thread():
-                drive_id, drive_type = extract_drive_id(text)
-                if not drive_id:
-                    send_message(chat_id, "❌ לינק Drive לא תקין.")
+                send_message(chat_id, f"🔍 <b>מוריד מ{service}...</b>")
+                media = wa_extract_cloud_media(text)
+                if not media:
+                    send_message(chat_id, "❌ לא נמצאו קבצים.")
                     return
-                if drive_type == "folder":
-                    send_message(chat_id, "🔍 <b>סורק תיקייה ב-Drive...</b>")
-                    images, _ = list_drive_folder(drive_id)
-                    if not images:
-                        send_message(chat_id, "❌ לא נמצאו תמונות.")
-                        return
-                    count = 0
-                    for i, img in enumerate(images):
-                        img_bytes = download_drive_file(img["id"])
-                        if img_bytes:
-                            draft.setdefault("gallery", []).append(img_bytes)
-                            count += 1
-                        if (i + 1) % 10 == 0:
-                            edit_message(chat_id, msg_id, f"📤 <b>מעלה תמונות...</b>\n\n{progress_bar(count, len(images))}")
-                    draft["step"] = "gallery"
-                    send_message(chat_id, f"✅ {count} תמונות הורדו! שלח עוד או /done:")
-                elif drive_type == "file":
-                    img_bytes = download_drive_file(drive_id)
-                    if img_bytes:
-                        draft.setdefault("gallery", []).append(img_bytes)
-                        draft["step"] = "gallery"
-                        send_message(chat_id, "✅ קובץ הורד! שלח עוד או /done:")
+                img_count = 0
+                vid_count = 0
+                for m in media:
+                    if m.get("type") == "image":
+                        draft.setdefault("gallery", []).append(m.get("content") or m.get("url"))
+                        img_count += 1
+                    elif m.get("type") == "video":
+                        draft.setdefault("quick_videos", []).append(m.get("content") or m.get("url"))
+                        vid_count += 1
+                draft["step"] = "gallery"
+                summary = []
+                if img_count: summary.append(f"{img_count} תמונות")
+                if vid_count: summary.append(f"{vid_count} סרטונים")
+                send_message(chat_id, f"✅ {' + '.join(summary)} הורדו! שלח עוד או /done:")
             threading.Thread(target=_drive_thread, daemon=True).start()
         else:
-            send_message(chat_id, "⚠️ שלח לינק תקין מ-Google Drive:")
+            send_message(chat_id, "⚠️ שלח לינק תקין מ-Google Drive או Dropbox:")
         return True
 
     elif step == "edit_pdf_upload":
@@ -4884,12 +5055,17 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                     _show_social_video_platforms(chat_id)
                 else:
                     send_message(chat_id, "❌ לא הצלחתי להוריד את הסרטון.")
-        elif text and "drive.google.com" in text:
-            msg_id = send_status(chat_id, "⏳ מוריד מ-Drive...")
+        elif text and wa_is_cloud_link(text):
+            service = "דרופבוקס" if wa_is_dropbox_link(text) else "Drive"
+            msg_id = send_status(chat_id, f"⏳ מוריד מ{service}...")
             def _dl_social():
-                drive_id, drive_type = extract_drive_id(text)
-                if drive_id and drive_type == "file":
-                    vb = download_drive_file(drive_id)
+                media = wa_extract_cloud_media(text)
+                vid_items = [m for m in media if m.get("type") == "video"]
+                if vid_items:
+                    vb = vid_items[0].get("content")
+                    if not vb and vid_items[0].get("url"):
+                        r = requests.get(vid_items[0]["url"], timeout=60)
+                        vb = r.content if r.ok else None
                     if vb:
                         social["video_bytes"] = vb
                         draft["social_data"] = social
@@ -4898,30 +5074,32 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                     else:
                         edit_message(chat_id, msg_id, "❌ לא הצלחתי להוריד.")
                 else:
-                    send_message(chat_id, "❌ שלח לינק לקובץ בודד מ-Drive.")
+                    send_message(chat_id, "❌ לא נמצא קובץ וידאו בלינק.")
             threading.Thread(target=_dl_social, daemon=True).start()
         else:
-            send_message(chat_id, "⚠️ שלח קובץ וידאו או לינק Drive:")
+            send_message(chat_id, "⚠️ שלח קובץ וידאו או לינק Drive/Dropbox:")
         return True
 
     elif step == "quick_upload_collect":
         msg_id = draft.get("quick_status_msg_id")
         collected = []
-        if text and "drive.google.com" in text:
-            wmsg = send_status(chat_id, "⏳ מוריד מגוגל דרייב...")
-            media = wa_extract_drive_media(text)
+        if text and wa_is_cloud_link(text):
+            service = "דרופבוקס" if wa_is_dropbox_link(text) else "גוגל דרייב"
+            wmsg = send_status(chat_id, f"⏳ מוריד מ{service}...")
+            media = wa_extract_cloud_media(text)
             count = 0
             for m in media:
-                if m.get("type") == "image" and m.get("content"):
-                    draft["gallery"].append(m["content"])
+                if m.get("type") == "image":
+                    content_or_url = m.get("content") or m.get("url")
+                    draft["gallery"].append(content_or_url)
                     if not draft.get("main_image"):
-                        draft["main_image"] = m["content"]
+                        draft["main_image"] = content_or_url
                     count += 1
-                elif m.get("type") == "video" and m.get("url"):
-                    draft["quick_videos"].append(m["url"])
+                elif m.get("type") == "video":
+                    draft["quick_videos"].append(m.get("content") or m.get("url"))
                     count += 1
-            edit_message(chat_id, wmsg, f"✅ {count} פריטים מדרייב נוספו!")
-            collected.append(f"☁️ {count} מדרייב")
+            edit_message(chat_id, wmsg, f"✅ {count} פריטים מ{service} נוספו!")
+            collected.append(f"☁️ {count} מ{service}")
         elif text and text not in ("✅ סיום", "/done"):
             draft["quick_texts"].append(text)
             collected.append("📝 טקסט")
