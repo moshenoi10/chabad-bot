@@ -1495,12 +1495,16 @@ def _wa_approve(sender, sender_name):
                 post_url = resp.json().get("link","")
                 post_title = draft.get("title","")
                 post_subtitle = draft.get("subtitle","")
+                post_original_text = draft.get("original_text","")
                 # הפצה
-                notify_channel(post_title, post_subtitle, post_url)
+                notify_channel(post_title, post_subtitle, post_url, original_text=post_original_text)
                 if whatsapp_settings.get("active"):
-                    wa_msg = WHATSAPP_MSG_FORMAT.format(
-                        site_name=SITE_NAME, title=post_title,
-                        subtitle=post_subtitle, url=post_url)
+                    if post_original_text:
+                        wa_msg = _format_dist_text(post_original_text, post_url, for_whatsapp=True)
+                    else:
+                        wa_msg = WHATSAPP_MSG_FORMAT.format(
+                            site_name=SITE_NAME, title=post_title,
+                            subtitle=post_subtitle, url=post_url)
                     print(f"שולח WA: {wa_msg[:100]}", flush=True)
                     # נסה לשלוח עם תמונה
                     post_image = resp.json().get("_links",{}).get("wp:featuredmedia",[])
@@ -2095,6 +2099,7 @@ def _process_wa_article(buf, sender_name, cancel_check=None):
             "pdf_urls": pdf_urls,
             "wa_source": sender_name,
             "summary_msg_id": None,
+            "original_text": full_text,
         })
         cats, cat_names = auto_select_categories(draft["title"], draft["body"])
         draft["categories"] = cats
@@ -2702,9 +2707,27 @@ def upload_to_vimeo(video_bytes, title="סרטון חדש", chat_id=None, msg_id
         print(f"שגיאה Vimeo: {e}", flush=True)
         return None, None
 
-def notify_channel(title, subtitle, url):
-    text = CHANNEL_MSG_FORMAT.format(
-        site_name=SITE_NAME, title=title, subtitle=subtitle, url=url)
+def _clean_original_text(text):
+    """מסיר את שם האתר מתחילת הטקסט אם מופיע, עם כל סוגי המרכאות."""
+    if not text:
+        return text
+    import re as _re
+    pattern = r'^[\*_]*עדכוני\s+חב[׳\'״""«»\u05f4]ד[\*_]*[\s\-:–]*\n?'
+    cleaned = _re.sub(pattern, '', text, flags=_re.IGNORECASE).lstrip('\n')
+    return cleaned
+
+def _format_dist_text(original_text, url, for_whatsapp=False):
+    """בונה טקסט הפצה: [טקסט] - *שם האתר* + לינק."""
+    body = _clean_original_text(original_text)
+    suffix = f"👇 לכתבה המלאה לחצו\n{url}" if for_whatsapp else f"*לכתבה המלאה לחצו ⬇️*\n{url}"
+    return f"{body} - *{SITE_NAME}*\n\n\n{suffix}"
+
+def notify_channel(title, subtitle, url, original_text=None):
+    if original_text:
+        text = _format_dist_text(original_text, url, for_whatsapp=False)
+    else:
+        text = CHANNEL_MSG_FORMAT.format(
+            site_name=SITE_NAME, title=title, subtitle=subtitle, url=url)
     try:
         resp = requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
@@ -4549,11 +4572,15 @@ def handle_message_steps(chat_id, user_id, text, msg, draft, drafts):
                 post_url = resp.json().get("link", "")
                 post_title2 = draft.get("title","")
                 post_subtitle2 = draft.get("subtitle", "")
-                notify_channel(post_title2, post_subtitle2, post_url)
+                post_original_text2 = draft.get("original_text", "")
+                notify_channel(post_title2, post_subtitle2, post_url, original_text=post_original_text2)
                 if os.environ.get("WHATSAPP_GROUP_ID") and whatsapp_settings["active"]:
-                    wa_msg2 = WHATSAPP_MSG_FORMAT.format(
-                        site_name=SITE_NAME, title=post_title2,
-                        subtitle=post_subtitle2, url=post_url)
+                    if post_original_text2:
+                        wa_msg2 = _format_dist_text(post_original_text2, post_url, for_whatsapp=True)
+                    else:
+                        wa_msg2 = WHATSAPP_MSG_FORMAT.format(
+                            site_name=SITE_NAME, title=post_title2,
+                            subtitle=post_subtitle2, url=post_url)
                     threading.Thread(target=send_whatsapp_publish, args=(wa_msg2,), daemon=True).start()
                 drafts[user_id] = {"step": "idle", "gallery": []}
                 edit_message(chat_id, msg_id, f"✅ <b>הכתבה פורסמה!</b>\n🔗 {post_url}")
@@ -6004,13 +6031,16 @@ def handle_callback(cb):
                 ]
             })
             # שלח לערוץ ו-WhatsApp ברקע
-            def _post_publish(pid=post_id, pt=post_title, ps=post_subtitle, pu=post_url):
+            def _post_publish(pid=post_id, pt=post_title, ps=post_subtitle, pu=post_url, porig=draft.get("original_text","")):
                 try:
                     print(f"📤 _post_publish מתחיל: {pt[:40]}", flush=True)
-                    notify_channel(pt, ps, pu)
+                    notify_channel(pt, ps, pu, original_text=porig)
                     if os.environ.get("WHATSAPP_GROUP_ID") and whatsapp_settings["active"]:
-                        wa_msg = WHATSAPP_MSG_FORMAT.format(
-                            site_name=SITE_NAME, title=pt, subtitle=ps, url=pu)
+                        if porig:
+                            wa_msg = _format_dist_text(porig, pu, for_whatsapp=True)
+                        else:
+                            wa_msg = WHATSAPP_MSG_FORMAT.format(
+                                site_name=SITE_NAME, title=pt, subtitle=ps, url=pu)
                         ok = send_whatsapp_publish(wa_msg)
                         print(f"📤 _post_publish: WA sent={ok}", flush=True)
                     else:
@@ -6540,9 +6570,13 @@ def handle_callback(cb):
         post_url = draft.get("last_post_url", "")
         if post_url:
             msg_id = send_status(chat_id, "💬 <b>שולח ל-WhatsApp...</b>")
-            wa_subtitle = draft.get("subtitle", "")
-            wa_msg = WHATSAPP_MSG_FORMAT.format(
-                site_name=SITE_NAME, title=post_title, subtitle=wa_subtitle, url=post_url)
+            wa_orig = draft.get("original_text", "")
+            if wa_orig:
+                wa_msg = _format_dist_text(wa_orig, post_url, for_whatsapp=True)
+            else:
+                wa_subtitle = draft.get("subtitle", "")
+                wa_msg = WHATSAPP_MSG_FORMAT.format(
+                    site_name=SITE_NAME, title=post_title, subtitle=wa_subtitle, url=post_url)
             ok = send_whatsapp_publish(wa_msg)
             edit_message(chat_id, msg_id,
                 "✅ <b>נשלח ל-WhatsApp!</b>" if ok else "❌ שגיאה בשליחה ל-WhatsApp")
@@ -6901,6 +6935,7 @@ def handle_callback(cb):
             draft["red_title"] = result.get("red_title","")
             draft["body"] = result.get("body","")
             draft["tags"] = result.get("tags",[])
+            draft["original_text"] = full_text
             cats, cat_names = auto_select_categories(draft["title"], draft["body"])
             draft["categories"] = cats
             draft["cat_names"] = cat_names
@@ -7323,8 +7358,12 @@ def handle_callback(cb):
             return
         msg_id = send_status(chat_id, "💬 <b>שולח ל-WhatsApp...</b>")
         def _wa():
-            wa_subtitle = draft.get('subtitle','')
-            wa_msg = WHATSAPP_MSG_FORMAT.format(site_name=SITE_NAME, title=post_title, subtitle=wa_subtitle, url=post_url)
+            wa_orig = draft.get('original_text','')
+            if wa_orig:
+                wa_msg = _format_dist_text(wa_orig, post_url, for_whatsapp=True)
+            else:
+                wa_subtitle = draft.get('subtitle','')
+                wa_msg = WHATSAPP_MSG_FORMAT.format(site_name=SITE_NAME, title=post_title, subtitle=wa_subtitle, url=post_url)
             ok = send_whatsapp_publish(wa_msg)
             edit_message(chat_id, msg_id,
                 "✅ <b>נשלח ל-WhatsApp!</b>" if ok else
