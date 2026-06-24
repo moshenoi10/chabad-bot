@@ -2720,7 +2720,7 @@ def _format_dist_text(original_text, url, for_whatsapp=False):
     """בונה טקסט הפצה: [טקסט] - *שם האתר* + לינק."""
     body = _clean_original_text(original_text)
     suffix = f"👇 לכתבה המלאה לחצו\n{url}" if for_whatsapp else f"*לכתבה המלאה לחצו ⬇️*\n{url}"
-    return f"{body} - *{SITE_NAME}*\n\n\n{suffix}"
+    return f"*{SITE_NAME}* - {body}\n\n{suffix}"
 
 def notify_channel(title, subtitle, url, original_text=None):
     if original_text:
