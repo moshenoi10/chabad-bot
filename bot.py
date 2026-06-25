@@ -1099,6 +1099,72 @@ def handle_whatsapp_webhook(body):
             threading.Thread(target=_top, daemon=True).start()
             return
 
+        if txt == "/שוב":
+            user_id = str(SUPER_ADMIN_ID)
+            draft = drafts.get(user_id, {})
+            if draft.get("step") == "gemini_failed":
+                pending_text = draft.get("gemini_pending_text", "")
+                if pending_text:
+                    wa_send("⏳ ממתין דקה ומנסה שוב...")
+                    def _retry_gemini():
+                        time.sleep(60)
+                        result = process_with_gemini(pending_text)
+                        if not result:
+                            wa_send(
+                                "❌ *AI נכשל שוב.*\n\n"
+                                "• */שוב* — נסה שוב\n"
+                                "• */בטל* — ביטול וניקוי"
+                            )
+                            return
+                        d = drafts.setdefault(user_id, {})
+                        images_bytes = d.get("gallery", [])
+                        vimeo_urls = d.get("vimeo_urls", [])
+                        pdf_urls = d.get("pdf_urls", [])
+                        wa_source = d.get("wa_source", "")
+                        orig_text = d.get("original_text", pending_text)
+                        d.update({
+                            "step": "smart_preview",
+                            "title": result.get("title", ""),
+                            "subtitle": result.get("subtitle", ""),
+                            "red_title": result.get("red_title", ""),
+                            "body": result.get("body", ""),
+                            "tags": result.get("tags", []),
+                            "from_quick": True,
+                            "gallery": images_bytes,
+                            "main_image": images_bytes[0] if images_bytes else None,
+                            "vimeo_urls": vimeo_urls,
+                            "vimeo_url": vimeo_urls[0] if vimeo_urls else None,
+                            "pdf_urls": pdf_urls,
+                            "wa_source": wa_source,
+                            "summary_msg_id": None,
+                            "original_text": orig_text,
+                        })
+                        # שלח תצוגה מקדימה לטלגרם
+                        tg_uid = int(SUPER_ADMIN_ID)
+                        _send_smart_preview(tg_uid, d)
+                        wa_send("✅ AI עיבד בהצלחה! בדוק בטלגרם לאישור.")
+                    threading.Thread(target=_retry_gemini, daemon=True).start()
+                else:
+                    wa_send("❌ לא נמצא מידע ממתין. שלח את הכתבה מחדש.")
+            else:
+                wa_send("⚠️ אין כתבה ממתינה לניסיון חוזר.")
+            return
+
+        if txt == "/בטל":
+            user_id = str(SUPER_ADMIN_ID)
+            draft = drafts.get(user_id, {})
+            if draft.get("step") == "gemini_failed":
+                drafts[user_id] = {"step": "idle", "gallery": []}
+                wa_bump_cancel_gen(sender)
+                wa_article_buffer[sender] = {
+                    "texts": [], "images": [], "videos": [], "pdfs": [], "audio": [],
+                    "started": False, "downloading": False, "cancelled": True
+                }
+                wa_send("✅ הכתבה בוטלה. מוכן להתחלה חדשה.")
+            else:
+                wa_send("⚠️ אין כתבה ממתינה לביטול.")
+            return
+
         if txt == "/מזל":
             wa_edit_sessions[sender] = {
                 "step": "mazaltov",
@@ -2074,7 +2140,26 @@ def _process_wa_article(buf, sender_name, cancel_check=None):
         # עבד AI
         result = process_with_gemini(full_text)
         if not result:
-            wa_send("❌ AI לא הצליח לעבד. נסה שוב.")
+            # שמור את כל המידע ל-draft ממתין
+            user_id = str(SUPER_ADMIN_ID)
+            draft = drafts.setdefault(user_id, {})
+            draft.update({
+                "step": "gemini_failed",
+                "gemini_pending_text": full_text,
+                "gallery": images_bytes,
+                "main_image": images_bytes[0] if images_bytes else None,
+                "vimeo_urls": vimeo_urls,
+                "vimeo_url": vimeo_urls[0] if vimeo_urls else None,
+                "pdf_urls": pdf_urls,
+                "wa_source": sender_name,
+                "original_text": full_text,
+            })
+            wa_send(
+                "❌ *AI לא הצליח לעבד את הכתבה לאחר 5 ניסיונות.*\n\n"
+                "כל המידע שמור. בחר:\n"
+                "• */שוב* — המתן דקה ונסה שוב\n"
+                "• */בטל* — ביטול וניקוי"
+            )
             return
 
         if _cancelled():
@@ -3439,7 +3524,8 @@ def process_with_gemini(text):
     text = prepare_text_for_ai(text)
     prompt = build_prompt(text)
     try:
-        for attempt in range(3):
+        delays = [5, 15, 30, 60]  # המתנה בין ניסיונות (שניות)
+        for attempt in range(5):
             print(f"Gemini ניסיון {attempt+1}...", flush=True)
             try:
                 resp = requests.post(
@@ -3449,14 +3535,15 @@ def process_with_gemini(text):
                 )
             except requests.exceptions.Timeout:
                 print(f"Gemini timeout ניסיון {attempt+1}, מנסה שוב...", flush=True)
-                if attempt < 2: time.sleep(5)
+                if attempt < 4: time.sleep(delays[min(attempt, len(delays)-1)])
                 continue
             if resp.status_code in (429, 503):
-                if attempt < 2:
-                    print(f"Gemini 429, ממתין 20 שניות...", flush=True)
-                    time.sleep(20)
+                if attempt < 4:
+                    wait = delays[min(attempt, len(delays)-1)]
+                    print(f"Gemini {resp.status_code}, ממתין {wait} שניות...", flush=True)
+                    time.sleep(wait)
                     continue
-                print(f"Gemini 429 שוב, עובר ל-Groq...", flush=True)
+                print(f"Gemini נכשל אחרי 5 ניסיונות.", flush=True)
                 break
             if resp.status_code == 200:
                 result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
