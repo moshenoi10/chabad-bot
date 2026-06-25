@@ -2708,19 +2708,26 @@ def upload_to_vimeo(video_bytes, title="סרטון חדש", chat_id=None, msg_id
         return None, None
 
 def _clean_original_text(text):
-    """מסיר את שם האתר מתחילת הטקסט אם מופיע, עם כל סוגי המרכאות."""
+    """מסיר את שם האתר מתחילת הטקסט אם מופיע, וכן לינקי דרייב/דרופבוקס."""
     if not text:
         return text
     import re as _re
-    pattern = r'^[\*_]*עדכוני\s+חב[׳\'״""«»\u05f4]ד[\*_]*[\s\-:–]*\n?'
-    cleaned = _re.sub(pattern, '', text, flags=_re.IGNORECASE).lstrip('\n')
+    # הסרת לינקי Google Drive / Docs / Dropbox
+    text = _re.sub(r'https://(?:drive|docs)\.google\.com/\S+', '', text)
+    text = _re.sub(r'https://(?:www\.)?dropbox\.com/\S+', '', text)
+    # ניקוי רווחים כפולים שנשארו אחרי הסרת לינקים
+    text = _re.sub(r' {2,}', ' ', text)
+    text = _re.sub(r'\n{3,}', '\n\n', text)
+    # הסרת שם האתר בתחילת הטקסט — עם כל סוגי המרכאות ועם ; או מקף
+    pattern = r'^[\*_]*עדכוני\s+חב[׳\'״""«»\u05f4]ד[\*_]*[\s;;\-:–]*\n?'
+    cleaned = _re.sub(pattern, '', text, flags=_re.IGNORECASE).lstrip('\n').strip()
     return cleaned
 
 def _format_dist_text(original_text, url, for_whatsapp=False):
     """בונה טקסט הפצה: [טקסט] - *שם האתר* + לינק."""
     body = _clean_original_text(original_text)
     suffix = f"👇 לכתבה המלאה לחצו\n{url}" if for_whatsapp else f"*לכתבה המלאה לחצו ⬇️*\n{url}"
-    return f"*{SITE_NAME}* - {body}\n\n{suffix}"
+    return f"*{SITE_NAME};* {body}\n\n{suffix}"
 
 def notify_channel(title, subtitle, url, original_text=None):
     if original_text:
